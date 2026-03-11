@@ -11,5 +11,10 @@
     "react": "latest",
     "react-dom": "latest",
     "@supabase/supabase-js": "^2"
+  },
+  "devDependencies": {
+    "typescript": "^5",
+    "@types/react": "^18",
+    "@types/node": "^20"
   }
 }
