@@ -1,0 +1,34 @@
+name: AI Code Generator
+
+on:
+  push:
+    paths:
+      - 'PROJECT_SPEC.md'
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Generate project structure
+        run: |
+          mkdir -p app/empresas
+          mkdir -p app/unidades
+          mkdir -p app/funcionarios
+          mkdir -p app/competencias
+
+          echo "export default function Empresas(){return <div>Empresas</div>}" > app/empresas/page.tsx
+          echo "export default function Unidades(){return <div>Unidades</div>}" > app/unidades/page.tsx
+          echo "export default function Funcionarios(){return <div>Funcionarios</div>}" > app/funcionarios/page.tsx
+          echo "export default function Competencias(){return <div>Competencias</div>}" > app/competencias/page.tsx
+
+      - name: Commit generated code
+        run: |
+          git config --global user.name "AI Generator"
+          git config --global user.email "ai@bot.com"
+          git add .
+          git commit -m "AI generated system structure"
+          git push
