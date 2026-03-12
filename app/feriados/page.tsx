@@ -68,7 +68,7 @@ export default function FeriadosPage() {
   }
 
   // Group by year for display
-  const anos = [...new Set(feriados.map(f => new Date(f.data + 'T00:00:00').getFullYear()))].sort()
+  const anos = Array.from(new Set(feriados.map(f => new Date(f.data + 'T00:00:00').getFullYear()))).sort()
   const feriadosFiltrados = feriados.filter(f => {
     const ano = new Date(f.data + 'T00:00:00').getFullYear()
     return ano === filtroAno
