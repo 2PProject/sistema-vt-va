@@ -19,6 +19,8 @@ type CFLocal = {
   dias_feriado: number
   dias_sabado: number
   dias_desconto: number
+  valor_vt: number
+  valor_vt_sabado: number
   valor_total: number
   funcionario: Funcionario
 }
@@ -31,8 +33,6 @@ export default function CompetenciasPage() {
   const [salvando, setSalvando] = useState(false)
   const [sucesso, setSucesso] = useState(false)
 
-  const [valorVT, setValorVT] = useState(0)
-  const [valorVTSabado, setValorVTSabado] = useState(0)
   const [valorVA, setValorVA] = useState(0)
 
   const [empresaId, setEmpresaId] = useState<string>('')
@@ -41,13 +41,10 @@ export default function CompetenciasPage() {
   const [diasUteis, setDiasUteis] = useState(22)
 
   useEffect(() => {
-    carregarEmpresas()
+    supabase.from('empresas').select('*').order('razao_social').then(({ data }) => {
+      setEmpresas(data ?? [])
+    })
   }, [])
-
-  async function carregarEmpresas() {
-    const { data } = await supabase.from('empresas').select('*').order('razao_social')
-    setEmpresas(data ?? [])
-  }
 
   const carregarCompetencia = useCallback(async () => {
     if (!empresaId) return
@@ -70,8 +67,6 @@ export default function CompetenciasPage() {
     if (comp) {
       setCompetencia(comp)
       setDiasUteis(comp.dias_uteis)
-      setValorVT(comp.valor_vt ?? 0)
-      setValorVTSabado(comp.valor_vt_sabado ?? 0)
       setValorVA(comp.valor_va ?? 0)
     } else {
       setCompetencia(null)
@@ -104,6 +99,8 @@ export default function CompetenciasPage() {
             dias_feriado: cf?.dias_feriado ?? 0,
             dias_sabado: cf?.dias_sabado ?? 0,
             dias_desconto: cf?.dias_desconto ?? 0,
+            valor_vt: cf?.valor_vt ?? f.valor_vt ?? 0,
+            valor_vt_sabado: cf?.valor_vt_sabado ?? f.valor_vt_sabado ?? 0,
             valor_total: cf?.valor_total ?? 0,
             funcionario: f,
           }
@@ -118,6 +115,8 @@ export default function CompetenciasPage() {
           dias_feriado: 0,
           dias_sabado: 0,
           dias_desconto: 0,
+          valor_vt: f.valor_vt ?? 0,
+          valor_vt_sabado: f.valor_vt_sabado ?? 0,
           valor_total: 0,
           funcionario: f,
         }))
@@ -158,8 +157,6 @@ export default function CompetenciasPage() {
           mes,
           ano,
           dias_uteis: diasUteis,
-          valor_vt: valorVT,
-          valor_vt_sabado: valorVTSabado,
           valor_va: valorVA,
         })
         .select()
@@ -169,7 +166,7 @@ export default function CompetenciasPage() {
     } else {
       await supabase
         .from('competencias')
-        .update({ dias_uteis: diasUteis, valor_vt: valorVT, valor_vt_sabado: valorVTSabado, valor_va: valorVA })
+        .update({ dias_uteis: diasUteis, valor_va: valorVA })
         .eq('id', competencia.id)
     }
 
@@ -179,8 +176,8 @@ export default function CompetenciasPage() {
         diasFeriado: item.dias_feriado,
         diasSabado: item.dias_sabado,
         diasDesconto: item.dias_desconto,
-        valorVT,
-        valorVTSabado,
+        valorVT: item.valor_vt,
+        valorVTSabado: item.valor_vt_sabado,
         valorVA,
       })
 
@@ -190,6 +187,8 @@ export default function CompetenciasPage() {
         dias_feriado: item.dias_feriado,
         dias_sabado: item.dias_sabado,
         dias_desconto: item.dias_desconto,
+        valor_vt: item.valor_vt,
+        valor_vt_sabado: item.valor_vt_sabado,
         valor_total: resultado.valorTotal,
       }
 
@@ -212,8 +211,8 @@ export default function CompetenciasPage() {
       diasFeriado: item.dias_feriado,
       diasSabado: item.dias_sabado,
       diasDesconto: item.dias_desconto,
-      valorVT,
-      valorVTSabado,
+      valorVT: item.valor_vt,
+      valorVTSabado: item.valor_vt_sabado,
       valorVA,
     })
     return sum + r.valorTotal
@@ -249,28 +248,23 @@ export default function CompetenciasPage() {
           {empresaId && (
             <div className="mt-4 pt-4 border-t border-gray-100">
               <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
-                Valores do Mês (aplicados a todos os funcionários)
+                Parâmetros do Mês
               </p>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4 max-w-lg">
                 <div>
                   <label className="label-field">Dias Úteis</label>
                   <input type="number" value={diasUteis} onChange={(e) => setDiasUteis(Number(e.target.value))} className="input-field" min={0} max={31} />
                 </div>
                 <div>
-                  <label className="label-field">Valor VT (dia útil)</label>
-                  <input type="number" value={valorVT} onChange={(e) => setValorVT(Number(e.target.value))} className="input-field" min={0} step={0.01} placeholder="0,00" />
-                </div>
-                <div>
-                  <label className="label-field">Valor VT Sábado</label>
-                  <input type="number" value={valorVTSabado} onChange={(e) => setValorVTSabado(Number(e.target.value))} className="input-field" min={0} step={0.01} placeholder="0,00" />
-                </div>
-                <div>
-                  <label className="label-field">Valor VA (dia útil)</label>
+                  <label className="label-field">Valor VA / dia útil (R$)</label>
                   <input type="number" value={valorVA} onChange={(e) => setValorVA(Number(e.target.value))} className="input-field" min={0} step={0.01} placeholder="0,00" />
                 </div>
               </div>
+              <p className="text-xs text-blue-600 mt-2">
+                O valor do VT é individual por funcionário — configure no cadastro de cada funcionário.
+              </p>
               {!competencia && (
-                <p className="text-xs text-amber-600 mt-2">
+                <p className="text-xs text-amber-600 mt-1">
                   ⚠ Competência ainda não cadastrada — será criada ao salvar.
                 </p>
               )}
@@ -309,6 +303,8 @@ export default function CompetenciasPage() {
                     <thead>
                       <tr className="bg-gray-50 border-b border-gray-200">
                         <th className="table-header text-left min-w-[160px]">Funcionário</th>
+                        <th className="table-header text-center min-w-[90px]">VT/dia (R$)</th>
+                        <th className="table-header text-center min-w-[90px]">VT Sáb (R$)</th>
                         <th className="table-header text-center">Feriados</th>
                         <th className="table-header text-center">Sábados</th>
                         <th className="table-header text-center">Descontos</th>
@@ -326,8 +322,8 @@ export default function CompetenciasPage() {
                           diasFeriado: item.dias_feriado,
                           diasSabado: item.dias_sabado,
                           diasDesconto: item.dias_desconto,
-                          valorVT,
-                          valorVTSabado,
+                          valorVT: item.valor_vt,
+                          valorVTSabado: item.valor_vt_sabado,
                           valorVA,
                         })
                         return (
@@ -335,6 +331,12 @@ export default function CompetenciasPage() {
                             <td className="table-cell">
                               <div className="font-medium text-gray-900">{item.funcionario.nome}</div>
                               <div className="text-xs text-gray-400">{item.funcionario.funcao}</div>
+                            </td>
+                            <td className="table-cell text-center">
+                              <input type="number" value={item.valor_vt} onChange={(e) => atualizarItem(idx, 'valor_vt', Number(e.target.value))} className="w-20 border border-gray-300 rounded px-2 py-1 text-center text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" min={0} step={0.01} />
+                            </td>
+                            <td className="table-cell text-center">
+                              <input type="number" value={item.valor_vt_sabado} onChange={(e) => atualizarItem(idx, 'valor_vt_sabado', Number(e.target.value))} className="w-20 border border-gray-300 rounded px-2 py-1 text-center text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" min={0} step={0.01} />
                             </td>
                             <td className="table-cell text-center">
                               <input type="number" value={item.dias_feriado} onChange={(e) => atualizarItem(idx, 'dias_feriado', Number(e.target.value))} className="w-16 border border-gray-300 rounded px-2 py-1 text-center text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" min={0} max={31} />

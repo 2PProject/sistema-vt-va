@@ -30,21 +30,19 @@ export type Funcionario = {
   folga_semanal: string
   unidade_id: string
   ativo: boolean
+  valor_vt: number
+  valor_vt_sabado: number
   unidades?: Unidade & { empresas?: Empresa }
 }
 
 /**
- * A tabela competencias precisa das colunas abaixo — rodar no Supabase SQL Editor:
+ * Migrations necessárias — executar supabase_fix_duplicatas.sql no SQL Editor:
  *
- *   ALTER TABLE competencias ADD COLUMN IF NOT EXISTS valor_vt NUMERIC DEFAULT 0;
- *   ALTER TABLE competencias ADD COLUMN IF NOT EXISTS valor_vt_sabado NUMERIC DEFAULT 0;
  *   ALTER TABLE competencias ADD COLUMN IF NOT EXISTS valor_va NUMERIC DEFAULT 0;
- *
- * Tabela cargos (criar caso não exista):
- *   CREATE TABLE cargos (
- *     id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
- *     nome text NOT NULL UNIQUE
- *   );
+ *   ALTER TABLE funcionarios ADD COLUMN IF NOT EXISTS valor_vt NUMERIC DEFAULT 0;
+ *   ALTER TABLE funcionarios ADD COLUMN IF NOT EXISTS valor_vt_sabado NUMERIC DEFAULT 0;
+ *   ALTER TABLE competencia_funcionario ADD COLUMN IF NOT EXISTS valor_vt NUMERIC DEFAULT 0;
+ *   ALTER TABLE competencia_funcionario ADD COLUMN IF NOT EXISTS valor_vt_sabado NUMERIC DEFAULT 0;
  */
 export type Competencia = {
   id: string
@@ -65,6 +63,8 @@ export type CompetenciaFuncionario = {
   dias_feriado: number
   dias_sabado: number
   dias_desconto: number
+  valor_vt: number
+  valor_vt_sabado: number
   valor_total: number
   competencias?: Competencia
   funcionarios?: Funcionario

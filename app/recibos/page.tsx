@@ -71,8 +71,9 @@ export default function RecibosPage() {
       const { gerarReciboPDF } = await import('../../services/gerarReciboPDF')
       const empresa = empresas.find((e) => e.id === empresaId)
 
-      const valorVT = competencia.valor_vt ?? 0
-      const valorVTSabado = competencia.valor_vt_sabado ?? 0
+      // VT é individual por funcionário (salvo por competência)
+      const valorVT = cf.valor_vt ?? cf.funcionarios?.valor_vt ?? 0
+      const valorVTSabado = cf.valor_vt_sabado ?? cf.funcionarios?.valor_vt_sabado ?? 0
       const valorVA = competencia.valor_va ?? 0
 
       const resultado = calcularVTVA({
@@ -114,8 +115,6 @@ export default function RecibosPage() {
     }
   }
 
-  const valorVT = competencia?.valor_vt ?? 0
-  const valorVTSabado = competencia?.valor_vt_sabado ?? 0
   const valorVA = competencia?.valor_va ?? 0
 
   const totalGeral = registros.reduce((sum, cf) => {
@@ -124,8 +123,8 @@ export default function RecibosPage() {
       diasFeriado: cf.dias_feriado,
       diasSabado: cf.dias_sabado,
       diasDesconto: cf.dias_desconto,
-      valorVT,
-      valorVTSabado,
+      valorVT: cf.valor_vt ?? cf.funcionarios?.valor_vt ?? 0,
+      valorVTSabado: cf.valor_vt_sabado ?? cf.funcionarios?.valor_vt_sabado ?? 0,
       valorVA,
     })
     return sum + r.valorTotal
@@ -182,7 +181,7 @@ export default function RecibosPage() {
                       {MESES[mes - 1]}/{ano} — {registros.length} funcionário(s)
                     </h2>
                     <p className="text-sm text-gray-500 mt-0.5">
-                      Dias úteis: {competencia.dias_uteis} | VT: {formatarMoeda(valorVT)}/dia | VA: {formatarMoeda(valorVA)}/dia | Total:{' '}
+                      Dias úteis: {competencia.dias_uteis} | VA: {formatarMoeda(valorVA)}/dia | VT: individual por funcionário | Total:{' '}
                       <span className="font-semibold text-blue-600">{formatarMoeda(totalGeral)}</span>
                     </p>
                   </div>
@@ -219,8 +218,8 @@ export default function RecibosPage() {
                             diasFeriado: cf.dias_feriado,
                             diasSabado: cf.dias_sabado,
                             diasDesconto: cf.dias_desconto,
-                            valorVT,
-                            valorVTSabado,
+                            valorVT: cf.valor_vt ?? cf.funcionarios?.valor_vt ?? 0,
+                            valorVTSabado: cf.valor_vt_sabado ?? cf.funcionarios?.valor_vt_sabado ?? 0,
                             valorVA,
                           })
                           return (

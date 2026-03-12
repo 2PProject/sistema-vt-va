@@ -14,6 +14,7 @@ interface FormFuncionarioProps {
   onCancel: () => void
 }
 
+
 export default function FormFuncionario({
   funcionario,
   empresas,
@@ -29,6 +30,8 @@ export default function FormFuncionario({
   const [folgaSemanal, setFolgaSemanal] = useState('Domingo')
   const [empresaId, setEmpresaId] = useState<string>('')
   const [ativo, setAtivo] = useState(true)
+  const [valorVT, setValorVT] = useState(0)
+  const [valorVTSabado, setValorVTSabado] = useState(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -40,6 +43,8 @@ export default function FormFuncionario({
       setFuncao(funcionario.funcao)
       setFolgaSemanal(funcionario.folga_semanal)
       setAtivo(funcionario.ativo)
+      setValorVT(funcionario.valor_vt ?? 0)
+      setValorVTSabado(funcionario.valor_vt_sabado ?? 0)
       setEmpresaId(empresaIdInicial ?? '')
     } else {
       setNome('')
@@ -49,6 +54,8 @@ export default function FormFuncionario({
       setFolgaSemanal('Domingo')
       setEmpresaId('')
       setAtivo(true)
+      setValorVT(0)
+      setValorVTSabado(0)
     }
   }, [funcionario, empresaIdInicial])
 
@@ -71,6 +78,8 @@ export default function FormFuncionario({
           folga_semanal: folgaSemanal,
           unidade_id: '', // será preenchido no handler da página
           ativo,
+          valor_vt: valorVT,
+          valor_vt_sabado: valorVTSabado,
         },
         empresaId
       )
@@ -203,6 +212,34 @@ export default function FormFuncionario({
                 </option>
               ))}
             </select>
+          </div>
+        </div>
+
+        {/* Valores VT */}
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="label-field">Valor VT / dia útil (R$)</label>
+            <input
+              type="number"
+              value={valorVT}
+              onChange={(e) => setValorVT(Number(e.target.value))}
+              min={0}
+              step={0.01}
+              className="input-field"
+              placeholder="0,00"
+            />
+          </div>
+          <div>
+            <label className="label-field">Valor VT / Sábado (R$)</label>
+            <input
+              type="number"
+              value={valorVTSabado}
+              onChange={(e) => setValorVTSabado(Number(e.target.value))}
+              min={0}
+              step={0.01}
+              className="input-field"
+              placeholder="0,00"
+            />
           </div>
         </div>
 
