@@ -45,37 +45,19 @@ export default function ValoresBeneficiosPage() {
     if (modoTodas) {
       setEmpresa(null)
       setValorVA(0)
-      const unidadesPorEmpresa = await Promise.all(
-        empresas.map(async (emp) => ({
-          emp,
-          unidadeId: await getOrCreateDefaultUnidade(emp.id),
-        }))
-      )
+      const porEmpresa = await Promise.all(
+        empresas.map(async (emp): Promise<FuncRow[]> => {
+          const unidadeId = await getOrCreateDefaultUnidade(emp.id)
+          if (!unidadeId) return []
 
-      const empresaByUnidade = new Map<string, Empresa>()
-      for (const item of unidadesPorEmpresa) {
-        if (item.unidadeId) empresaByUnidade.set(item.unidadeId, item.emp)
-      }
+          const { data: funcs } = await supabase
+            .from('funcionarios')
+            .select('id, nome, funcao, valor_vt, valor_vt_sabado')
+            .eq('unidade_id', unidadeId)
+            .eq('ativo', true)
+            .order('nome')
 
-      const unidadeIds = [...empresaByUnidade.keys()]
-      if (unidadeIds.length === 0) {
-        setFuncionarios([])
-        setLoading(false)
-        return
-      }
-
-      const { data: funcs } = await supabase
-        .from('funcionarios')
-        .select('id, nome, funcao, valor_vt, valor_vt_sabado, unidade_id')
-        .in('unidade_id', unidadeIds)
-        .eq('ativo', true)
-        .order('nome')
-
-      const todos: FuncRow[] = ((funcs ?? []) as Array<{ id: string; nome: string; funcao: string; valor_vt: number | null; valor_vt_sabado: number | null; unidade_id: string }>)
-        .map((f) => {
-          const emp = empresaByUnidade.get(f.unidade_id)
-          if (!emp) return null
-          return {
+          return ((funcs ?? []) as Array<{ id: string; nome: string; funcao: string; valor_vt: number | null; valor_vt_sabado: number | null }>).map((f) => ({
             id: f.id,
             empresaId: emp.id,
             empresaNome: emp.razao_social,
@@ -86,10 +68,11 @@ export default function ValoresBeneficiosPage() {
             valor_vt_sabado: f.valor_vt_sabado ?? 0,
             tem_sabado: (f.valor_vt_sabado ?? 0) > 0,
             alterado: false,
-          }
+          }))
         })
-        .filter((f): f is FuncRow => f !== null)
+      )
 
+      const todos = porEmpresa.flat()
       setFuncionarios(todos)
       setLoading(false)
       return
