@@ -88,41 +88,47 @@ export default function CompetenciasPage() {
         .lte('data', `${ano}-${mesStr}-31`)
       const feriados = feriadosRows?.length ?? 0
 
-      const resumo: ItemResumo[] = []
-      for (const emp of empresas) {
-        const unidadeId = await getOrCreateDefaultUnidade(emp.id)
-        if (!unidadeId) continue
-        const { data: comp } = await supabase
-          .from('competencias').select('*')
-          .eq('unidade_id', unidadeId).eq('mes', mes).eq('ano', ano).maybeSingle()
-        if (!comp) continue
-        const { data: cfs } = await supabase
-          .from('competencia_funcionario').select('*, funcionarios(*)')
-          .eq('competencia_id', comp.id)
-        for (const cf of (cfs ?? []) as Array<CompetenciaFuncionario & { funcionarios: Funcionario }>) {
-          const f = cf.funcionarios
-          const ehExcecao = (f.valor_vt_sabado ?? 0) > 0
-          const diasAuto = calcularDiasUteisAuto(mes, ano, f.folga_semanal, feriados)
-          const r = calcularVTVA({
-            diasUteis: diasAuto, diasFeriado: 0,
-            diasSabado: ehExcecao ? (cf.dias_sabado ?? 0) : 0,
-            diasDesconto: cf.dias_desconto,
-            valorVT: cf.valor_vt ?? f.valor_vt ?? 0,
-            valorVTSabado: ehExcecao ? (cf.valor_vt_sabado ?? f.valor_vt_sabado ?? 0) : 0,
-            valorVA: (comp as Competencia).valor_va ?? 0,
+      const resumoPorEmpresa = await Promise.all(
+        empresas.map(async (emp): Promise<ItemResumo[]> => {
+          const unidadeId = await getOrCreateDefaultUnidade(emp.id)
+          if (!unidadeId) return []
+
+          const { data: comp } = await supabase
+            .from('competencias').select('*')
+            .eq('unidade_id', unidadeId).eq('mes', mes).eq('ano', ano).maybeSingle()
+          if (!comp) return []
+
+          const { data: cfs } = await supabase
+            .from('competencia_funcionario').select('*, funcionarios(*)')
+            .eq('competencia_id', comp.id)
+
+          return ((cfs ?? []) as Array<CompetenciaFuncionario & { funcionarios: Funcionario }>).map((cf) => {
+            const f = cf.funcionarios
+            const ehExcecao = (f.valor_vt_sabado ?? 0) > 0
+            const diasAuto = calcularDiasUteisAuto(mes, ano, f.folga_semanal, feriados)
+            const r = calcularVTVA({
+              diasUteis: diasAuto, diasFeriado: 0,
+              diasSabado: ehExcecao ? (cf.dias_sabado ?? 0) : 0,
+              diasDesconto: cf.dias_desconto,
+              valorVT: cf.valor_vt ?? f.valor_vt ?? 0,
+              valorVTSabado: ehExcecao ? (cf.valor_vt_sabado ?? f.valor_vt_sabado ?? 0) : 0,
+              valorVA: (comp as Competencia).valor_va ?? 0,
+            })
+            return {
+              empresaNome: emp.razao_social,
+              funcionarioNome: f.nome,
+              funcionarioFuncao: f.funcao,
+              diasEfetivos: r.diasEfetivos,
+              totalVA: r.totalVA,
+              totalVT: r.totalVT,
+              totalVTSabado: r.totalVTSabado,
+              valorTotal: r.valorTotal,
+            }
           })
-          resumo.push({
-            empresaNome: emp.razao_social,
-            funcionarioNome: f.nome,
-            funcionarioFuncao: f.funcao,
-            diasEfetivos: r.diasEfetivos,
-            totalVA: r.totalVA,
-            totalVT: r.totalVT,
-            totalVTSabado: r.totalVTSabado,
-            valorTotal: r.valorTotal,
-          })
-        }
-      }
+        })
+      )
+
+      const resumo = resumoPorEmpresa.flat()
       setItensResumo(resumo)
       setLoading(false)
       return

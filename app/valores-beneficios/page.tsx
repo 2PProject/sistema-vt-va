@@ -45,19 +45,19 @@ export default function ValoresBeneficiosPage() {
     if (modoTodas) {
       setEmpresa(null)
       setValorVA(0)
-      const todos: FuncRow[] = []
-      for (const emp of empresas) {
-        const unidadeId = await getOrCreateDefaultUnidade(emp.id)
-        if (!unidadeId) continue
-        const { data: funcs } = await supabase
-          .from('funcionarios')
-          .select('id, nome, funcao, valor_vt, valor_vt_sabado')
-          .eq('unidade_id', unidadeId)
-          .eq('ativo', true)
-          .order('nome')
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        for (const f of (funcs ?? []) as any[]) {
-          todos.push({
+      const porEmpresa = await Promise.all(
+        empresas.map(async (emp): Promise<FuncRow[]> => {
+          const unidadeId = await getOrCreateDefaultUnidade(emp.id)
+          if (!unidadeId) return []
+
+          const { data: funcs } = await supabase
+            .from('funcionarios')
+            .select('id, nome, funcao, valor_vt, valor_vt_sabado')
+            .eq('unidade_id', unidadeId)
+            .eq('ativo', true)
+            .order('nome')
+
+          return ((funcs ?? []) as Array<{ id: string; nome: string; funcao: string; valor_vt: number | null; valor_vt_sabado: number | null }>).map((f) => ({
             id: f.id,
             empresaId: emp.id,
             empresaNome: emp.razao_social,
@@ -68,9 +68,11 @@ export default function ValoresBeneficiosPage() {
             valor_vt_sabado: f.valor_vt_sabado ?? 0,
             tem_sabado: (f.valor_vt_sabado ?? 0) > 0,
             alterado: false,
-          })
-        }
-      }
+          }))
+        })
+      )
+
+      const todos = porEmpresa.flat()
       setFuncionarios(todos)
       setLoading(false)
       return
@@ -331,7 +333,7 @@ export default function ValoresBeneficiosPage() {
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                     </svg>
-                    Salvar Valores
+                    {modoTodas ? 'Salvar todos os valores' : 'Salvar Valores'}
                   </>
                 )}
               </button>
