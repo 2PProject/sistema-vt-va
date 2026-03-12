@@ -82,10 +82,11 @@ export default function CompetenciasPage() {
     // Modo "Todas" — carrega resumo de todas as empresas
     if (modoTodas) {
       const mesStr = String(mes).padStart(2, '0')
+      const ultimoDiaMes = String(new Date(ano, mes, 0).getDate()).padStart(2, '0')
       const { data: feriadosRows } = await supabase
         .from('feriados').select('data')
         .gte('data', `${ano}-${mesStr}-01`)
-        .lte('data', `${ano}-${mesStr}-31`)
+        .lte('data', `${ano}-${mesStr}-${ultimoDiaMes}`)
       const feriados = feriadosRows?.length ?? 0
 
       const resumo: ItemResumo[] = []
@@ -130,11 +131,12 @@ export default function CompetenciasPage() {
 
     // Conta feriados do mês via tabela de feriados
     const mesStr = String(mes).padStart(2, '0')
+    const ultimoDiaMes = String(new Date(ano, mes, 0).getDate()).padStart(2, '0')
     const { data: feriadosRows } = await supabase
       .from('feriados')
       .select('data')
       .gte('data', `${ano}-${mesStr}-01`)
-      .lte('data', `${ano}-${mesStr}-31`)
+      .lte('data', `${ano}-${mesStr}-${ultimoDiaMes}`)
 
     setFeriadosDoMes(feriadosRows?.length ?? 0)
 
