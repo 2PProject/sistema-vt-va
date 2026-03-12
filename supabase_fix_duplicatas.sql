@@ -57,7 +57,42 @@ ALTER TABLE competencia_funcionario
 ALTER TABLE competencias
   ADD COLUMN IF NOT EXISTS feriados_mes INTEGER DEFAULT 0;
 
--- ─── 5. VERIFICAÇÃO FINAL ─────────────────────────────────────────────────────
+-- ─── 5. NOVAS TABELAS E COLUNAS ──────────────────────────────────────────────
+
+-- VA padrão por empresa (pré-cadastrado na página Valores VT/VA)
+ALTER TABLE empresas
+  ADD COLUMN IF NOT EXISTS valor_va NUMERIC DEFAULT 0;
+
+-- Feriados com data específica
+CREATE TABLE IF NOT EXISTS feriados (
+  id        uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  data      date NOT NULL,
+  descricao text NOT NULL
+);
+
+-- Tipos de desconto (Falta, Atestado, Suspensão, etc.)
+CREATE TABLE IF NOT EXISTS tipos_desconto (
+  id   uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  nome text NOT NULL UNIQUE
+);
+
+-- Breakdown de descontos por funcionário na competência
+CREATE TABLE IF NOT EXISTS competencia_funcionario_desconto (
+  id                        uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  competencia_funcionario_id uuid NOT NULL,
+  tipo_desconto_id           uuid NOT NULL REFERENCES tipos_desconto(id) ON DELETE CASCADE,
+  dias                       integer NOT NULL DEFAULT 1
+);
+
+-- Dados iniciais de tipos de desconto
+INSERT INTO tipos_desconto (nome) VALUES
+  ('Falta Injustificada'),
+  ('Atestado Médico'),
+  ('Suspensão'),
+  ('Licença')
+ON CONFLICT (nome) DO NOTHING;
+
+-- ─── 6. VERIFICAÇÃO FINAL ─────────────────────────────────────────────────────
 SELECT
   e.razao_social AS empresa,
   COUNT(f.id)    AS total_funcionarios

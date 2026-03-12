@@ -6,6 +6,7 @@ export type Empresa = {
   id: string
   razao_social: string
   cnpj: string
+  valor_va: number
 }
 
 export type Unidade = {
@@ -54,6 +55,25 @@ export type Competencia = {
   feriados_mes: number
   valor_va: number
   unidades?: Unidade & { empresas?: Empresa }
+}
+
+export type Feriado = {
+  id: string
+  data: string   // 'YYYY-MM-DD'
+  descricao: string
+}
+
+export type TipoDesconto = {
+  id: string
+  nome: string
+}
+
+export type CFDesconto = {
+  id: string
+  competencia_funcionario_id: string
+  tipo_desconto_id: string
+  dias: number
+  tipos_desconto?: TipoDesconto
 }
 
 export type CompetenciaFuncionario = {

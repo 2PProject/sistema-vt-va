@@ -12,6 +12,7 @@ interface FormEmpresaProps {
 export default function FormEmpresa({ empresa, onSave, onCancel }: FormEmpresaProps) {
   const [razaoSocial, setRazaoSocial] = useState('')
   const [cnpj, setCnpj] = useState('')
+  const [valorVA, setValorVA] = useState(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -19,9 +20,11 @@ export default function FormEmpresa({ empresa, onSave, onCancel }: FormEmpresaPr
     if (empresa) {
       setRazaoSocial(empresa.razao_social)
       setCnpj(empresa.cnpj)
+      setValorVA(empresa.valor_va ?? 0)
     } else {
       setRazaoSocial('')
       setCnpj('')
+      setValorVA(0)
     }
   }, [empresa])
 
@@ -30,7 +33,7 @@ export default function FormEmpresa({ empresa, onSave, onCancel }: FormEmpresaPr
     setError('')
     setLoading(true)
     try {
-      await onSave({ razao_social: razaoSocial, cnpj })
+      await onSave({ razao_social: razaoSocial, cnpj, valor_va: valorVA })
     } catch (err) {
       setError('Erro ao salvar. Tente novamente.')
       console.error(err)
@@ -69,6 +72,19 @@ export default function FormEmpresa({ empresa, onSave, onCancel }: FormEmpresaPr
           className="input-field"
           placeholder="00.000.000/0000-00"
           maxLength={18}
+        />
+      </div>
+
+      <div>
+        <label className="label-field">Valor VA padrão / dia útil (R$)</label>
+        <input
+          type="number"
+          value={valorVA}
+          onChange={(e) => setValorVA(Number(e.target.value))}
+          min={0}
+          step={0.01}
+          className="input-field"
+          placeholder="0,00"
         />
       </div>
 

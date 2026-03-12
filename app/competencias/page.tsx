@@ -6,8 +6,10 @@ import {
   supabase,
   Competencia,
   CompetenciaFuncionario,
+  CFDesconto,
   Funcionario,
   Empresa,
+  TipoDesconto,
   getOrCreateDefaultUnidade,
 } from '../../lib/supabase'
 import {
@@ -18,38 +20,42 @@ import {
   MESES,
 } from '../../utils/calculoVT'
 
+type DescontoLocal = { id: string; tipo_id: string; tipo_nome: string; dias: number }
+
 type CFLocal = {
   id: string
   competencia_id: string
   funcionario_id: string
   dias_sabado: number
-  dias_desconto: number
+  descontos: DescontoLocal[]
   valor_vt: number
   valor_vt_sabado: number
-  valor_total: number
   funcionario: Funcionario
 }
 
 export default function CompetenciasPage() {
   const [empresas, setEmpresas] = useState<Empresa[]>([])
+  const [tiposDesconto, setTiposDesconto] = useState<TipoDesconto[]>([])
   const [competencia, setCompetencia] = useState<Competencia | null>(null)
   const [itens, setItens] = useState<CFLocal[]>([])
+  const [feriadosDoMes, setFeriadosDoMes] = useState(0)
   const [loading, setLoading] = useState(false)
   const [salvando, setSalvando] = useState(false)
   const [sucesso, setSucesso] = useState(false)
 
-  // Parâmetros compartilhados do mês
   const [valorVA, setValorVA] = useState(0)
-  const [feriadosDoMes, setFeriadosDoMes] = useState(0)
-
   const [empresaId, setEmpresaId] = useState<string>('')
   const [mes, setMes] = useState(new Date().getMonth() + 1)
   const [ano, setAno] = useState(new Date().getFullYear())
 
+  // Modal de descontos
+  const [modalIdx, setModalIdx] = useState<number | null>(null)
+  const [novoTipoId, setNovoTipoId] = useState<string>('')
+  const [novoDias, setNovoDias] = useState(1)
+
   useEffect(() => {
-    supabase.from('empresas').select('*').order('razao_social').then(({ data }) => {
-      setEmpresas(data ?? [])
-    })
+    supabase.from('empresas').select('*').order('razao_social').then(({ data }) => setEmpresas(data ?? []))
+    supabase.from('tipos_desconto').select('*').order('nome').then(({ data }) => setTiposDesconto(data ?? []))
   }, [])
 
   const carregarCompetencia = useCallback(async () => {
@@ -57,8 +63,22 @@ export default function CompetenciasPage() {
     setLoading(true)
     setSucesso(false)
 
+    // Conta feriados do mês via tabela de feriados
+    const mesStr = String(mes).padStart(2, '0')
+    const { data: feriadosRows } = await supabase
+      .from('feriados')
+      .select('data')
+      .gte('data', `${ano}-${mesStr}-01`)
+      .lte('data', `${ano}-${mesStr}-31`)
+
+    setFeriadosDoMes(feriadosRows?.length ?? 0)
+
     const unidadeId = await getOrCreateDefaultUnidade(empresaId)
     if (!unidadeId) { setLoading(false); return }
+
+    // VA pré-carregado da empresa
+    const emp = empresas.find(e => e.id === empresaId)
+    if (emp) setValorVA(emp.valor_va ?? 0)
 
     const { data: compExistente } = await supabase
       .from('competencias')
@@ -73,11 +93,9 @@ export default function CompetenciasPage() {
 
     if (comp) {
       setCompetencia(comp)
-      setValorVA(comp.valor_va ?? 0)
-      setFeriadosDoMes(comp.feriados_mes ?? 0)
+      setValorVA(comp.valor_va ?? emp?.valor_va ?? 0)
     } else {
       setCompetencia(null)
-      setFeriadosDoMes(0)
     }
 
     const { data: funcs } = await supabase
@@ -97,6 +115,27 @@ export default function CompetenciasPage() {
         (cfExistente ?? []).map((cf: CompetenciaFuncionario) => [cf.funcionario_id, cf])
       )
 
+      // Carrega descontos de todos os CF
+      const cfIds = (cfExistente ?? []).map((cf: CompetenciaFuncionario) => cf.id)
+      let descontosMap = new Map<string, DescontoLocal[]>()
+      if (cfIds.length > 0) {
+        const { data: descontosRows } = await supabase
+          .from('competencia_funcionario_desconto')
+          .select('*, tipos_desconto(id, nome)')
+          .in('competencia_funcionario_id', cfIds)
+
+        for (const d of descontosRows ?? []) {
+          const arr = descontosMap.get(d.competencia_funcionario_id) ?? []
+          arr.push({
+            id: d.id,
+            tipo_id: d.tipo_desconto_id,
+            tipo_nome: (d.tipos_desconto as TipoDesconto)?.nome ?? '',
+            dias: d.dias,
+          })
+          descontosMap.set(d.competencia_funcionario_id, arr)
+        }
+      }
+
       setItens(
         funcs.map((f: Funcionario) => {
           const cf = cfMap.get(f.id)
@@ -105,10 +144,9 @@ export default function CompetenciasPage() {
             competencia_id: comp.id,
             funcionario_id: f.id,
             dias_sabado: cf?.dias_sabado ?? sabadosDoMes,
-            dias_desconto: cf?.dias_desconto ?? 0,
+            descontos: cf ? (descontosMap.get(cf.id) ?? []) : [],
             valor_vt: cf?.valor_vt ?? f.valor_vt ?? 0,
             valor_vt_sabado: cf?.valor_vt_sabado ?? f.valor_vt_sabado ?? 0,
-            valor_total: cf?.valor_total ?? 0,
             funcionario: f,
           }
         })
@@ -120,10 +158,9 @@ export default function CompetenciasPage() {
           competencia_id: '',
           funcionario_id: f.id,
           dias_sabado: sabadosDoMes,
-          dias_desconto: 0,
+          descontos: [],
           valor_vt: f.valor_vt ?? 0,
           valor_vt_sabado: f.valor_vt_sabado ?? 0,
-          valor_total: 0,
           funcionario: f,
         }))
       )
@@ -132,24 +169,49 @@ export default function CompetenciasPage() {
     }
 
     setLoading(false)
-  }, [empresaId, mes, ano])
+  }, [empresaId, mes, ano, empresas])
 
   useEffect(() => {
     if (empresaId) carregarCompetencia()
   }, [empresaId, mes, ano, carregarCompetencia])
 
-  /** Quando VA muda no cabeçalho, aplica a todos os funcionários */
-  function handleValorVA(valor: number) {
-    setValorVA(valor)
+  function atualizarItem(idx: number, campo: 'dias_sabado' | 'valor_vt' | 'valor_vt_sabado', valor: number) {
+    setItens(prev => { const n = [...prev]; n[idx] = { ...n[idx], [campo]: valor }; return n })
   }
 
-  function atualizarItem(idx: number, campo: keyof CFLocal, valor: number) {
-    setItens((prev) => {
-      const novo = [...prev]
-      novo[idx] = { ...novo[idx], [campo]: valor }
-      return novo
+  // ─── Modal de descontos ────────────────────────────────────────────────────
+
+  function abrirModal(idx: number) {
+    setModalIdx(idx)
+    setNovoTipoId(tiposDesconto[0]?.id ?? '')
+    setNovoDias(1)
+  }
+
+  function adicionarDesconto() {
+    if (!novoTipoId || novoDias < 1 || modalIdx === null) return
+    const tipo = tiposDesconto.find(t => t.id === novoTipoId)
+    if (!tipo) return
+    setItens(prev => {
+      const n = [...prev]
+      n[modalIdx] = {
+        ...n[modalIdx],
+        descontos: [...n[modalIdx].descontos, { id: '', tipo_id: novoTipoId, tipo_nome: tipo.nome, dias: novoDias }],
+      }
+      return n
+    })
+    setNovoDias(1)
+    if (tiposDesconto.length > 0) setNovoTipoId(tiposDesconto[0].id)
+  }
+
+  function removerDesconto(itemIdx: number, desIdx: number) {
+    setItens(prev => {
+      const n = [...prev]
+      n[itemIdx] = { ...n[itemIdx], descontos: n[itemIdx].descontos.filter((_, i) => i !== desIdx) }
+      return n
     })
   }
+
+  // ─── Salvar ────────────────────────────────────────────────────────────────
 
   async function salvar() {
     if (!empresaId) return
@@ -163,32 +225,23 @@ export default function CompetenciasPage() {
     if (!competencia) {
       const { data: novaComp } = await supabase
         .from('competencias')
-        .insert({
-          unidade_id: unidadeId,
-          mes,
-          ano,
-          dias_uteis: 0, // calculado automaticamente, não mais editado
-          feriados_mes: feriadosDoMes,
-          valor_va: valorVA,
-        })
+        .insert({ unidade_id: unidadeId, mes, ano, dias_uteis: 0, feriados_mes: feriadosDoMes, valor_va: valorVA })
         .select()
         .single()
       compId = (novaComp as Competencia)?.id ?? ''
       setCompetencia(novaComp as Competencia)
     } else {
-      await supabase
-        .from('competencias')
-        .update({ feriados_mes: feriadosDoMes, valor_va: valorVA })
-        .eq('id', competencia.id)
+      await supabase.from('competencias').update({ feriados_mes: feriadosDoMes, valor_va: valorVA }).eq('id', competencia.id)
     }
 
     for (const item of itens) {
+      const totalDescontos = item.descontos.reduce((s, d) => s + d.dias, 0)
       const diasUteisAuto = calcularDiasUteisAuto(mes, ano, item.funcionario.folga_semanal, feriadosDoMes)
       const resultado = calcularVTVA({
         diasUteis: diasUteisAuto,
         diasFeriado: 0,
         diasSabado: item.dias_sabado,
-        diasDesconto: item.dias_desconto,
+        diasDesconto: totalDescontos,
         valorVT: item.valor_vt,
         valorVTSabado: item.valor_vt_sabado,
         valorVA,
@@ -199,16 +252,30 @@ export default function CompetenciasPage() {
         funcionario_id: item.funcionario_id,
         dias_feriado: feriadosDoMes,
         dias_sabado: item.dias_sabado,
-        dias_desconto: item.dias_desconto,
+        dias_desconto: totalDescontos,
         valor_vt: item.valor_vt,
         valor_vt_sabado: item.valor_vt_sabado,
         valor_total: resultado.valorTotal,
       }
 
-      if (item.id) {
-        await supabase.from('competencia_funcionario').update(payload).eq('id', item.id)
+      let cfId = item.id
+      if (cfId) {
+        await supabase.from('competencia_funcionario').update(payload).eq('id', cfId)
       } else {
-        await supabase.from('competencia_funcionario').insert(payload)
+        const { data: novoCF } = await supabase.from('competencia_funcionario').insert(payload).select().single()
+        cfId = (novoCF as CFDesconto)?.id ?? ''
+      }
+
+      if (cfId) {
+        // Recria descontos: deleta antigos, insere novos
+        await supabase.from('competencia_funcionario_desconto').delete().eq('competencia_funcionario_id', cfId)
+        for (const d of item.descontos) {
+          await supabase.from('competencia_funcionario_desconto').insert({
+            competencia_funcionario_id: cfId,
+            tipo_desconto_id: d.tipo_id,
+            dias: d.dias,
+          })
+        }
       }
     }
 
@@ -219,24 +286,99 @@ export default function CompetenciasPage() {
   }
 
   const totalGeral = itens.reduce((sum, item) => {
-    const diasUteisAuto = calcularDiasUteisAuto(mes, ano, item.funcionario.folga_semanal, feriadosDoMes)
-    const r = calcularVTVA({
-      diasUteis: diasUteisAuto,
-      diasFeriado: 0,
-      diasSabado: item.dias_sabado,
-      diasDesconto: item.dias_desconto,
-      valorVT: item.valor_vt,
-      valorVTSabado: item.valor_vt_sabado,
-      valorVA,
-    })
+    const totalDesc = item.descontos.reduce((s, d) => s + d.dias, 0)
+    const diasAuto = calcularDiasUteisAuto(mes, ano, item.funcionario.folga_semanal, feriadosDoMes)
+    const r = calcularVTVA({ diasUteis: diasAuto, diasFeriado: 0, diasSabado: item.dias_sabado, diasDesconto: totalDesc, valorVT: item.valor_vt, valorVTSabado: item.valor_vt_sabado, valorVA })
     return sum + r.valorTotal
   }, 0)
+
+  const modalItem = modalIdx !== null ? itens[modalIdx] : null
 
   return (
     <LayoutAdmin title="Competências Mensais">
       <div className="space-y-6">
 
-        {/* ── Seleção de empresa/período ── */}
+        {/* ── Modal de descontos ── */}
+        {modalIdx !== null && modalItem && (
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h2 className="text-base font-bold text-gray-800">Descontos</h2>
+                  <p className="text-xs text-gray-500">{modalItem.funcionario.nome}</p>
+                </div>
+                <button onClick={() => setModalIdx(null)} className="text-gray-400 hover:text-gray-600">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              {/* Lista existente */}
+              {modalItem.descontos.length > 0 ? (
+                <div className="space-y-2 mb-4">
+                  {modalItem.descontos.map((d, di) => (
+                    <div key={di} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2">
+                      <div>
+                        <span className="text-sm font-medium text-gray-800">{d.tipo_nome}</span>
+                        <span className="ml-2 text-xs text-gray-500">{d.dias} dia(s)</span>
+                      </div>
+                      <button onClick={() => removerDesconto(modalIdx, di)} className="text-red-500 hover:text-red-700">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    </div>
+                  ))}
+                  <div className="text-right text-sm font-semibold text-gray-700 pt-1">
+                    Total: {modalItem.descontos.reduce((s, d) => s + d.dias, 0)} dia(s) descontados
+                  </div>
+                </div>
+              ) : (
+                <p className="text-sm text-gray-400 mb-4">Nenhum desconto lançado.</p>
+              )}
+
+              {/* Adicionar novo desconto */}
+              {tiposDesconto.length > 0 ? (
+                <div className="border-t border-gray-100 pt-4">
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Adicionar desconto</p>
+                  <div className="flex gap-2">
+                    <select
+                      value={novoTipoId}
+                      onChange={(e) => setNovoTipoId(e.target.value)}
+                      className="input-field flex-1 text-sm"
+                    >
+                      {tiposDesconto.map(t => (
+                        <option key={t.id} value={t.id}>{t.nome}</option>
+                      ))}
+                    </select>
+                    <input
+                      type="number"
+                      value={novoDias}
+                      onChange={(e) => setNovoDias(Number(e.target.value))}
+                      min={1} max={31}
+                      className="w-20 border border-gray-300 rounded-lg px-2 py-2 text-center text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                    <button onClick={adicionarDesconto} className="btn-primary px-3 py-2 text-sm">
+                      + Adicionar
+                    </button>
+                  </div>
+                  <p className="text-xs text-gray-400 mt-1">dias</p>
+                </div>
+              ) : (
+                <p className="text-xs text-amber-600 mt-2">
+                  Cadastre tipos de desconto primeiro em <strong>Tipos de Desconto</strong>.
+                </p>
+              )}
+
+              <button onClick={() => setModalIdx(null)} className="btn-primary w-full mt-4">
+                Confirmar
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ── Seleção ── */}
         <div className="card">
           <h2 className="text-sm font-semibold text-gray-700 mb-4">Selecionar Competência</h2>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -261,46 +403,30 @@ export default function CompetenciasPage() {
             </div>
           </div>
 
-          {/* Parâmetros compartilhados */}
           {empresaId && (
-            <div className="mt-4 pt-4 border-t border-gray-100">
-              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
-                Parâmetros compartilhados do mês
-              </p>
-              <div className="flex flex-wrap gap-4 items-end">
-                <div>
-                  <label className="label-field">Valor VA / dia útil (R$)</label>
-                  <input
-                    type="number"
-                    value={valorVA}
-                    onChange={(e) => handleValorVA(Number(e.target.value))}
-                    min={0}
-                    step={0.01}
-                    className="input-field w-36"
-                    placeholder="0,00"
-                  />
-                </div>
-                <div>
-                  <label className="label-field">Feriados no mês</label>
-                  <input
-                    type="number"
-                    value={feriadosDoMes}
-                    onChange={(e) => setFeriadosDoMes(Number(e.target.value))}
-                    min={0}
-                    max={15}
-                    className="input-field w-24"
-                  />
-                </div>
-                <p className="text-xs text-blue-600 pb-1">
-                  Dias úteis calculados automaticamente pela folga semanal de cada funcionário.
-                  <br />
-                  VA é igual para todos — altere o campo acima.
-                </p>
+            <div className="mt-4 pt-4 border-t border-gray-100 flex flex-wrap items-end gap-6">
+              <div>
+                <label className="label-field">VA / dia útil (R$)</label>
+                <input
+                  type="number"
+                  value={valorVA}
+                  onChange={(e) => setValorVA(Number(e.target.value))}
+                  min={0} step={0.01}
+                  className="input-field w-36"
+                  placeholder="0,00"
+                />
               </div>
+              <div className="pb-1">
+                <p className="text-xs text-gray-400">Feriados no mês (automático)</p>
+                <p className="text-lg font-bold text-blue-700">{feriadosDoMes}</p>
+                <p className="text-xs text-gray-400">cadastrados na agenda de Feriados</p>
+              </div>
+              <p className="text-xs text-blue-600 pb-1">
+                Dias úteis calculados automaticamente por funcionário.<br />
+                VT pré-carregado do perfil de cada funcionário.
+              </p>
               {!competencia && (
-                <p className="text-xs text-amber-600 mt-2">
-                  ⚠ Competência ainda não cadastrada — será criada ao salvar.
-                </p>
+                <p className="text-xs text-amber-600">⚠ Competência nova — será criada ao salvar.</p>
               )}
             </div>
           )}
@@ -315,7 +441,7 @@ export default function CompetenciasPage() {
           </div>
         )}
 
-        {/* ── Tabela de funcionários ── */}
+        {/* ── Tabela ── */}
         {empresaId && (
           <div className="card">
             <div className="flex items-center justify-between mb-4">
@@ -324,7 +450,7 @@ export default function CompetenciasPage() {
               </h2>
               {itens.length > 0 && (
                 <div className="text-sm font-semibold text-gray-700">
-                  Total geral: <span className="text-blue-600">{formatarMoeda(totalGeral)}</span>
+                  Total: <span className="text-blue-600">{formatarMoeda(totalGeral)}</span>
                 </div>
               )}
             </div>
@@ -340,9 +466,9 @@ export default function CompetenciasPage() {
                     <thead>
                       <tr className="bg-gray-50 border-b border-gray-200">
                         <th className="table-header text-left min-w-[160px]">Funcionário</th>
-                        <th className="table-header text-left min-w-[110px]">Folga</th>
-                        <th className="table-header text-center min-w-[90px]">VT/dia (R$)</th>
-                        <th className="table-header text-center min-w-[90px]">VT Sáb (R$)</th>
+                        <th className="table-header text-left min-w-[100px]">Folga</th>
+                        <th className="table-header text-center min-w-[90px]">VT/dia</th>
+                        <th className="table-header text-center min-w-[90px]">VT Sáb</th>
                         <th className="table-header text-center">Sáb. trab.</th>
                         <th className="table-header text-center">Descontos</th>
                         <th className="table-header text-right bg-blue-50 text-blue-700">Dias Ef.</th>
@@ -354,16 +480,13 @@ export default function CompetenciasPage() {
                     </thead>
                     <tbody className="divide-y divide-gray-100">
                       {itens.map((item, idx) => {
-                        const diasUteisAuto = calcularDiasUteisAuto(
-                          mes, ano,
-                          item.funcionario.folga_semanal,
-                          feriadosDoMes
-                        )
+                        const totalDesc = item.descontos.reduce((s, d) => s + d.dias, 0)
+                        const diasAuto = calcularDiasUteisAuto(mes, ano, item.funcionario.folga_semanal, feriadosDoMes)
                         const r = calcularVTVA({
-                          diasUteis: diasUteisAuto,
+                          diasUteis: diasAuto,
                           diasFeriado: 0,
                           diasSabado: item.dias_sabado,
-                          diasDesconto: item.dias_desconto,
+                          diasDesconto: totalDesc,
                           valorVT: item.valor_vt,
                           valorVTSabado: item.valor_vt_sabado,
                           valorVA,
@@ -375,45 +498,33 @@ export default function CompetenciasPage() {
                               <div className="text-xs text-gray-400">{item.funcionario.funcao}</div>
                             </td>
                             <td className="table-cell">
-                              <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
+                              <span className="text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">
                                 {item.funcionario.folga_semanal ?? '—'}
                               </span>
                             </td>
                             <td className="table-cell text-center">
-                              <input
-                                type="number"
-                                value={item.valor_vt}
-                                onChange={(e) => atualizarItem(idx, 'valor_vt', Number(e.target.value))}
-                                className="w-20 border border-gray-300 rounded px-2 py-1 text-center text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
-                                min={0} step={0.01}
-                              />
+                              <input type="number" value={item.valor_vt} onChange={(e) => atualizarItem(idx, 'valor_vt', Number(e.target.value))} className="w-20 border border-gray-300 rounded px-2 py-1 text-center text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" min={0} step={0.01} />
                             </td>
                             <td className="table-cell text-center">
-                              <input
-                                type="number"
-                                value={item.valor_vt_sabado}
-                                onChange={(e) => atualizarItem(idx, 'valor_vt_sabado', Number(e.target.value))}
-                                className="w-20 border border-gray-300 rounded px-2 py-1 text-center text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
-                                min={0} step={0.01}
-                              />
+                              <input type="number" value={item.valor_vt_sabado} onChange={(e) => atualizarItem(idx, 'valor_vt_sabado', Number(e.target.value))} className="w-20 border border-gray-300 rounded px-2 py-1 text-center text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" min={0} step={0.01} />
                             </td>
                             <td className="table-cell text-center">
-                              <input
-                                type="number"
-                                value={item.dias_sabado}
-                                onChange={(e) => atualizarItem(idx, 'dias_sabado', Number(e.target.value))}
-                                className="w-16 border border-gray-300 rounded px-2 py-1 text-center text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
-                                min={0} max={5}
-                              />
+                              <input type="number" value={item.dias_sabado} onChange={(e) => atualizarItem(idx, 'dias_sabado', Number(e.target.value))} className="w-16 border border-gray-300 rounded px-2 py-1 text-center text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" min={0} max={5} />
                             </td>
                             <td className="table-cell text-center">
-                              <input
-                                type="number"
-                                value={item.dias_desconto}
-                                onChange={(e) => atualizarItem(idx, 'dias_desconto', Number(e.target.value))}
-                                className="w-16 border border-gray-300 rounded px-2 py-1 text-center text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
-                                min={0} max={31}
-                              />
+                              <button
+                                onClick={() => abrirModal(idx)}
+                                className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium transition-colors ${
+                                  totalDesc > 0
+                                    ? 'bg-red-50 text-red-700 hover:bg-red-100'
+                                    : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                                }`}
+                              >
+                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                                </svg>
+                                {totalDesc > 0 ? `${totalDesc}d` : 'Adicionar'}
+                              </button>
                             </td>
                             <td className="table-cell text-right bg-blue-50">
                               <span className="font-bold text-blue-700 text-sm">{r.diasEfetivos}d</span>
