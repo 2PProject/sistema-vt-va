@@ -8,7 +8,6 @@ import {
   CompetenciaFuncionario,
   Funcionario,
   Empresa,
-  getOrCreateDefaultUnidade,
 } from '../../lib/supabase'
 import { calcularVTVA, calcularDiasUteisAuto, formatarMoeda, MESES } from '../../utils/calculoVT'
 
@@ -47,28 +46,46 @@ export default function RecibosPage() {
       : empresas.filter(e => e.id === empresaId)
 
     const todos: RegistroCompleto[] = []
+    const empresaIds = empresasParaBuscar.map((e) => e.id)
+    const empresaMap = new Map(empresasParaBuscar.map((e) => [e.id, e]))
 
-    for (const emp of empresasParaBuscar) {
-      const unidadeId = await getOrCreateDefaultUnidade(emp.id)
-      if (!unidadeId) continue
+    const { data: unidades } = await supabase
+      .from('unidades')
+      .select('id, empresa_id')
+      .in('empresa_id', empresaIds)
 
-      const { data: comp } = await supabase
+    const unidadeEmpresaMap = new Map<string, string>()
+    for (const un of unidades ?? []) {
+      unidadeEmpresaMap.set(un.id, un.empresa_id)
+    }
+
+    const unidadeIds = (unidades ?? []).map((u) => u.id)
+    if (unidadeIds.length > 0) {
+      const { data: comps } = await supabase
         .from('competencias')
         .select('*')
-        .eq('unidade_id', unidadeId)
+        .in('unidade_id', unidadeIds)
         .eq('mes', mes)
         .eq('ano', ano)
-        .maybeSingle()
 
-      if (!comp) continue
+      const competencias = (comps ?? []) as Competencia[]
+      const compMap = new Map(competencias.map((c) => [c.id, c]))
+      const compIds = competencias.map((c) => c.id)
 
-      const { data: cfs } = await supabase
-        .from('competencia_funcionario')
-        .select('*, funcionarios(*)')
-        .eq('competencia_id', comp.id)
+      if (compIds.length > 0) {
+        const { data: cfs } = await supabase
+          .from('competencia_funcionario')
+          .select('*, funcionarios(*)')
+          .in('competencia_id', compIds)
 
-      for (const cf of (cfs as CFComFunc[]) ?? []) {
-        todos.push({ ...cf, competenciaObj: comp as Competencia, empresaObj: emp })
+        for (const cf of (cfs as CFComFunc[]) ?? []) {
+          const comp = compMap.get(cf.competencia_id)
+          if (!comp) continue
+          const empId = unidadeEmpresaMap.get(comp.unidade_id)
+          const emp = empId ? empresaMap.get(empId) : null
+          if (!emp) continue
+          todos.push({ ...cf, competenciaObj: comp, empresaObj: emp })
+        }
       }
     }
 

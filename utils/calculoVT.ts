@@ -123,11 +123,12 @@ export function calcularDiasUteisAuto(
   feriadosDoMes: number
 ): number {
   const counts = contarDiasSemana(mes, ano)
-  // Total de dias úteis (seg–sáb)
-  let total = counts[1] + counts[2] + counts[3] + counts[4] + counts[5] + counts[6]
-  // Subtrai as folgas da semana se cair em dia útil
+  // Total de dias úteis (seg–sex).
+  // Sábado é tratado separadamente na regra de VT sábado para não somar em duplicidade.
+  let total = counts[1] + counts[2] + counts[3] + counts[4] + counts[5]
+  // Subtrai as folgas da semana se cair em dia útil (seg–sex)
   const dow = folgaSemanal ? (FOLGA_TO_DOW[folgaSemanal] ?? -1) : -1
-  if (dow >= 1 && dow <= 6) total -= counts[dow]
+  if (dow >= 1 && dow <= 5) total -= counts[dow]
   // Subtrai feriados compartilhados
   total -= feriadosDoMes
   return Math.max(0, total)

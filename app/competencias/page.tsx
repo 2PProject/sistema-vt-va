@@ -89,38 +89,66 @@ export default function CompetenciasPage() {
       const feriados = feriadosRows?.length ?? 0
 
       const resumo: ItemResumo[] = []
-      for (const emp of empresas) {
-        const unidadeId = await getOrCreateDefaultUnidade(emp.id)
-        if (!unidadeId) continue
-        const { data: comp } = await supabase
-          .from('competencias').select('*')
-          .eq('unidade_id', unidadeId).eq('mes', mes).eq('ano', ano).maybeSingle()
-        if (!comp) continue
-        const { data: cfs } = await supabase
-          .from('competencia_funcionario').select('*, funcionarios(*)')
-          .eq('competencia_id', comp.id)
-        for (const cf of (cfs ?? []) as Array<CompetenciaFuncionario & { funcionarios: Funcionario }>) {
-          const f = cf.funcionarios
-          const ehExcecao = (f.valor_vt_sabado ?? 0) > 0
-          const diasAuto = calcularDiasUteisAuto(mes, ano, f.folga_semanal, feriados)
-          const r = calcularVTVA({
-            diasUteis: diasAuto, diasFeriado: 0,
-            diasSabado: ehExcecao ? (cf.dias_sabado ?? 0) : 0,
-            diasDesconto: cf.dias_desconto,
-            valorVT: cf.valor_vt ?? f.valor_vt ?? 0,
-            valorVTSabado: ehExcecao ? (cf.valor_vt_sabado ?? f.valor_vt_sabado ?? 0) : 0,
-            valorVA: (comp as Competencia).valor_va ?? 0,
-          })
-          resumo.push({
-            empresaNome: emp.razao_social,
-            funcionarioNome: f.nome,
-            funcionarioFuncao: f.funcao,
-            diasEfetivos: r.diasEfetivos,
-            totalVA: r.totalVA,
-            totalVT: r.totalVT,
-            totalVTSabado: r.totalVTSabado,
-            valorTotal: r.valorTotal,
-          })
+      const empresaIds = empresas.map((e) => e.id)
+      const empresaNomeMap = new Map(empresas.map((e) => [e.id, e.razao_social]))
+
+      const { data: unidades } = await supabase
+        .from('unidades')
+        .select('id, empresa_id')
+        .in('empresa_id', empresaIds)
+
+      const unidadeEmpresaMap = new Map<string, string>()
+      for (const un of unidades ?? []) {
+        unidadeEmpresaMap.set(un.id, un.empresa_id)
+      }
+      const unidadeIds = (unidades ?? []).map((u) => u.id)
+
+      if (unidadeIds.length > 0) {
+        const { data: comps } = await supabase
+          .from('competencias')
+          .select('*')
+          .in('unidade_id', unidadeIds)
+          .eq('mes', mes)
+          .eq('ano', ano)
+
+        const compList = (comps ?? []) as Competencia[]
+        const compMap = new Map(compList.map((c) => [c.id, c]))
+        const compIds = compList.map((c) => c.id)
+
+        if (compIds.length > 0) {
+          const { data: cfs } = await supabase
+            .from('competencia_funcionario')
+            .select('*, funcionarios(*)')
+            .in('competencia_id', compIds)
+
+          for (const cf of (cfs ?? []) as Array<CompetenciaFuncionario & { funcionarios: Funcionario }>) {
+            const comp = compMap.get(cf.competencia_id)
+            const f = cf.funcionarios
+            if (!comp || !f) continue
+
+            const empresaNome = empresaNomeMap.get(unidadeEmpresaMap.get(comp.unidade_id) ?? '') ?? 'Empresa'
+            const ehExcecao = (f.valor_vt_sabado ?? 0) > 0
+            const diasAuto = calcularDiasUteisAuto(mes, ano, f.folga_semanal, feriados)
+            const r = calcularVTVA({
+              diasUteis: diasAuto,
+              diasFeriado: 0,
+              diasSabado: ehExcecao ? (cf.dias_sabado ?? 0) : 0,
+              diasDesconto: cf.dias_desconto,
+              valorVT: cf.valor_vt ?? f.valor_vt ?? 0,
+              valorVTSabado: ehExcecao ? (cf.valor_vt_sabado ?? f.valor_vt_sabado ?? 0) : 0,
+              valorVA: comp.valor_va ?? 0,
+            })
+            resumo.push({
+              empresaNome,
+              funcionarioNome: f.nome,
+              funcionarioFuncao: f.funcao,
+              diasEfetivos: r.diasEfetivos,
+              totalVA: r.totalVA,
+              totalVT: r.totalVT,
+              totalVTSabado: r.totalVTSabado,
+              valorTotal: r.valorTotal,
+            })
+          }
         }
       }
       setItensResumo(resumo)
