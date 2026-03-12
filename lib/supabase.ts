@@ -39,6 +39,7 @@ export type Funcionario = {
  * Migrations necessárias — executar supabase_fix_duplicatas.sql no SQL Editor:
  *
  *   ALTER TABLE competencias ADD COLUMN IF NOT EXISTS valor_va NUMERIC DEFAULT 0;
+ *   ALTER TABLE competencias ADD COLUMN IF NOT EXISTS feriados_mes INTEGER DEFAULT 0;
  *   ALTER TABLE funcionarios ADD COLUMN IF NOT EXISTS valor_vt NUMERIC DEFAULT 0;
  *   ALTER TABLE funcionarios ADD COLUMN IF NOT EXISTS valor_vt_sabado NUMERIC DEFAULT 0;
  *   ALTER TABLE competencia_funcionario ADD COLUMN IF NOT EXISTS valor_vt NUMERIC DEFAULT 0;
@@ -50,8 +51,7 @@ export type Competencia = {
   mes: number
   ano: number
   dias_uteis: number
-  valor_vt: number
-  valor_vt_sabado: number
+  feriados_mes: number
   valor_va: number
   unidades?: Unidade & { empresas?: Empresa }
 }

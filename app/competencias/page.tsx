@@ -10,13 +10,18 @@ import {
   Empresa,
   getOrCreateDefaultUnidade,
 } from '../../lib/supabase'
-import { calcularVTVA, formatarMoeda, MESES } from '../../utils/calculoVT'
+import {
+  calcularVTVA,
+  calcularDiasUteisAuto,
+  calcularSabadosDoMes,
+  formatarMoeda,
+  MESES,
+} from '../../utils/calculoVT'
 
 type CFLocal = {
   id: string
   competencia_id: string
   funcionario_id: string
-  dias_feriado: number
   dias_sabado: number
   dias_desconto: number
   valor_vt: number
@@ -33,12 +38,13 @@ export default function CompetenciasPage() {
   const [salvando, setSalvando] = useState(false)
   const [sucesso, setSucesso] = useState(false)
 
+  // Parâmetros compartilhados do mês
   const [valorVA, setValorVA] = useState(0)
+  const [feriadosDoMes, setFeriadosDoMes] = useState(0)
 
   const [empresaId, setEmpresaId] = useState<string>('')
   const [mes, setMes] = useState(new Date().getMonth() + 1)
   const [ano, setAno] = useState(new Date().getFullYear())
-  const [diasUteis, setDiasUteis] = useState(22)
 
   useEffect(() => {
     supabase.from('empresas').select('*').order('razao_social').then(({ data }) => {
@@ -63,13 +69,15 @@ export default function CompetenciasPage() {
       .maybeSingle()
 
     const comp = compExistente as Competencia | null
+    const sabadosDoMes = calcularSabadosDoMes(mes, ano)
 
     if (comp) {
       setCompetencia(comp)
-      setDiasUteis(comp.dias_uteis)
       setValorVA(comp.valor_va ?? 0)
+      setFeriadosDoMes(comp.feriados_mes ?? 0)
     } else {
       setCompetencia(null)
+      setFeriadosDoMes(0)
     }
 
     const { data: funcs } = await supabase
@@ -96,8 +104,7 @@ export default function CompetenciasPage() {
             id: cf?.id ?? '',
             competencia_id: comp.id,
             funcionario_id: f.id,
-            dias_feriado: cf?.dias_feriado ?? 0,
-            dias_sabado: cf?.dias_sabado ?? 0,
+            dias_sabado: cf?.dias_sabado ?? sabadosDoMes,
             dias_desconto: cf?.dias_desconto ?? 0,
             valor_vt: cf?.valor_vt ?? f.valor_vt ?? 0,
             valor_vt_sabado: cf?.valor_vt_sabado ?? f.valor_vt_sabado ?? 0,
@@ -112,8 +119,7 @@ export default function CompetenciasPage() {
           id: '',
           competencia_id: '',
           funcionario_id: f.id,
-          dias_feriado: 0,
-          dias_sabado: 0,
+          dias_sabado: sabadosDoMes,
           dias_desconto: 0,
           valor_vt: f.valor_vt ?? 0,
           valor_vt_sabado: f.valor_vt_sabado ?? 0,
@@ -131,6 +137,11 @@ export default function CompetenciasPage() {
   useEffect(() => {
     if (empresaId) carregarCompetencia()
   }, [empresaId, mes, ano, carregarCompetencia])
+
+  /** Quando VA muda no cabeçalho, aplica a todos os funcionários */
+  function handleValorVA(valor: number) {
+    setValorVA(valor)
+  }
 
   function atualizarItem(idx: number, campo: keyof CFLocal, valor: number) {
     setItens((prev) => {
@@ -156,7 +167,8 @@ export default function CompetenciasPage() {
           unidade_id: unidadeId,
           mes,
           ano,
-          dias_uteis: diasUteis,
+          dias_uteis: 0, // calculado automaticamente, não mais editado
+          feriados_mes: feriadosDoMes,
           valor_va: valorVA,
         })
         .select()
@@ -166,14 +178,15 @@ export default function CompetenciasPage() {
     } else {
       await supabase
         .from('competencias')
-        .update({ dias_uteis: diasUteis, valor_va: valorVA })
+        .update({ feriados_mes: feriadosDoMes, valor_va: valorVA })
         .eq('id', competencia.id)
     }
 
     for (const item of itens) {
+      const diasUteisAuto = calcularDiasUteisAuto(mes, ano, item.funcionario.folga_semanal, feriadosDoMes)
       const resultado = calcularVTVA({
-        diasUteis,
-        diasFeriado: item.dias_feriado,
+        diasUteis: diasUteisAuto,
+        diasFeriado: 0,
         diasSabado: item.dias_sabado,
         diasDesconto: item.dias_desconto,
         valorVT: item.valor_vt,
@@ -184,7 +197,7 @@ export default function CompetenciasPage() {
       const payload = {
         competencia_id: compId,
         funcionario_id: item.funcionario_id,
-        dias_feriado: item.dias_feriado,
+        dias_feriado: feriadosDoMes,
         dias_sabado: item.dias_sabado,
         dias_desconto: item.dias_desconto,
         valor_vt: item.valor_vt,
@@ -206,9 +219,10 @@ export default function CompetenciasPage() {
   }
 
   const totalGeral = itens.reduce((sum, item) => {
+    const diasUteisAuto = calcularDiasUteisAuto(mes, ano, item.funcionario.folga_semanal, feriadosDoMes)
     const r = calcularVTVA({
-      diasUteis,
-      diasFeriado: item.dias_feriado,
+      diasUteis: diasUteisAuto,
+      diasFeriado: 0,
       diasSabado: item.dias_sabado,
       diasDesconto: item.dias_desconto,
       valorVT: item.valor_vt,
@@ -221,6 +235,8 @@ export default function CompetenciasPage() {
   return (
     <LayoutAdmin title="Competências Mensais">
       <div className="space-y-6">
+
+        {/* ── Seleção de empresa/período ── */}
         <div className="card">
           <h2 className="text-sm font-semibold text-gray-700 mb-4">Selecionar Competência</h2>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -245,26 +261,44 @@ export default function CompetenciasPage() {
             </div>
           </div>
 
+          {/* Parâmetros compartilhados */}
           {empresaId && (
             <div className="mt-4 pt-4 border-t border-gray-100">
               <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">
-                Parâmetros do Mês
+                Parâmetros compartilhados do mês
               </p>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-4 max-w-lg">
-                <div>
-                  <label className="label-field">Dias Úteis</label>
-                  <input type="number" value={diasUteis} onChange={(e) => setDiasUteis(Number(e.target.value))} className="input-field" min={0} max={31} />
-                </div>
+              <div className="flex flex-wrap gap-4 items-end">
                 <div>
                   <label className="label-field">Valor VA / dia útil (R$)</label>
-                  <input type="number" value={valorVA} onChange={(e) => setValorVA(Number(e.target.value))} className="input-field" min={0} step={0.01} placeholder="0,00" />
+                  <input
+                    type="number"
+                    value={valorVA}
+                    onChange={(e) => handleValorVA(Number(e.target.value))}
+                    min={0}
+                    step={0.01}
+                    className="input-field w-36"
+                    placeholder="0,00"
+                  />
                 </div>
+                <div>
+                  <label className="label-field">Feriados no mês</label>
+                  <input
+                    type="number"
+                    value={feriadosDoMes}
+                    onChange={(e) => setFeriadosDoMes(Number(e.target.value))}
+                    min={0}
+                    max={15}
+                    className="input-field w-24"
+                  />
+                </div>
+                <p className="text-xs text-blue-600 pb-1">
+                  Dias úteis calculados automaticamente pela folga semanal de cada funcionário.
+                  <br />
+                  VA é igual para todos — altere o campo acima.
+                </p>
               </div>
-              <p className="text-xs text-blue-600 mt-2">
-                O valor do VT é individual por funcionário — configure no cadastro de cada funcionário.
-              </p>
               {!competencia && (
-                <p className="text-xs text-amber-600 mt-1">
+                <p className="text-xs text-amber-600 mt-2">
                   ⚠ Competência ainda não cadastrada — será criada ao salvar.
                 </p>
               )}
@@ -281,13 +315,16 @@ export default function CompetenciasPage() {
           </div>
         )}
 
+        {/* ── Tabela de funcionários ── */}
         {empresaId && (
           <div className="card">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm font-semibold text-gray-700">Funcionários — {MESES[mes - 1]}/{ano}</h2>
+              <h2 className="text-sm font-semibold text-gray-700">
+                Funcionários — {MESES[mes - 1]}/{ano}
+              </h2>
               {itens.length > 0 && (
                 <div className="text-sm font-semibold text-gray-700">
-                  Total: <span className="text-blue-600">{formatarMoeda(totalGeral)}</span>
+                  Total geral: <span className="text-blue-600">{formatarMoeda(totalGeral)}</span>
                 </div>
               )}
             </div>
@@ -303,23 +340,28 @@ export default function CompetenciasPage() {
                     <thead>
                       <tr className="bg-gray-50 border-b border-gray-200">
                         <th className="table-header text-left min-w-[160px]">Funcionário</th>
+                        <th className="table-header text-left min-w-[110px]">Folga</th>
                         <th className="table-header text-center min-w-[90px]">VT/dia (R$)</th>
                         <th className="table-header text-center min-w-[90px]">VT Sáb (R$)</th>
-                        <th className="table-header text-center">Feriados</th>
-                        <th className="table-header text-center">Sábados</th>
+                        <th className="table-header text-center">Sáb. trab.</th>
                         <th className="table-header text-center">Descontos</th>
-                        <th className="table-header text-right">Dias Ef.</th>
+                        <th className="table-header text-right bg-blue-50 text-blue-700">Dias Ef.</th>
                         <th className="table-header text-right">VA</th>
                         <th className="table-header text-right">VT</th>
                         <th className="table-header text-right">VT Sáb.</th>
-                        <th className="table-header text-right">Total</th>
+                        <th className="table-header text-right font-bold">Total</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
                       {itens.map((item, idx) => {
+                        const diasUteisAuto = calcularDiasUteisAuto(
+                          mes, ano,
+                          item.funcionario.folga_semanal,
+                          feriadosDoMes
+                        )
                         const r = calcularVTVA({
-                          diasUteis,
-                          diasFeriado: item.dias_feriado,
+                          diasUteis: diasUteisAuto,
+                          diasFeriado: 0,
                           diasSabado: item.dias_sabado,
                           diasDesconto: item.dias_desconto,
                           valorVT: item.valor_vt,
@@ -332,22 +374,50 @@ export default function CompetenciasPage() {
                               <div className="font-medium text-gray-900">{item.funcionario.nome}</div>
                               <div className="text-xs text-gray-400">{item.funcionario.funcao}</div>
                             </td>
-                            <td className="table-cell text-center">
-                              <input type="number" value={item.valor_vt} onChange={(e) => atualizarItem(idx, 'valor_vt', Number(e.target.value))} className="w-20 border border-gray-300 rounded px-2 py-1 text-center text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" min={0} step={0.01} />
+                            <td className="table-cell">
+                              <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
+                                {item.funcionario.folga_semanal ?? '—'}
+                              </span>
                             </td>
                             <td className="table-cell text-center">
-                              <input type="number" value={item.valor_vt_sabado} onChange={(e) => atualizarItem(idx, 'valor_vt_sabado', Number(e.target.value))} className="w-20 border border-gray-300 rounded px-2 py-1 text-center text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" min={0} step={0.01} />
+                              <input
+                                type="number"
+                                value={item.valor_vt}
+                                onChange={(e) => atualizarItem(idx, 'valor_vt', Number(e.target.value))}
+                                className="w-20 border border-gray-300 rounded px-2 py-1 text-center text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                min={0} step={0.01}
+                              />
                             </td>
                             <td className="table-cell text-center">
-                              <input type="number" value={item.dias_feriado} onChange={(e) => atualizarItem(idx, 'dias_feriado', Number(e.target.value))} className="w-16 border border-gray-300 rounded px-2 py-1 text-center text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" min={0} max={31} />
+                              <input
+                                type="number"
+                                value={item.valor_vt_sabado}
+                                onChange={(e) => atualizarItem(idx, 'valor_vt_sabado', Number(e.target.value))}
+                                className="w-20 border border-gray-300 rounded px-2 py-1 text-center text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                min={0} step={0.01}
+                              />
                             </td>
                             <td className="table-cell text-center">
-                              <input type="number" value={item.dias_sabado} onChange={(e) => atualizarItem(idx, 'dias_sabado', Number(e.target.value))} className="w-16 border border-gray-300 rounded px-2 py-1 text-center text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" min={0} max={5} />
+                              <input
+                                type="number"
+                                value={item.dias_sabado}
+                                onChange={(e) => atualizarItem(idx, 'dias_sabado', Number(e.target.value))}
+                                className="w-16 border border-gray-300 rounded px-2 py-1 text-center text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                min={0} max={5}
+                              />
                             </td>
                             <td className="table-cell text-center">
-                              <input type="number" value={item.dias_desconto} onChange={(e) => atualizarItem(idx, 'dias_desconto', Number(e.target.value))} className="w-16 border border-gray-300 rounded px-2 py-1 text-center text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" min={0} max={31} />
+                              <input
+                                type="number"
+                                value={item.dias_desconto}
+                                onChange={(e) => atualizarItem(idx, 'dias_desconto', Number(e.target.value))}
+                                className="w-16 border border-gray-300 rounded px-2 py-1 text-center text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                min={0} max={31}
+                              />
                             </td>
-                            <td className="table-cell text-right text-xs font-semibold">{r.diasEfetivos}d</td>
+                            <td className="table-cell text-right bg-blue-50">
+                              <span className="font-bold text-blue-700 text-sm">{r.diasEfetivos}d</span>
+                            </td>
                             <td className="table-cell text-right text-xs text-gray-500">{formatarMoeda(r.totalVA)}</td>
                             <td className="table-cell text-right text-xs text-gray-500">{formatarMoeda(r.totalVT)}</td>
                             <td className="table-cell text-right text-xs text-gray-500">{formatarMoeda(r.totalVTSabado)}</td>

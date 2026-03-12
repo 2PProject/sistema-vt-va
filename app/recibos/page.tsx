@@ -10,7 +10,7 @@ import {
   Empresa,
   getOrCreateDefaultUnidade,
 } from '../../lib/supabase'
-import { calcularVTVA, formatarMoeda, MESES } from '../../utils/calculoVT'
+import { calcularVTVA, calcularDiasUteisAuto, formatarMoeda, MESES } from '../../utils/calculoVT'
 
 type CFComFunc = CompetenciaFuncionario & { funcionarios: Funcionario }
 
@@ -71,14 +71,18 @@ export default function RecibosPage() {
       const { gerarReciboPDF } = await import('../../services/gerarReciboPDF')
       const empresa = empresas.find((e) => e.id === empresaId)
 
-      // VT é individual por funcionário (salvo por competência)
       const valorVT = cf.valor_vt ?? cf.funcionarios?.valor_vt ?? 0
       const valorVTSabado = cf.valor_vt_sabado ?? cf.funcionarios?.valor_vt_sabado ?? 0
       const valorVA = competencia.valor_va ?? 0
+      const diasUteisAuto = calcularDiasUteisAuto(
+        mes, ano,
+        cf.funcionarios?.folga_semanal,
+        competencia.feriados_mes ?? 0
+      )
 
       const resultado = calcularVTVA({
-        diasUteis: competencia.dias_uteis,
-        diasFeriado: cf.dias_feriado,
+        diasUteis: diasUteisAuto,
+        diasFeriado: 0,
         diasSabado: cf.dias_sabado,
         diasDesconto: cf.dias_desconto,
         valorVT,
@@ -93,7 +97,7 @@ export default function RecibosPage() {
         funcao: cf.funcionarios.funcao,
         mes,
         ano,
-        diasUteis: competencia.dias_uteis,
+        diasUteis: diasUteisAuto,
         diasEfetivos: resultado.diasEfetivos,
         diasSabado: cf.dias_sabado,
         valorVT,
@@ -118,9 +122,14 @@ export default function RecibosPage() {
   const valorVA = competencia?.valor_va ?? 0
 
   const totalGeral = registros.reduce((sum, cf) => {
+    const diasUteisAuto = calcularDiasUteisAuto(
+      mes, ano,
+      cf.funcionarios?.folga_semanal,
+      competencia?.feriados_mes ?? 0
+    )
     const r = calcularVTVA({
-      diasUteis: competencia?.dias_uteis ?? 22,
-      diasFeriado: cf.dias_feriado,
+      diasUteis: diasUteisAuto,
+      diasFeriado: 0,
       diasSabado: cf.dias_sabado,
       diasDesconto: cf.dias_desconto,
       valorVT: cf.valor_vt ?? cf.funcionarios?.valor_vt ?? 0,
@@ -213,9 +222,14 @@ export default function RecibosPage() {
                       </thead>
                       <tbody className="divide-y divide-gray-100">
                         {registros.map((cf) => {
+                          const diasUteisAuto = calcularDiasUteisAuto(
+                            mes, ano,
+                            cf.funcionarios?.folga_semanal,
+                            competencia.feriados_mes ?? 0
+                          )
                           const r = calcularVTVA({
-                            diasUteis: competencia.dias_uteis,
-                            diasFeriado: cf.dias_feriado,
+                            diasUteis: diasUteisAuto,
+                            diasFeriado: 0,
                             diasSabado: cf.dias_sabado,
                             diasDesconto: cf.dias_desconto,
                             valorVT: cf.valor_vt ?? cf.funcionarios?.valor_vt ?? 0,

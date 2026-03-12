@@ -53,6 +53,10 @@ ALTER TABLE competencia_funcionario
   ADD COLUMN IF NOT EXISTS valor_vt        NUMERIC DEFAULT 0,
   ADD COLUMN IF NOT EXISTS valor_vt_sabado NUMERIC DEFAULT 0;
 
+-- Feriados do mês (quantidade, compartilhado por empresa/mês)
+ALTER TABLE competencias
+  ADD COLUMN IF NOT EXISTS feriados_mes INTEGER DEFAULT 0;
+
 -- ─── 5. VERIFICAÇÃO FINAL ─────────────────────────────────────────────────────
 SELECT
   e.razao_social AS empresa,
