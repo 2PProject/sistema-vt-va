@@ -61,6 +61,7 @@ export default function CompetenciasPage() {
   const [empresaId, setEmpresaId] = useState<string>('')
   const [mes, setMes] = useState(new Date().getMonth() + 1)
   const [ano, setAno] = useState(new Date().getFullYear())
+  const [criando, setCriando] = useState(false)
 
   const modoTodas = empresaId === TODAS
 
@@ -87,31 +88,32 @@ export default function CompetenciasPage() {
         .gte('data', `${ano}-${mesStr}-01`)
         .lte('data', `${ano}-${mesStr}-31`)
       const feriados = feriadosRows?.length ?? 0
+      setFeriadosDoMes(feriados)
 
-      const resumo: ItemResumo[] = []
-      for (const emp of empresas) {
+      const resumoResults = await Promise.all(empresas.map(async (emp) => {
         const unidadeId = await getOrCreateDefaultUnidade(emp.id)
-        if (!unidadeId) continue
+        if (!unidadeId) return []
         const { data: comp } = await supabase
           .from('competencias').select('*')
           .eq('unidade_id', unidadeId).eq('mes', mes).eq('ano', ano).maybeSingle()
-        if (!comp) continue
+        if (!comp) return []
         const { data: cfs } = await supabase
           .from('competencia_funcionario').select('*, funcionarios(*)')
           .eq('competencia_id', comp.id)
-        for (const cf of (cfs ?? []) as Array<CompetenciaFuncionario & { funcionarios: Funcionario }>) {
+        return ((cfs ?? []) as Array<CompetenciaFuncionario & { funcionarios: Funcionario }>).map(cf => {
           const f = cf.funcionarios
-          const ehExcecao = (f.valor_vt_sabado ?? 0) > 0
+          const vtSabado = cf.valor_vt_sabado ?? f.valor_vt_sabado ?? 0
+          const ehExcecao = vtSabado > 0
           const diasAuto = calcularDiasUteisAuto(mes, ano, f.folga_semanal, feriados)
           const r = calcularVTVA({
             diasUteis: diasAuto, diasFeriado: 0,
             diasSabado: ehExcecao ? (cf.dias_sabado ?? 0) : 0,
             diasDesconto: cf.dias_desconto,
             valorVT: cf.valor_vt ?? f.valor_vt ?? 0,
-            valorVTSabado: ehExcecao ? (cf.valor_vt_sabado ?? f.valor_vt_sabado ?? 0) : 0,
+            valorVTSabado: ehExcecao ? vtSabado : 0,
             valorVA: (comp as Competencia).valor_va ?? 0,
           })
-          resumo.push({
+          return {
             empresaNome: emp.razao_social,
             funcionarioNome: f.nome,
             funcionarioFuncao: f.funcao,
@@ -120,10 +122,10 @@ export default function CompetenciasPage() {
             totalVT: r.totalVT,
             totalVTSabado: r.totalVTSabado,
             valorTotal: r.valorTotal,
-          })
-        }
-      }
-      setItensResumo(resumo)
+          } as ItemResumo
+        })
+      }))
+      setItensResumo(resumoResults.flat())
       setLoading(false)
       return
     }
@@ -204,16 +206,16 @@ export default function CompetenciasPage() {
       setItens(
         funcs.map((f: Funcionario) => {
           const cf = cfMap.get(f.id)
-          // Perfil do funcionário é a fonte da verdade para sábado
-          const ehExcecaoPerfil = (f.valor_vt_sabado ?? 0) > 0
+          const loadedVtSabado = cf?.valor_vt_sabado ?? f.valor_vt_sabado ?? 0
+          const ehExcecao = loadedVtSabado > 0
           return {
             id: cf?.id ?? '',
             competencia_id: comp.id,
             funcionario_id: f.id,
-            dias_sabado: ehExcecaoPerfil ? (cf?.dias_sabado ?? sabadosDoMes) : 0,
+            dias_sabado: ehExcecao ? (cf?.dias_sabado ?? sabadosDoMes) : 0,
             descontos: cf ? (descontosMap.get(cf.id) ?? []) : [],
             valor_vt: cf?.valor_vt ?? f.valor_vt ?? 0,
-            valor_vt_sabado: f.valor_vt_sabado ?? 0,
+            valor_vt_sabado: loadedVtSabado,
             funcionario: f,
           }
         })
@@ -302,7 +304,7 @@ export default function CompetenciasPage() {
     }
 
     for (const item of itens) {
-      const ehExcecao = (item.funcionario.valor_vt_sabado ?? 0) > 0
+      const ehExcecao = (item.valor_vt_sabado ?? 0) > 0
       const diasSabadoSalvar = ehExcecao ? item.dias_sabado : 0
       const valorVtSabadoSalvar = ehExcecao ? item.valor_vt_sabado : 0
       const totalDescontos = item.descontos.reduce((s, d) => s + d.dias, 0)
@@ -355,8 +357,79 @@ export default function CompetenciasPage() {
     carregarCompetencia()
   }
 
+  async function inicializarTodasCompetencias() {
+    setCriando(true)
+    setSucesso(false)
+
+    const mesStr = String(mes).padStart(2, '0')
+    const { data: feriadosRows } = await supabase
+      .from('feriados').select('data')
+      .gte('data', `${ano}-${mesStr}-01`)
+      .lte('data', `${ano}-${mesStr}-31`)
+    const feriados = feriadosRows?.length ?? 0
+    const sabadosDoMes = calcularSabadosDoMes(mes, ano)
+
+    await Promise.all(empresas.map(async (emp) => {
+      const unidadeId = await getOrCreateDefaultUnidade(emp.id)
+      if (!unidadeId) return
+
+      // Get or create competência
+      const { data: existingComp } = await supabase
+        .from('competencias').select('id, valor_va')
+        .eq('unidade_id', unidadeId).eq('mes', mes).eq('ano', ano).maybeSingle()
+
+      let compId: string
+      let compValorVA: number
+      if (existingComp) {
+        compId = (existingComp as Competencia).id
+        compValorVA = (existingComp as Competencia).valor_va ?? emp.valor_va ?? 0
+      } else {
+        const { data: nova } = await supabase
+          .from('competencias')
+          .insert({ unidade_id: unidadeId, mes, ano, dias_uteis: 0, feriados_mes: feriados, valor_va: emp.valor_va ?? 0 })
+          .select().single()
+        if (!nova) return
+        compId = (nova as Competencia).id
+        compValorVA = emp.valor_va ?? 0
+      }
+
+      const { data: funcs } = await supabase
+        .from('funcionarios').select('*')
+        .eq('unidade_id', unidadeId).eq('ativo', true)
+
+      await Promise.all(((funcs ?? []) as Funcionario[]).map(async (f) => {
+        // Skip if CF already exists (don't overwrite manual edits)
+        const { data: existingCF } = await supabase
+          .from('competencia_funcionario').select('id')
+          .eq('competencia_id', compId).eq('funcionario_id', f.id).maybeSingle()
+        if (existingCF) return
+
+        const ehExcecao = (f.valor_vt_sabado ?? 0) > 0
+        const diasAuto = calcularDiasUteisAuto(mes, ano, f.folga_semanal, feriados)
+        const diasSabado = ehExcecao ? sabadosDoMes : 0
+        const valorVtSabado = ehExcecao ? (f.valor_vt_sabado ?? 0) : 0
+        const resultado = calcularVTVA({
+          diasUteis: diasAuto, diasFeriado: 0, diasSabado,
+          diasDesconto: 0, valorVT: f.valor_vt ?? 0, valorVTSabado: valorVtSabado, valorVA: compValorVA,
+        })
+
+        await supabase.from('competencia_funcionario').insert({
+          competencia_id: compId, funcionario_id: f.id,
+          dias_feriado: feriados, dias_sabado: diasSabado, dias_desconto: 0,
+          valor_vt: f.valor_vt ?? 0, valor_vt_sabado: valorVtSabado,
+          valor_total: resultado.valorTotal,
+        })
+      }))
+    }))
+
+    setCriando(false)
+    setSucesso(true)
+    setTimeout(() => setSucesso(false), 3000)
+    carregarCompetencia()
+  }
+
   const totalGeral = itens.reduce((sum, item) => {
-    const ehExcecao = (item.funcionario.valor_vt_sabado ?? 0) > 0
+    const ehExcecao = (item.valor_vt_sabado ?? 0) > 0
     const totalDesc = item.descontos.reduce((s, d) => s + d.dias, 0)
     const diasAuto = calcularDiasUteisAuto(mes, ano, item.funcionario.folga_semanal, feriadosDoMes)
     const r = calcularVTVA({ diasUteis: diasAuto, diasFeriado: 0, diasSabado: ehExcecao ? item.dias_sabado : 0, diasDesconto: totalDesc, valorVT: item.valor_vt, valorVTSabado: ehExcecao ? item.valor_vt_sabado : 0, valorVA })
@@ -509,7 +582,7 @@ export default function CompetenciasPage() {
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
             </svg>
-            Competência salva com sucesso!
+            {modoTodas ? 'Competências inicializadas com sucesso!' : 'Competência salva com sucesso!'}
           </div>
         )}
 
@@ -518,12 +591,39 @@ export default function CompetenciasPage() {
           <div className="card">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-sm font-semibold text-gray-700">Resumo — {MESES[mes - 1]}/{ano} — Todas as empresas</h2>
-              {itensResumo.length > 0 && (
-                <div className="text-sm font-semibold text-gray-700">
-                  Total: <span className="text-blue-600">{formatarMoeda(itensResumo.reduce((s, i) => s + i.valorTotal, 0))}</span>
-                </div>
-              )}
+              <div className="flex items-center gap-3">
+                {itensResumo.length > 0 && (
+                  <div className="text-sm font-semibold text-gray-700">
+                    Total: <span className="text-blue-600">{formatarMoeda(itensResumo.reduce((s, i) => s + i.valorTotal, 0))}</span>
+                  </div>
+                )}
+                <button
+                  onClick={inicializarTodasCompetencias}
+                  disabled={criando || loading}
+                  className="btn-primary flex items-center gap-2 text-sm"
+                >
+                  {criando ? (
+                    <>
+                      <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                      </svg>
+                      Criando...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                      </svg>
+                      Inicializar mês para todas
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
+            <p className="text-xs text-amber-600 mb-4">
+              O botão &quot;Inicializar mês para todas&quot; cria competências com valores padrão para empresas que ainda não têm registro neste mês. Registros já existentes não serão alterados.
+            </p>
             {loading ? (
               <div className="text-center py-12 text-gray-400 text-sm">Carregando...</div>
             ) : itensResumo.length === 0 ? (
@@ -610,7 +710,7 @@ export default function CompetenciasPage() {
                     </thead>
                     <tbody className="divide-y divide-gray-100">
                       {itens.map((item, idx) => {
-                        const ehExcecao = (item.funcionario.valor_vt_sabado ?? 0) > 0
+                        const ehExcecao = (item.valor_vt_sabado ?? 0) > 0
                         const diasSabadoEfetivo = ehExcecao ? item.dias_sabado : 0
                         const valorVtSabadoEfetivo = ehExcecao ? item.valor_vt_sabado : 0
                         const totalDesc = item.descontos.reduce((s, d) => s + d.dias, 0)
