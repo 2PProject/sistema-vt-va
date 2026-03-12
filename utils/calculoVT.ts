@@ -101,6 +101,36 @@ export const FOLGA_TO_DOW: Record<string, number> = {
   'Sábado': 6,
 }
 
+function normalizarTexto(valor: string): string {
+  return valor
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z]/g, '')
+}
+
+function resolverDowFolga(folgaSemanal: string | null | undefined): number {
+  if (!folgaSemanal) return -1
+
+  const aliases: Record<string, number> = {
+    domingo: 0,
+    segundafeira: 1,
+    segunda: 1,
+    tercafeira: 2,
+    terca: 2,
+    quartafeira: 3,
+    quarta: 3,
+    quintafeira: 4,
+    quinta: 4,
+    sextafeira: 5,
+    sexta: 5,
+    sabado: 6,
+  }
+
+  const chaveNormalizada = normalizarTexto(folgaSemanal)
+  return aliases[chaveNormalizada] ?? FOLGA_TO_DOW[folgaSemanal] ?? -1
+}
+
 /** Conta quantas vezes cada dia da semana ocorre em um mês (0=Dom…6=Sáb) */
 export function contarDiasSemana(mes: number, ano: number): Record<number, number> {
   const counts: Record<number, number> = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 }
@@ -126,7 +156,7 @@ export function calcularDiasUteisAuto(
   // Total de dias úteis (seg–sex)
   let total = counts[1] + counts[2] + counts[3] + counts[4] + counts[5]
   // Subtrai as folgas da semana se cair em dia útil
-  const dow = folgaSemanal ? (FOLGA_TO_DOW[folgaSemanal] ?? -1) : -1
+  const dow = resolverDowFolga(folgaSemanal)
   if (dow >= 1 && dow <= 5) total -= counts[dow]
   // Subtrai feriados compartilhados
   total -= feriadosDoMes
@@ -137,4 +167,3 @@ export function calcularDiasUteisAuto(
 export function calcularSabadosDoMes(mes: number, ano: number): number {
   return contarDiasSemana(mes, ano)[6]
 }
-

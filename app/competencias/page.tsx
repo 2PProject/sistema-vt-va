@@ -457,7 +457,7 @@ export default function CompetenciasPage() {
               <label className="label-field">Empresa</label>
               <select value={empresaId} onChange={(e) => setEmpresaId(e.target.value)} className="input-field">
                 <option value="">Selecione uma empresa</option>
-                <option value={TODAS}>— Todas as empresas (resumo) —</option>
+                <option value={TODAS}>— Todos os funcionários (todas as empresas) —</option>
                 {empresas.map((emp) => (
                   <option key={emp.id} value={emp.id}>{emp.razao_social}</option>
                 ))}
@@ -517,7 +517,7 @@ export default function CompetenciasPage() {
         {modoTodas && empresaId && (
           <div className="card">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm font-semibold text-gray-700">Resumo — {MESES[mes - 1]}/{ano} — Todas as empresas</h2>
+              <h2 className="text-sm font-semibold text-gray-700">Resumo — {MESES[mes - 1]}/{ano} — Todos os funcionários (todas as empresas)</h2>
               {itensResumo.length > 0 && (
                 <div className="text-sm font-semibold text-gray-700">
                   Total: <span className="text-blue-600">{formatarMoeda(itensResumo.reduce((s, i) => s + i.valorTotal, 0))}</span>
@@ -709,7 +709,7 @@ export default function CompetenciasPage() {
             <svg className="w-12 h-12 mx-auto mb-4 opacity-40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
             </svg>
-            <p className="text-sm">Selecione uma empresa, mês e ano para gerenciar a competência.</p>
+            <p className="text-sm">Selecione uma empresa (ou todos os funcionários), mês e ano para gerenciar a competência.</p>
           </div>
         )}
       </div>
