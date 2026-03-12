@@ -12,7 +12,7 @@ export default function UnidadesPage() {
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
   const [editando, setEditando] = useState<Unidade | null>(null)
-  const [filtroEmpresa, setFiltroEmpresa] = useState<number | ''>('')
+  const [filtroEmpresa, setFiltroEmpresa] = useState<string>('')
   const [busca, setBusca] = useState('')
 
   useEffect(() => {
@@ -44,7 +44,7 @@ export default function UnidadesPage() {
     fecharForm()
   }
 
-  async function excluir(id: number) {
+  async function excluir(id: string) {
     await supabase.from('unidades').delete().eq('id', id)
     await carregar()
   }
@@ -65,7 +65,7 @@ export default function UnidadesPage() {
   }
 
   const unidadesFiltradas = unidades.filter((u) => {
-    const matchEmpresa = filtroEmpresa ? u.empresa_id === Number(filtroEmpresa) : true
+    const matchEmpresa = filtroEmpresa ? u.empresa_id === filtroEmpresa : true
     const matchBusca =
       u.nome.toLowerCase().includes(busca.toLowerCase()) ||
       u.codigo.toLowerCase().includes(busca.toLowerCase())
@@ -119,7 +119,7 @@ export default function UnidadesPage() {
             </div>
             <select
               value={filtroEmpresa}
-              onChange={(e) => setFiltroEmpresa(e.target.value ? Number(e.target.value) : '')}
+              onChange={(e) => setFiltroEmpresa(e.target.value)}
               className="input-field sm:w-64"
             >
               <option value="">Todas as empresas</option>

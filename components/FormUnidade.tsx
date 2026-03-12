@@ -11,7 +11,7 @@ interface FormUnidadeProps {
 }
 
 export default function FormUnidade({ unidade, empresas, onSave, onCancel }: FormUnidadeProps) {
-  const [empresaId, setEmpresaId] = useState<number | ''>('')
+  const [empresaId, setEmpresaId] = useState<string>('')
   const [codigo, setCodigo] = useState('')
   const [nome, setNome] = useState('')
   const [loading, setLoading] = useState(false)
@@ -35,7 +35,7 @@ export default function FormUnidade({ unidade, empresas, onSave, onCancel }: For
     setError('')
     setLoading(true)
     try {
-      await onSave({ empresa_id: Number(empresaId), codigo, nome })
+      await onSave({ empresa_id: empresaId, codigo, nome })
     } catch (err) {
       setError('Erro ao salvar. Tente novamente.')
       console.error(err)
@@ -56,7 +56,7 @@ export default function FormUnidade({ unidade, empresas, onSave, onCancel }: For
         <label className="label-field">Empresa</label>
         <select
           value={empresaId}
-          onChange={(e) => setEmpresaId(Number(e.target.value))}
+          onChange={(e) => setEmpresaId(e.target.value)}
           required
           className="input-field"
         >

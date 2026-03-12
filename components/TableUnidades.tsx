@@ -5,7 +5,7 @@ import { Unidade } from '../lib/supabase'
 interface TableUnidadesProps {
   unidades: Unidade[]
   onEdit: (unidade: Unidade) => void
-  onDelete: (id: number) => void
+  onDelete: (id: string) => void
 }
 
 export default function TableUnidades({ unidades, onEdit, onDelete }: TableUnidadesProps) {

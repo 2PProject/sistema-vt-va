@@ -37,7 +37,7 @@ export default function EmpresasPage() {
     fecharForm()
   }
 
-  async function excluir(id: number) {
+  async function excluir(id: string) {
     await supabase.from('empresas').delete().eq('id', id)
     await carregar()
   }

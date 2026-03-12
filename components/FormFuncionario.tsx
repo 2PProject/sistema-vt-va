@@ -1,19 +1,24 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Funcionario, Unidade } from '../lib/supabase'
+import { Funcionario, Empresa, Cargo } from '../lib/supabase'
 import { FOLGAS } from '../utils/calculoVT'
 
 interface FormFuncionarioProps {
   funcionario?: Funcionario | null
-  unidades: Unidade[]
-  onSave: (data: Omit<Funcionario, 'id' | 'unidades'>) => Promise<void>
+  empresas: Empresa[]
+  cargos: Cargo[]
+  /** empresa_id do funcionário editado (resolvida via unidades) */
+  empresaIdInicial?: string
+  onSave: (data: Omit<Funcionario, 'id' | 'unidades'>, empresaId: string) => Promise<void>
   onCancel: () => void
 }
 
 export default function FormFuncionario({
   funcionario,
-  unidades,
+  empresas,
+  cargos,
+  empresaIdInicial,
   onSave,
   onCancel,
 }: FormFuncionarioProps) {
@@ -22,7 +27,7 @@ export default function FormFuncionario({
   const [serie, setSerie] = useState('')
   const [funcao, setFuncao] = useState('')
   const [folgaSemanal, setFolgaSemanal] = useState('Domingo')
-  const [unidadeId, setUnidadeId] = useState<number | ''>('')
+  const [empresaId, setEmpresaId] = useState<string>('')
   const [ativo, setAtivo] = useState(true)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -34,34 +39,41 @@ export default function FormFuncionario({
       setSerie(funcionario.serie)
       setFuncao(funcionario.funcao)
       setFolgaSemanal(funcionario.folga_semanal)
-      setUnidadeId(funcionario.unidade_id)
       setAtivo(funcionario.ativo)
+      setEmpresaId(empresaIdInicial ?? '')
     } else {
       setNome('')
       setCtps('')
       setSerie('')
       setFuncao('')
       setFolgaSemanal('Domingo')
-      setUnidadeId('')
+      setEmpresaId('')
       setAtivo(true)
     }
-  }, [funcionario])
+  }, [funcionario, empresaIdInicial])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!unidadeId) return
+    if (!empresaId) {
+      setError('Selecione uma empresa.')
+      return
+    }
     setError('')
     setLoading(true)
     try {
-      await onSave({
-        nome,
-        ctps,
-        serie,
-        funcao,
-        folga_semanal: folgaSemanal,
-        unidade_id: Number(unidadeId),
-        ativo,
-      })
+      // unidade_id será resolvida pelo onSave (via getOrCreateDefaultUnidade)
+      await onSave(
+        {
+          nome,
+          ctps,
+          serie,
+          funcao,
+          folga_semanal: folgaSemanal,
+          unidade_id: '', // será preenchido no handler da página
+          ativo,
+        },
+        empresaId
+      )
     } catch (err) {
       setError('Erro ao salvar. Tente novamente.')
       console.error(err)
@@ -79,6 +91,7 @@ export default function FormFuncionario({
       )}
 
       <div className="grid grid-cols-1 gap-4">
+        {/* Nome */}
         <div>
           <label className="label-field">Nome Completo</label>
           <input
@@ -91,6 +104,7 @@ export default function FormFuncionario({
           />
         </div>
 
+        {/* CTPS / Série */}
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="label-field">CTPS</label>
@@ -116,19 +130,66 @@ export default function FormFuncionario({
           </div>
         </div>
 
+        {/* Cargo — select com cargos pré-cadastrados + opção livre */}
         <div>
-          <label className="label-field">Função / Cargo</label>
-          <input
-            type="text"
-            value={funcao}
-            onChange={(e) => setFuncao(e.target.value)}
-            required
-            className="input-field"
-            placeholder="Ex: Auxiliar de Limpeza"
-          />
+          <label className="label-field">Cargo / Função</label>
+          {cargos.length > 0 ? (
+            <select
+              value={funcao}
+              onChange={(e) => setFuncao(e.target.value)}
+              required
+              className="input-field"
+            >
+              <option value="">Selecione um cargo</option>
+              {cargos.map((c) => (
+                <option key={c.id} value={c.nome}>
+                  {c.nome}
+                </option>
+              ))}
+              <option value="__outro__">Outro (digitar)</option>
+            </select>
+          ) : (
+            <input
+              type="text"
+              value={funcao}
+              onChange={(e) => setFuncao(e.target.value)}
+              required
+              className="input-field"
+              placeholder="Ex: Auxiliar de Limpeza"
+            />
+          )}
+          {/* Campo livre quando seleciona "Outro" */}
+          {funcao === '__outro__' && (
+            <input
+              type="text"
+              onChange={(e) => setFuncao(e.target.value)}
+              required
+              className="input-field mt-2"
+              placeholder="Digite o cargo"
+              autoFocus
+            />
+          )}
         </div>
 
+        {/* Empresa + Folga */}
         <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="label-field">Empresa</label>
+            <select
+              value={empresaId}
+              onChange={(e) => setEmpresaId(e.target.value)}
+              required
+              className="input-field"
+            >
+              <option value="">Selecione</option>
+              {empresas.map((emp) => (
+                <option key={emp.id} value={emp.id}>
+                  {emp.razao_social}
+                </option>
+              ))}
+            </select>
+          </div>
+
           <div>
             <label className="label-field">Folga Semanal</label>
             <select
@@ -143,25 +204,9 @@ export default function FormFuncionario({
               ))}
             </select>
           </div>
-
-          <div>
-            <label className="label-field">Unidade</label>
-            <select
-              value={unidadeId}
-              onChange={(e) => setUnidadeId(Number(e.target.value))}
-              required
-              className="input-field"
-            >
-              <option value="">Selecione</option>
-              {unidades.map((u) => (
-                <option key={u.id} value={u.id}>
-                  [{u.codigo}] {u.nome}
-                </option>
-              ))}
-            </select>
-          </div>
         </div>
 
+        {/* Ativo */}
         <div className="flex items-center gap-3">
           <input
             type="checkbox"

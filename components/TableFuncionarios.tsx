@@ -5,7 +5,7 @@ import { Funcionario } from '../lib/supabase'
 interface TableFuncionariosProps {
   funcionarios: Funcionario[]
   onEdit: (funcionario: Funcionario) => void
-  onDelete: (id: number) => void
+  onDelete: (id: string) => void
 }
 
 export default function TableFuncionarios({
@@ -31,8 +31,8 @@ export default function TableFuncionarios({
           <tr className="bg-gray-50 border-b border-gray-200">
             <th className="table-header">Nome</th>
             <th className="table-header">CTPS / Série</th>
-            <th className="table-header">Função</th>
-            <th className="table-header">Unidade</th>
+            <th className="table-header">Cargo / Função</th>
+            <th className="table-header">Empresa</th>
             <th className="table-header">Folga</th>
             <th className="table-header">Status</th>
             <th className="table-header text-right">Ações</th>
@@ -47,16 +47,7 @@ export default function TableFuncionarios({
               </td>
               <td className="table-cell text-gray-600 text-sm">{f.funcao}</td>
               <td className="table-cell text-gray-500 text-sm">
-                {f.unidades ? (
-                  <span>
-                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-semibold bg-blue-100 text-blue-700 mr-1 font-mono">
-                      {f.unidades.codigo}
-                    </span>
-                    {f.unidades.nome}
-                  </span>
-                ) : (
-                  `ID ${f.unidade_id}`
-                )}
+                {f.unidades?.empresas?.razao_social ?? '—'}
               </td>
               <td className="table-cell text-gray-500 text-sm">{f.folga_semanal}</td>
               <td className="table-cell">

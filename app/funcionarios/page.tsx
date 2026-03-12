@@ -4,76 +4,100 @@ import { useEffect, useState } from 'react'
 import LayoutAdmin from '../../components/LayoutAdmin'
 import FormFuncionario from '../../components/FormFuncionario'
 import TableFuncionarios from '../../components/TableFuncionarios'
-import { supabase, Funcionario, Unidade } from '../../lib/supabase'
+import { supabase, Funcionario, Empresa, Cargo, getOrCreateDefaultUnidade } from '../../lib/supabase'
 
 export default function FuncionariosPage() {
   const [funcionarios, setFuncionarios] = useState<Funcionario[]>([])
-  const [unidades, setUnidades] = useState<Unidade[]>([])
+  const [empresas, setEmpresas] = useState<Empresa[]>([])
+  const [cargos, setCargos] = useState<Cargo[]>([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
   const [editando, setEditando] = useState<Funcionario | null>(null)
+  const [empresaIdEditando, setEmpresaIdEditando] = useState<string>('')
   const [busca, setBusca] = useState('')
-  const [filtroUnidade, setFiltroUnidade] = useState<number | ''>('')
+  const [filtroEmpresa, setFiltroEmpresa] = useState<string>('')
   const [filtroStatus, setFiltroStatus] = useState<'todos' | 'ativo' | 'inativo'>('todos')
 
   useEffect(() => {
-    Promise.all([carregar(), carregarUnidades()])
+    Promise.all([carregar(), carregarEmpresas(), carregarCargos()])
   }, [])
 
   async function carregar() {
     setLoading(true)
     const { data } = await supabase
       .from('funcionarios')
-      .select('*, unidades(id, codigo, nome, empresa_id)')
+      .select('*, unidades(id, codigo, nome, empresa_id, empresas(id, razao_social, cnpj))')
       .order('nome')
     setFuncionarios((data as Funcionario[]) ?? [])
     setLoading(false)
   }
 
-  async function carregarUnidades() {
-    const { data } = await supabase.from('unidades').select('*').order('nome')
-    setUnidades(data ?? [])
+  async function carregarEmpresas() {
+    const { data } = await supabase.from('empresas').select('*').order('razao_social')
+    setEmpresas(data ?? [])
   }
 
-  async function salvar(data: Omit<Funcionario, 'id' | 'unidades'>) {
+  async function carregarCargos() {
+    const { data } = await supabase.from('cargos').select('*').order('nome')
+    setCargos(data ?? [])
+  }
+
+  async function salvar(
+    data: Omit<Funcionario, 'id' | 'unidades'>,
+    empresaId: string
+  ) {
+    // Resolve unidade_id a partir da empresa selecionada
+    const unidadeId = await getOrCreateDefaultUnidade(empresaId)
+    if (!unidadeId) throw new Error('Não foi possível resolver a unidade.')
+
+    const payload = { ...data, unidade_id: unidadeId }
+
     if (editando) {
-      await supabase.from('funcionarios').update(data).eq('id', editando.id)
+      await supabase.from('funcionarios').update(payload).eq('id', editando.id)
     } else {
-      await supabase.from('funcionarios').insert(data)
+      await supabase.from('funcionarios').insert(payload)
     }
     await carregar()
     fecharForm()
   }
 
-  async function excluir(id: number) {
+  async function excluir(id: string) {
     await supabase.from('funcionarios').delete().eq('id', id)
     await carregar()
   }
 
   function editar(funcionario: Funcionario) {
+    // Resolve empresa do funcionário a partir da relação unidades -> empresas
+    const empId = funcionario.unidades?.empresa_id ?? ''
+    setEmpresaIdEditando(empId)
     setEditando(funcionario)
     setShowForm(true)
   }
 
   function novoFuncionario() {
     setEditando(null)
+    setEmpresaIdEditando('')
     setShowForm(true)
   }
 
   function fecharForm() {
     setShowForm(false)
     setEditando(null)
+    setEmpresaIdEditando('')
   }
 
+  // Filtragem: empresa vem via unidades.empresa_id
   const funcionariosFiltrados = funcionarios.filter((f) => {
     const matchBusca =
       f.nome.toLowerCase().includes(busca.toLowerCase()) ||
       f.funcao.toLowerCase().includes(busca.toLowerCase()) ||
       f.ctps.includes(busca)
-    const matchUnidade = filtroUnidade ? f.unidade_id === Number(filtroUnidade) : true
+    const matchEmpresa = filtroEmpresa
+      ? f.unidades?.empresa_id === filtroEmpresa
+      : true
     const matchStatus =
       filtroStatus === 'todos' ? true : filtroStatus === 'ativo' ? f.ativo : !f.ativo
-    return matchBusca && matchUnidade && matchStatus
+    return matchBusca && matchEmpresa && matchStatus
   })
 
   return (
@@ -98,7 +122,9 @@ export default function FuncionariosPage() {
               </h2>
               <FormFuncionario
                 funcionario={editando}
-                unidades={unidades}
+                empresas={empresas}
+                cargos={cargos}
+                empresaIdInicial={empresaIdEditando}
                 onSave={salvar}
                 onCancel={fecharForm}
               />
@@ -115,21 +141,21 @@ export default function FuncionariosPage() {
               </svg>
               <input
                 type="text"
-                placeholder="Buscar por nome, função ou CTPS..."
+                placeholder="Buscar por nome, cargo ou CTPS..."
                 value={busca}
                 onChange={(e) => setBusca(e.target.value)}
                 className="flex-1 border-0 outline-none text-sm text-gray-700 placeholder-gray-400 bg-transparent"
               />
             </div>
             <select
-              value={filtroUnidade}
-              onChange={(e) => setFiltroUnidade(e.target.value ? Number(e.target.value) : '')}
-              className="input-field sm:w-52"
+              value={filtroEmpresa}
+              onChange={(e) => setFiltroEmpresa(e.target.value)}
+              className="input-field sm:w-56"
             >
-              <option value="">Todas as unidades</option>
-              {unidades.map((u) => (
-                <option key={u.id} value={u.id}>
-                  [{u.codigo}] {u.nome}
+              <option value="">Todas as empresas</option>
+              {empresas.map((emp) => (
+                <option key={emp.id} value={emp.id}>
+                  {emp.razao_social}
                 </option>
               ))}
             </select>
@@ -147,10 +173,8 @@ export default function FuncionariosPage() {
 
         {/* Tabela */}
         <div className="card">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-sm font-semibold text-gray-600">
-              {loading ? 'Carregando...' : `${funcionariosFiltrados.length} funcionário(s) encontrado(s)`}
-            </h2>
+          <div className="mb-4 text-sm font-semibold text-gray-600">
+            {loading ? 'Carregando...' : `${funcionariosFiltrados.length} funcionário(s) encontrado(s)`}
           </div>
           {loading ? (
             <div className="text-center py-12 text-gray-400 text-sm">Carregando funcionários...</div>
