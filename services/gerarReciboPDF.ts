@@ -118,12 +118,12 @@ export async function gerarReciboPDF(dados: DadosRecibo): Promise<void> {
         formatarMoeda(dados.valorVT),
         formatarMoeda(dados.resultado.totalVT),
       ],
-      [
+      ...(dados.valorVTSabado > 0 ? [[
         'Vale Transporte - Sábados',
         String(dados.diasSabado),
         formatarMoeda(dados.valorVTSabado),
         formatarMoeda(dados.resultado.totalVTSabado),
-      ],
+      ]] : []),
     ]
 
     linhas.forEach((linha, i) => {
@@ -152,11 +152,10 @@ export async function gerarReciboPDF(dados: DadosRecibo): Promise<void> {
     doc.setTextColor(80, 80, 80)
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(8)
-    doc.text(
-      `Dias Úteis: ${dados.diasUteis}  |  Dias Efetivos: ${dados.diasEfetivos}  |  Sábados Trabalhados: ${dados.diasSabado}`,
-      12,
-      y
-    )
+    const rodape = dados.valorVTSabado > 0
+      ? `Dias Úteis: ${dados.diasUteis}  |  Dias Efetivos: ${dados.diasEfetivos}  |  Sábados Trabalhados: ${dados.diasSabado}`
+      : `Dias Úteis: ${dados.diasUteis}  |  Dias Efetivos: ${dados.diasEfetivos}`
+    doc.text(rodape, 12, y)
     y += 12
 
     // Assinatura do funcionário

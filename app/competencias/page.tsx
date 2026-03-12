@@ -236,15 +236,18 @@ export default function CompetenciasPage() {
     }
 
     for (const item of itens) {
+      const ehExcecao = (item.funcionario.valor_vt_sabado ?? 0) > 0
+      const diasSabadoSalvar = ehExcecao ? item.dias_sabado : 0
+      const valorVtSabadoSalvar = ehExcecao ? item.valor_vt_sabado : 0
       const totalDescontos = item.descontos.reduce((s, d) => s + d.dias, 0)
       const diasUteisAuto = calcularDiasUteisAuto(mes, ano, item.funcionario.folga_semanal, feriadosDoMes)
       const resultado = calcularVTVA({
         diasUteis: diasUteisAuto,
         diasFeriado: 0,
-        diasSabado: item.dias_sabado,
+        diasSabado: diasSabadoSalvar,
         diasDesconto: totalDescontos,
         valorVT: item.valor_vt,
-        valorVTSabado: item.valor_vt_sabado,
+        valorVTSabado: valorVtSabadoSalvar,
         valorVA,
       })
 
@@ -252,10 +255,10 @@ export default function CompetenciasPage() {
         competencia_id: compId,
         funcionario_id: item.funcionario_id,
         dias_feriado: feriadosDoMes,
-        dias_sabado: item.dias_sabado,
+        dias_sabado: diasSabadoSalvar,
         dias_desconto: totalDescontos,
         valor_vt: item.valor_vt,
-        valor_vt_sabado: item.valor_vt_sabado,
+        valor_vt_sabado: valorVtSabadoSalvar,
         valor_total: resultado.valorTotal,
       }
 
@@ -287,9 +290,10 @@ export default function CompetenciasPage() {
   }
 
   const totalGeral = itens.reduce((sum, item) => {
+    const ehExcecao = (item.funcionario.valor_vt_sabado ?? 0) > 0
     const totalDesc = item.descontos.reduce((s, d) => s + d.dias, 0)
     const diasAuto = calcularDiasUteisAuto(mes, ano, item.funcionario.folga_semanal, feriadosDoMes)
-    const r = calcularVTVA({ diasUteis: diasAuto, diasFeriado: 0, diasSabado: item.dias_sabado, diasDesconto: totalDesc, valorVT: item.valor_vt, valorVTSabado: item.valor_vt_sabado, valorVA })
+    const r = calcularVTVA({ diasUteis: diasAuto, diasFeriado: 0, diasSabado: ehExcecao ? item.dias_sabado : 0, diasDesconto: totalDesc, valorVT: item.valor_vt, valorVTSabado: ehExcecao ? item.valor_vt_sabado : 0, valorVA })
     return sum + r.valorTotal
   }, 0)
 
@@ -481,15 +485,18 @@ export default function CompetenciasPage() {
                     </thead>
                     <tbody className="divide-y divide-gray-100">
                       {itens.map((item, idx) => {
+                        const ehExcecao = (item.funcionario.valor_vt_sabado ?? 0) > 0
+                        const diasSabadoEfetivo = ehExcecao ? item.dias_sabado : 0
+                        const valorVtSabadoEfetivo = ehExcecao ? item.valor_vt_sabado : 0
                         const totalDesc = item.descontos.reduce((s, d) => s + d.dias, 0)
                         const diasAuto = calcularDiasUteisAuto(mes, ano, item.funcionario.folga_semanal, feriadosDoMes)
                         const r = calcularVTVA({
                           diasUteis: diasAuto,
                           diasFeriado: 0,
-                          diasSabado: item.dias_sabado,
+                          diasSabado: diasSabadoEfetivo,
                           diasDesconto: totalDesc,
                           valorVT: item.valor_vt,
-                          valorVTSabado: item.valor_vt_sabado,
+                          valorVTSabado: valorVtSabadoEfetivo,
                           valorVA,
                         })
                         return (
@@ -507,10 +514,16 @@ export default function CompetenciasPage() {
                               <input type="number" value={item.valor_vt} onChange={(e) => atualizarItem(idx, 'valor_vt', Number(e.target.value))} className="w-20 border border-gray-300 rounded px-2 py-1 text-center text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" min={0} step={0.01} />
                             </td>
                             <td className="table-cell text-center">
-                              <input type="number" value={item.valor_vt_sabado} onChange={(e) => atualizarItem(idx, 'valor_vt_sabado', Number(e.target.value))} className="w-20 border border-gray-300 rounded px-2 py-1 text-center text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" min={0} step={0.01} />
+                              {ehExcecao
+                                ? <input type="number" value={item.valor_vt_sabado} onChange={(e) => atualizarItem(idx, 'valor_vt_sabado', Number(e.target.value))} className="w-20 border border-blue-300 rounded px-2 py-1 text-center text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" min={0} step={0.01} />
+                                : <span className="text-gray-300 text-xs">—</span>
+                              }
                             </td>
                             <td className="table-cell text-center">
-                              <input type="number" value={item.dias_sabado} onChange={(e) => atualizarItem(idx, 'dias_sabado', Number(e.target.value))} className="w-16 border border-gray-300 rounded px-2 py-1 text-center text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" min={0} max={5} />
+                              {ehExcecao
+                                ? <input type="number" value={item.dias_sabado} onChange={(e) => atualizarItem(idx, 'dias_sabado', Number(e.target.value))} className="w-16 border border-blue-300 rounded px-2 py-1 text-center text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" min={0} max={5} />
+                                : <span className="text-gray-300 text-xs">—</span>
+                              }
                             </td>
                             <td className="table-cell text-center">
                               <button
