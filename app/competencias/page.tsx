@@ -670,7 +670,7 @@ export default function CompetenciasPage() {
                             </td>
                             <td className="table-cell text-right text-xs text-gray-500">{formatarMoeda(r.totalVA)}</td>
                             <td className="table-cell text-right text-xs text-gray-500">{formatarMoeda(r.totalVT)}</td>
-                            <td className="table-cell text-right text-xs text-gray-500">{formatarMoeda(r.totalVTSabado)}</td>
+                            <td className="table-cell text-right text-xs text-gray-500">{ehExcecao ? formatarMoeda(r.totalVTSabado) : <span className="text-gray-300">—</span>}</td>
                             <td className="table-cell text-right font-semibold text-blue-700">{formatarMoeda(r.valorTotal)}</td>
                           </tr>
                         )
