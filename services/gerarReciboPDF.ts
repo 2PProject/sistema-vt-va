@@ -158,13 +158,19 @@ export async function gerarReciboPDF(dados: DadosRecibo): Promise<void> {
     doc.text(rodape, 12, y)
     y += 12
 
-    // Assinatura do funcionário
+    // Local e data (mês/ano) alinhado à direita
+    doc.setFontSize(8)
+    doc.setTextColor(100, 100, 100)
+    doc.text('____ de ______________ de ______', 198, y, { align: 'right' })
+    y += 12
+
+    // Assinatura do funcionário (centralizada)
     doc.setDrawColor(0, 0, 0)
-    doc.line(12, y, 140, y)
+    doc.line(65, y, 145, y)
     y += 5
     doc.setFontSize(7)
     doc.setTextColor(100, 100, 100)
-    doc.text('Assinatura do Funcionário', 12, y)
+    doc.text('Assinatura do Funcionário', 105, y, { align: 'center' })
     y += 7
     doc.setFontSize(8)
     doc.setTextColor(120, 120, 120)

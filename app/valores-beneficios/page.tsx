@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import LayoutAdmin from '../../components/LayoutAdmin'
-import { supabase, Empresa, Funcionario, getOrCreateDefaultUnidade } from '../../lib/supabase'
+import { supabase, Empresa } from '../../lib/supabase'
 import { formatarMoeda } from '../../utils/calculoVT'
 
 type FuncRow = {
@@ -46,22 +46,37 @@ export default function ValoresBeneficiosPage() {
       setEmpresa(null)
       setValorVA(0)
       const todos: FuncRow[] = []
-      for (const emp of empresas) {
-        const unidadeId = await getOrCreateDefaultUnidade(emp.id)
-        if (!unidadeId) continue
+      const empresaMap = new Map(empresas.map((e) => [e.id, e]))
+      const empresaIds = empresas.map((e) => e.id)
+
+      const { data: unidades } = await supabase
+        .from('unidades')
+        .select('id, empresa_id')
+        .in('empresa_id', empresaIds)
+
+      const unidadeEmpresaMap = new Map<string, string>()
+      for (const un of unidades ?? []) {
+        unidadeEmpresaMap.set(un.id, un.empresa_id)
+      }
+
+      const unidadeIds = (unidades ?? []).map((u) => u.id)
+      if (unidadeIds.length > 0) {
         const { data: funcs } = await supabase
           .from('funcionarios')
-          .select('id, nome, funcao, valor_vt, valor_vt_sabado')
-          .eq('unidade_id', unidadeId)
+          .select('id, nome, funcao, valor_vt, valor_vt_sabado, unidade_id')
+          .in('unidade_id', unidadeIds)
           .eq('ativo', true)
           .order('nome')
+
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         for (const f of (funcs ?? []) as any[]) {
+          const empresaRow = empresaMap.get(unidadeEmpresaMap.get(f.unidade_id) ?? '')
+          if (!empresaRow) continue
           todos.push({
             id: f.id,
-            empresaId: emp.id,
-            empresaNome: emp.razao_social,
-            valorVAEmpresa: emp.valor_va ?? 0,
+            empresaId: empresaRow.id,
+            empresaNome: empresaRow.razao_social,
+            valorVAEmpresa: empresaRow.valor_va ?? 0,
             nome: f.nome,
             funcao: f.funcao,
             valor_vt: f.valor_vt ?? 0,
@@ -80,8 +95,19 @@ export default function ValoresBeneficiosPage() {
     setEmpresa(emp)
     setValorVA(emp?.valor_va ?? 0)
 
-    const unidadeId = await getOrCreateDefaultUnidade(empresaId)
-    if (!unidadeId) { setLoading(false); return }
+    const { data: unidade } = await supabase
+      .from('unidades')
+      .select('id')
+      .eq('empresa_id', empresaId)
+      .limit(1)
+      .maybeSingle()
+
+    const unidadeId = unidade?.id
+    if (!unidadeId) {
+      setFuncionarios([])
+      setLoading(false)
+      return
+    }
 
     const { data: funcs } = await supabase
       .from('funcionarios')
