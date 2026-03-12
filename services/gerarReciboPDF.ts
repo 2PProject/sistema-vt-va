@@ -11,6 +11,7 @@ export type DadosRecibo = {
   ano: number
   diasUteis: number
   diasEfetivos: number
+  diasVTUteis: number
   diasSabado: number
   valorVT: number
   valorVTSabado: number
@@ -114,7 +115,7 @@ export async function gerarReciboPDF(dados: DadosRecibo): Promise<void> {
       ],
       [
         'Vale Transporte - Dias Úteis',
-        String(dados.diasEfetivos),
+        String(dados.diasVTUteis),
         formatarMoeda(dados.valorVT),
         formatarMoeda(dados.resultado.totalVT),
       ],
@@ -156,15 +157,16 @@ export async function gerarReciboPDF(dados: DadosRecibo): Promise<void> {
       ? `Dias Úteis: ${dados.diasUteis}  |  Dias Efetivos: ${dados.diasEfetivos}  |  Sábados Trabalhados: ${dados.diasSabado}`
       : `Dias Úteis: ${dados.diasUteis}  |  Dias Efetivos: ${dados.diasEfetivos}`
     doc.text(rodape, 12, y)
+    doc.text('____ de ____________________ de ______', 198, y, { align: 'right' })
     y += 12
 
     // Assinatura do funcionário
     doc.setDrawColor(0, 0, 0)
-    doc.line(12, y, 140, y)
+    doc.line(55, y, 155, y)
     y += 5
     doc.setFontSize(7)
     doc.setTextColor(100, 100, 100)
-    doc.text('Assinatura do Funcionário', 12, y)
+    doc.text('Assinatura do Funcionário', 105, y, { align: 'center' })
     y += 7
     doc.setFontSize(8)
     doc.setTextColor(120, 120, 120)

@@ -19,6 +19,20 @@ type RegistroCompleto = CFComFunc & {
   empresaObj: Empresa
 }
 
+type ResumoRecibo = {
+  diasUteisAuto: number
+  diasEfetivos: number
+  diasVTUteis: number
+  diasSabado: number
+  valorVT: number
+  valorVTSabado: number
+  valorVA: number
+  totalVA: number
+  totalVT: number
+  totalVTSabado: number
+  valorTotal: number
+}
+
 const TODAS = '__todas__'
 
 export default function RecibosPage() {
@@ -42,34 +56,54 @@ export default function RecibosPage() {
     setLoading(true)
     setRegistros([])
 
-    const empresasParaBuscar: Empresa[] = empresaId === TODAS
-      ? empresas
-      : empresas.filter(e => e.id === empresaId)
+    const empresasParaBuscar: Empresa[] = empresaId === TODAS ? empresas : empresas.filter(e => e.id === empresaId)
+
+    const unidadesPorEmpresa = await Promise.all(
+      empresasParaBuscar.map(async (emp) => ({
+        emp,
+        unidadeId: await getOrCreateDefaultUnidade(emp.id),
+      }))
+    )
+
+    const empresaPorUnidade = new Map<string, Empresa>()
+    for (const item of unidadesPorEmpresa) {
+      if (item.unidadeId) empresaPorUnidade.set(item.unidadeId, item.emp)
+    }
+
+    const unidadeIds = [...empresaPorUnidade.keys()]
+    if (unidadeIds.length === 0) {
+      setLoading(false)
+      return
+    }
+
+    const { data: comps } = await supabase
+      .from('competencias')
+      .select('*')
+      .in('unidade_id', unidadeIds)
+      .eq('mes', mes)
+      .eq('ano', ano)
+
+    const compsValidas = (comps ?? []) as Competencia[]
+    const compPorId = new Map(compsValidas.map(comp => [comp.id, comp]))
+    const compIds = compsValidas.map(comp => comp.id)
+
+    if (compIds.length === 0) {
+      setLoading(false)
+      return
+    }
+
+    const { data: cfs } = await supabase
+      .from('competencia_funcionario')
+      .select('*, funcionarios(*)')
+      .in('competencia_id', compIds)
 
     const todos: RegistroCompleto[] = []
-
-    for (const emp of empresasParaBuscar) {
-      const unidadeId = await getOrCreateDefaultUnidade(emp.id)
-      if (!unidadeId) continue
-
-      const { data: comp } = await supabase
-        .from('competencias')
-        .select('*')
-        .eq('unidade_id', unidadeId)
-        .eq('mes', mes)
-        .eq('ano', ano)
-        .maybeSingle()
-
+    for (const cf of (cfs as CFComFunc[]) ?? []) {
+      const comp = compPorId.get(cf.competencia_id)
       if (!comp) continue
-
-      const { data: cfs } = await supabase
-        .from('competencia_funcionario')
-        .select('*, funcionarios(*)')
-        .eq('competencia_id', comp.id)
-
-      for (const cf of (cfs as CFComFunc[]) ?? []) {
-        todos.push({ ...cf, competenciaObj: comp as Competencia, empresaObj: emp })
-      }
+      const emp = empresaPorUnidade.get(comp.unidade_id)
+      if (!emp) continue
+      todos.push({ ...cf, competenciaObj: comp, empresaObj: emp })
     }
 
     setRegistros(todos)
@@ -80,26 +114,48 @@ export default function RecibosPage() {
     if (empresaId) buscarDados()
   }, [empresaId, mes, ano, buscarDados])
 
+  const calcularResumoRecibo = useCallback((reg: RegistroCompleto): ResumoRecibo => {
+    const ehExcecao = (reg.funcionarios?.valor_vt_sabado ?? 0) > 0
+    const valorVT = reg.valor_vt ?? reg.funcionarios?.valor_vt ?? 0
+    const valorVTSabado = ehExcecao ? (reg.valor_vt_sabado ?? reg.funcionarios?.valor_vt_sabado ?? 0) : 0
+    const diasSabado = ehExcecao ? (reg.dias_sabado ?? 0) : 0
+    const valorVA = reg.competenciaObj.valor_va ?? 0
+    const diasUteisAuto = calcularDiasUteisAuto(mes, ano, reg.funcionarios?.folga_semanal, reg.competenciaObj.feriados_mes ?? 0)
+
+    const base = calcularVTVA({
+      diasUteis: diasUteisAuto,
+      diasFeriado: 0,
+      diasSabado,
+      diasDesconto: reg.dias_desconto,
+      valorVT,
+      valorVTSabado,
+      valorVA,
+    })
+
+    const diasVTUteis = ehExcecao ? Math.max(0, base.diasEfetivos - diasSabado) : base.diasEfetivos
+    const totalVT = diasVTUteis * valorVT
+    const valorTotal = base.totalVA + totalVT + base.totalVTSabado
+
+    return {
+      diasUteisAuto,
+      diasEfetivos: base.diasEfetivos,
+      diasVTUteis,
+      diasSabado,
+      valorVT,
+      valorVTSabado,
+      valorVA,
+      totalVA: base.totalVA,
+      totalVT,
+      totalVTSabado: base.totalVTSabado,
+      valorTotal,
+    }
+  }, [mes, ano])
+
   async function gerarPDF(reg: RegistroCompleto) {
     setGerando(reg.funcionario_id)
     try {
       const { gerarReciboPDF } = await import('../../services/gerarReciboPDF')
-      const ehExcecao = (reg.funcionarios?.valor_vt_sabado ?? 0) > 0
-      const valorVT = reg.valor_vt ?? reg.funcionarios?.valor_vt ?? 0
-      const valorVTSabado = ehExcecao ? (reg.valor_vt_sabado ?? reg.funcionarios?.valor_vt_sabado ?? 0) : 0
-      const diasSabado = ehExcecao ? (reg.dias_sabado ?? 0) : 0
-      const valorVA = reg.competenciaObj.valor_va ?? 0
-      const diasUteisAuto = calcularDiasUteisAuto(mes, ano, reg.funcionarios?.folga_semanal, reg.competenciaObj.feriados_mes ?? 0)
-
-      const resultado = calcularVTVA({
-        diasUteis: diasUteisAuto,
-        diasFeriado: 0,
-        diasSabado,
-        diasDesconto: reg.dias_desconto,
-        valorVT,
-        valorVTSabado,
-        valorVA,
-      })
+      const resumo = calcularResumoRecibo(reg)
 
       await gerarReciboPDF({
         razaoSocial: reg.empresaObj.razao_social,
@@ -110,13 +166,20 @@ export default function RecibosPage() {
         serie: reg.funcionarios.serie ?? '',
         mes,
         ano,
-        diasUteis: diasUteisAuto,
-        diasEfetivos: resultado.diasEfetivos,
-        diasSabado,
-        valorVT,
-        valorVTSabado,
-        valorVA,
-        resultado,
+        diasUteis: resumo.diasUteisAuto,
+        diasEfetivos: resumo.diasEfetivos,
+        diasVTUteis: resumo.diasVTUteis,
+        diasSabado: resumo.diasSabado,
+        valorVT: resumo.valorVT,
+        valorVTSabado: resumo.valorVTSabado,
+        valorVA: resumo.valorVA,
+        resultado: {
+          diasEfetivos: resumo.diasEfetivos,
+          totalVA: resumo.totalVA,
+          totalVT: resumo.totalVT,
+          totalVTSabado: resumo.totalVTSabado,
+          valorTotal: resumo.valorTotal,
+        },
       })
     } catch (err) {
       console.error('Erro ao gerar PDF:', err)
@@ -132,20 +195,7 @@ export default function RecibosPage() {
     }
   }
 
-  const totalGeral = registros.reduce((sum, reg) => {
-    const ehExcecao = (reg.funcionarios?.valor_vt_sabado ?? 0) > 0
-    const diasUteisAuto = calcularDiasUteisAuto(mes, ano, reg.funcionarios?.folga_semanal, reg.competenciaObj.feriados_mes ?? 0)
-    const r = calcularVTVA({
-      diasUteis: diasUteisAuto,
-      diasFeriado: 0,
-      diasSabado: ehExcecao ? (reg.dias_sabado ?? 0) : 0,
-      diasDesconto: reg.dias_desconto,
-      valorVT: reg.valor_vt ?? reg.funcionarios?.valor_vt ?? 0,
-      valorVTSabado: ehExcecao ? (reg.valor_vt_sabado ?? reg.funcionarios?.valor_vt_sabado ?? 0) : 0,
-      valorVA: reg.competenciaObj.valor_va ?? 0,
-    })
-    return sum + r.valorTotal
-  }, 0)
+  const totalGeral = registros.reduce((sum, reg) => sum + calcularResumoRecibo(reg).valorTotal, 0)
 
   const modoTodas = empresaId === TODAS
 
@@ -229,17 +279,7 @@ export default function RecibosPage() {
                     </thead>
                     <tbody className="divide-y divide-gray-100">
                       {registros.map((reg) => {
-                        const ehExcecao = (reg.funcionarios?.valor_vt_sabado ?? 0) > 0
-                        const diasUteisAuto = calcularDiasUteisAuto(mes, ano, reg.funcionarios?.folga_semanal, reg.competenciaObj.feriados_mes ?? 0)
-                        const r = calcularVTVA({
-                          diasUteis: diasUteisAuto,
-                          diasFeriado: 0,
-                          diasSabado: ehExcecao ? (reg.dias_sabado ?? 0) : 0,
-                          diasDesconto: reg.dias_desconto,
-                          valorVT: reg.valor_vt ?? reg.funcionarios?.valor_vt ?? 0,
-                          valorVTSabado: ehExcecao ? (reg.valor_vt_sabado ?? reg.funcionarios?.valor_vt_sabado ?? 0) : 0,
-                          valorVA: reg.competenciaObj.valor_va ?? 0,
-                        })
+                        const r = calcularResumoRecibo(reg)
                         return (
                           <tr key={`${reg.empresaObj.id}-${reg.funcionario_id}`} className="hover:bg-gray-50 transition-colors">
                             {modoTodas && (
