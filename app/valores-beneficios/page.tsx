@@ -11,6 +11,7 @@ type FuncRow = {
   funcao: string
   valor_vt: number
   valor_vt_sabado: number
+  tem_sabado: boolean
   alterado: boolean
 }
 
@@ -55,6 +56,7 @@ export default function ValoresBeneficiosPage() {
         funcao: f.funcao,
         valor_vt: f.valor_vt ?? 0,
         valor_vt_sabado: f.valor_vt_sabado ?? 0,
+        tem_sabado: (f.valor_vt_sabado ?? 0) > 0,
         alterado: false,
       }))
     )
@@ -69,6 +71,15 @@ export default function ValoresBeneficiosPage() {
     setFuncionarios(prev => {
       const novo = [...prev]
       novo[idx] = { ...novo[idx], [campo]: valor, alterado: true }
+      return novo
+    })
+  }
+
+  function toggleSabado(idx: number) {
+    setFuncionarios(prev => {
+      const novo = [...prev]
+      const ativo = !novo[idx].tem_sabado
+      novo[idx] = { ...novo[idx], tem_sabado: ativo, valor_vt_sabado: ativo ? novo[idx].valor_vt_sabado : 0, alterado: true }
       return novo
     })
   }
@@ -100,8 +111,7 @@ export default function ValoresBeneficiosPage() {
   }
 
   const totalMensalEstimado = funcionarios.reduce((sum, f) => {
-    // Estimativa: ~22 dias úteis, ~4 sábados
-    return sum + (22 * (f.valor_vt + valorVA)) + (4 * f.valor_vt_sabado)
+    return sum + (22 * (f.valor_vt + valorVA)) + (4 * (f.tem_sabado ? f.valor_vt_sabado : 0))
   }, 0)
 
   return (
@@ -185,13 +195,13 @@ export default function ValoresBeneficiosPage() {
                         <th className="table-header text-left">Funcionário</th>
                         <th className="table-header text-left">Cargo</th>
                         <th className="table-header text-center min-w-[130px]">VT / dia útil (R$)</th>
-                        <th className="table-header text-center min-w-[130px]">VT / Sábado (R$)</th>
+                        <th className="table-header text-center">VT Sábado diferente?</th>
                         <th className="table-header text-right">Estimativa mensal</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
                       {funcionarios.map((f, idx) => {
-                        const estimativa = (22 * (f.valor_vt + valorVA)) + (4 * f.valor_vt_sabado)
+                        const estimativa = (22 * (f.valor_vt + valorVA)) + (4 * (f.tem_sabado ? f.valor_vt_sabado : 0))
                         return (
                           <tr key={f.id} className={`hover:bg-gray-50 ${f.alterado ? 'bg-amber-50/30' : ''}`}>
                             <td className="table-cell font-medium text-gray-900">{f.nome}</td>
@@ -207,14 +217,25 @@ export default function ValoresBeneficiosPage() {
                               />
                             </td>
                             <td className="table-cell text-center">
-                              <input
-                                type="number"
-                                value={f.valor_vt_sabado}
-                                onChange={(e) => atualizarFunc(idx, 'valor_vt_sabado', Number(e.target.value))}
-                                min={0}
-                                step={0.01}
-                                className="w-28 border border-gray-300 rounded px-2 py-1.5 text-center text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
-                              />
+                              <div className="flex items-center justify-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  checked={f.tem_sabado}
+                                  onChange={() => toggleSabado(idx)}
+                                  className="w-4 h-4 accent-blue-600 cursor-pointer"
+                                />
+                                {f.tem_sabado && (
+                                  <input
+                                    type="number"
+                                    value={f.valor_vt_sabado}
+                                    onChange={(e) => atualizarFunc(idx, 'valor_vt_sabado', Number(e.target.value))}
+                                    min={0}
+                                    step={0.01}
+                                    className="w-24 border border-blue-300 rounded px-2 py-1.5 text-center text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                    placeholder="0,00"
+                                  />
+                                )}
+                              </div>
                             </td>
                             <td className="table-cell text-right text-xs font-semibold text-blue-700">
                               {formatarMoeda(estimativa)}
