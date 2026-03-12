@@ -95,6 +95,8 @@ export default function RecibosPage() {
         cnpj: empresa?.cnpj ?? '',
         nomeFuncionario: cf.funcionarios.nome,
         funcao: cf.funcionarios.funcao,
+        ctps: cf.funcionarios.ctps ?? '',
+        serie: cf.funcionarios.serie ?? '',
         mes,
         ano,
         diasUteis: diasUteisAuto,

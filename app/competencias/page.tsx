@@ -139,11 +139,12 @@ export default function CompetenciasPage() {
       setItens(
         funcs.map((f: Funcionario) => {
           const cf = cfMap.get(f.id)
+          const temSabado = (cf?.valor_vt_sabado ?? f.valor_vt_sabado ?? 0) > 0
           return {
             id: cf?.id ?? '',
             competencia_id: comp.id,
             funcionario_id: f.id,
-            dias_sabado: cf?.dias_sabado ?? sabadosDoMes,
+            dias_sabado: cf?.dias_sabado ?? (temSabado ? sabadosDoMes : 0),
             descontos: cf ? (descontosMap.get(cf.id) ?? []) : [],
             valor_vt: cf?.valor_vt ?? f.valor_vt ?? 0,
             valor_vt_sabado: cf?.valor_vt_sabado ?? f.valor_vt_sabado ?? 0,
@@ -157,7 +158,7 @@ export default function CompetenciasPage() {
           id: '',
           competencia_id: '',
           funcionario_id: f.id,
-          dias_sabado: sabadosDoMes,
+          dias_sabado: (f.valor_vt_sabado ?? 0) > 0 ? sabadosDoMes : 0,
           descontos: [],
           valor_vt: f.valor_vt ?? 0,
           valor_vt_sabado: f.valor_vt_sabado ?? 0,

@@ -5,6 +5,8 @@ export type DadosRecibo = {
   cnpj: string
   nomeFuncionario: string
   funcao: string
+  ctps: string
+  serie: string
   mes: number
   ano: number
   diasUteis: number
@@ -64,7 +66,7 @@ export async function gerarReciboPDF(dados: DadosRecibo): Promise<void> {
     doc.line(10, y, 200, y)
     y += 5
 
-    // Funcionário
+    // Funcionário — linha 1: nome e função
     doc.setFillColor(245, 247, 250)
     doc.rect(10, y - 3, 190, 10, 'F')
     doc.setFont('helvetica', 'bold')
@@ -72,10 +74,21 @@ export async function gerarReciboPDF(dados: DadosRecibo): Promise<void> {
     doc.setFont('helvetica', 'normal')
     doc.text(dados.nomeFuncionario, 45, y + 3)
     doc.setFont('helvetica', 'bold')
-    doc.text('FUNÇÃO:', 120, y + 3)
+    doc.text('FUNÇÃO:', 130, y + 3)
     doc.setFont('helvetica', 'normal')
-    doc.text(dados.funcao, 140, y + 3)
-    y += 14
+    doc.text(dados.funcao, 150, y + 3)
+    y += 8
+
+    // Funcionário — linha 2: CTPS e Série
+    doc.setFont('helvetica', 'bold')
+    doc.text('CTPS Nº:', 12, y + 3)
+    doc.setFont('helvetica', 'normal')
+    doc.text(dados.ctps || '—', 35, y + 3)
+    doc.setFont('helvetica', 'bold')
+    doc.text('SÉRIE:', 80, y + 3)
+    doc.setFont('helvetica', 'normal')
+    doc.text(dados.serie || '—', 97, y + 3)
+    y += 10
 
     // Tabela header
     doc.setFillColor(30, 64, 175)
@@ -146,15 +159,13 @@ export async function gerarReciboPDF(dados: DadosRecibo): Promise<void> {
     )
     y += 12
 
-    // Assinaturas
+    // Assinatura do funcionário
     doc.setDrawColor(0, 0, 0)
-    doc.line(12, y, 95, y)
-    doc.line(105, y, 198, y)
+    doc.line(12, y, 140, y)
     y += 5
     doc.setFontSize(7)
     doc.setTextColor(100, 100, 100)
     doc.text('Assinatura do Funcionário', 12, y)
-    doc.text('Assinatura do Responsável', 105, y)
     y += 7
     doc.setFontSize(8)
     doc.setTextColor(120, 120, 120)
