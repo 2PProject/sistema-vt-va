@@ -48,7 +48,8 @@ export default function ValoresBeneficiosPage() {
       .order('nome')
 
     setFuncionarios(
-      (funcs ?? []).map((f: Funcionario) => ({
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (funcs ?? []).map((f: any) => ({
         id: f.id,
         nome: f.nome,
         funcao: f.funcao,
