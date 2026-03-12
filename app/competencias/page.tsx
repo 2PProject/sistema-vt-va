@@ -33,11 +33,25 @@ type CFLocal = {
   funcionario: Funcionario
 }
 
+const TODAS = '__todas__'
+
+type ItemResumo = {
+  empresaNome: string
+  funcionarioNome: string
+  funcionarioFuncao: string
+  diasEfetivos: number
+  totalVA: number
+  totalVT: number
+  totalVTSabado: number
+  valorTotal: number
+}
+
 export default function CompetenciasPage() {
   const [empresas, setEmpresas] = useState<Empresa[]>([])
   const [tiposDesconto, setTiposDesconto] = useState<TipoDesconto[]>([])
   const [competencia, setCompetencia] = useState<Competencia | null>(null)
   const [itens, setItens] = useState<CFLocal[]>([])
+  const [itensResumo, setItensResumo] = useState<ItemResumo[]>([])
   const [feriadosDoMes, setFeriadosDoMes] = useState(0)
   const [loading, setLoading] = useState(false)
   const [salvando, setSalvando] = useState(false)
@@ -47,6 +61,8 @@ export default function CompetenciasPage() {
   const [empresaId, setEmpresaId] = useState<string>('')
   const [mes, setMes] = useState(new Date().getMonth() + 1)
   const [ano, setAno] = useState(new Date().getFullYear())
+
+  const modoTodas = empresaId === TODAS
 
   // Modal de descontos
   const [modalIdx, setModalIdx] = useState<number | null>(null)
@@ -62,6 +78,55 @@ export default function CompetenciasPage() {
     if (!empresaId) return
     setLoading(true)
     setSucesso(false)
+
+    // Modo "Todas" — carrega resumo de todas as empresas
+    if (modoTodas) {
+      const mesStr = String(mes).padStart(2, '0')
+      const { data: feriadosRows } = await supabase
+        .from('feriados').select('data')
+        .gte('data', `${ano}-${mesStr}-01`)
+        .lte('data', `${ano}-${mesStr}-31`)
+      const feriados = feriadosRows?.length ?? 0
+
+      const resumo: ItemResumo[] = []
+      for (const emp of empresas) {
+        const unidadeId = await getOrCreateDefaultUnidade(emp.id)
+        if (!unidadeId) continue
+        const { data: comp } = await supabase
+          .from('competencias').select('*')
+          .eq('unidade_id', unidadeId).eq('mes', mes).eq('ano', ano).maybeSingle()
+        if (!comp) continue
+        const { data: cfs } = await supabase
+          .from('competencia_funcionario').select('*, funcionarios(*)')
+          .eq('competencia_id', comp.id)
+        for (const cf of (cfs ?? []) as Array<CompetenciaFuncionario & { funcionarios: Funcionario }>) {
+          const f = cf.funcionarios
+          const ehExcecao = (f.valor_vt_sabado ?? 0) > 0
+          const diasAuto = calcularDiasUteisAuto(mes, ano, f.folga_semanal, feriados)
+          const r = calcularVTVA({
+            diasUteis: diasAuto, diasFeriado: 0,
+            diasSabado: ehExcecao ? (cf.dias_sabado ?? 0) : 0,
+            diasDesconto: cf.dias_desconto,
+            valorVT: cf.valor_vt ?? f.valor_vt ?? 0,
+            valorVTSabado: ehExcecao ? (cf.valor_vt_sabado ?? f.valor_vt_sabado ?? 0) : 0,
+            valorVA: (comp as Competencia).valor_va ?? 0,
+          })
+          resumo.push({
+            empresaNome: emp.razao_social,
+            funcionarioNome: f.nome,
+            funcionarioFuncao: f.funcao,
+            diasEfetivos: r.diasEfetivos,
+            totalVA: r.totalVA,
+            totalVT: r.totalVT,
+            totalVTSabado: r.totalVTSabado,
+            valorTotal: r.valorTotal,
+          })
+        }
+      }
+      setItensResumo(resumo)
+      setLoading(false)
+      return
+    }
 
     // Conta feriados do mês via tabela de feriados
     const mesStr = String(mes).padStart(2, '0')
@@ -139,15 +204,16 @@ export default function CompetenciasPage() {
       setItens(
         funcs.map((f: Funcionario) => {
           const cf = cfMap.get(f.id)
-          const temSabado = (cf?.valor_vt_sabado ?? f.valor_vt_sabado ?? 0) > 0
+          // Perfil do funcionário é a fonte da verdade para sábado
+          const ehExcecaoPerfil = (f.valor_vt_sabado ?? 0) > 0
           return {
             id: cf?.id ?? '',
             competencia_id: comp.id,
             funcionario_id: f.id,
-            dias_sabado: cf?.dias_sabado ?? (temSabado ? sabadosDoMes : 0),
+            dias_sabado: ehExcecaoPerfil ? (cf?.dias_sabado ?? sabadosDoMes) : 0,
             descontos: cf ? (descontosMap.get(cf.id) ?? []) : [],
             valor_vt: cf?.valor_vt ?? f.valor_vt ?? 0,
-            valor_vt_sabado: cf?.valor_vt_sabado ?? f.valor_vt_sabado ?? 0,
+            valor_vt_sabado: f.valor_vt_sabado ?? 0,
             funcionario: f,
           }
         })
@@ -391,6 +457,7 @@ export default function CompetenciasPage() {
               <label className="label-field">Empresa</label>
               <select value={empresaId} onChange={(e) => setEmpresaId(e.target.value)} className="input-field">
                 <option value="">Selecione uma empresa</option>
+                <option value={TODAS}>— Todas as empresas (resumo) —</option>
                 {empresas.map((emp) => (
                   <option key={emp.id} value={emp.id}>{emp.razao_social}</option>
                 ))}
@@ -408,7 +475,7 @@ export default function CompetenciasPage() {
             </div>
           </div>
 
-          {empresaId && (
+          {empresaId && !modoTodas && (
             <div className="mt-4 pt-4 border-t border-gray-100 flex flex-wrap items-end gap-6">
               <div>
                 <label className="label-field">VA / dia útil (R$)</label>
@@ -446,8 +513,66 @@ export default function CompetenciasPage() {
           </div>
         )}
 
-        {/* ── Tabela ── */}
-        {empresaId && (
+        {/* ── Tabela resumo (Todas as empresas) ── */}
+        {modoTodas && empresaId && (
+          <div className="card">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-sm font-semibold text-gray-700">Resumo — {MESES[mes - 1]}/{ano} — Todas as empresas</h2>
+              {itensResumo.length > 0 && (
+                <div className="text-sm font-semibold text-gray-700">
+                  Total: <span className="text-blue-600">{formatarMoeda(itensResumo.reduce((s, i) => s + i.valorTotal, 0))}</span>
+                </div>
+              )}
+            </div>
+            {loading ? (
+              <div className="text-center py-12 text-gray-400 text-sm">Carregando...</div>
+            ) : itensResumo.length === 0 ? (
+              <div className="text-center py-12 text-gray-400 text-sm">Nenhuma competência encontrada para este período.</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse text-sm">
+                  <thead>
+                    <tr className="bg-gray-50 border-b border-gray-200">
+                      <th className="table-header text-left">Empresa</th>
+                      <th className="table-header text-left">Funcionário</th>
+                      <th className="table-header text-right bg-blue-50 text-blue-700">Dias Ef.</th>
+                      <th className="table-header text-right">VA</th>
+                      <th className="table-header text-right">VT</th>
+                      <th className="table-header text-right">VT Sáb.</th>
+                      <th className="table-header text-right font-bold">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {itensResumo.map((item, i) => (
+                      <tr key={i} className="hover:bg-gray-50">
+                        <td className="table-cell text-xs text-gray-500">{item.empresaNome}</td>
+                        <td className="table-cell">
+                          <div className="font-medium text-gray-900">{item.funcionarioNome}</div>
+                          <div className="text-xs text-gray-400">{item.funcionarioFuncao}</div>
+                        </td>
+                        <td className="table-cell text-right bg-blue-50 font-bold text-blue-700 text-sm">{item.diasEfetivos}d</td>
+                        <td className="table-cell text-right text-xs text-gray-500">{formatarMoeda(item.totalVA)}</td>
+                        <td className="table-cell text-right text-xs text-gray-500">{formatarMoeda(item.totalVT)}</td>
+                        <td className="table-cell text-right text-xs text-gray-500">{item.totalVTSabado > 0 ? formatarMoeda(item.totalVTSabado) : <span className="text-gray-300">—</span>}</td>
+                        <td className="table-cell text-right font-semibold text-blue-700">{formatarMoeda(item.valorTotal)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t-2 border-gray-200 bg-gray-50">
+                      <td colSpan={6} className="table-cell text-right text-sm font-semibold text-gray-600">Total geral:</td>
+                      <td className="table-cell text-right font-bold text-blue-700">{formatarMoeda(itensResumo.reduce((s, i) => s + i.valorTotal, 0))}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+            <p className="text-xs text-gray-400 mt-3">Para editar uma competência, selecione a empresa específica.</p>
+          </div>
+        )}
+
+        {/* ── Tabela edição (empresa específica) ── */}
+        {!modoTodas && empresaId && (
           <div className="card">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-sm font-semibold text-gray-700">

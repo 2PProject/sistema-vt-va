@@ -7,6 +7,9 @@ import { formatarMoeda } from '../../utils/calculoVT'
 
 type FuncRow = {
   id: string
+  empresaId: string
+  empresaNome: string
+  valorVAEmpresa: number
   nome: string
   funcao: string
   valor_vt: number
@@ -14,6 +17,8 @@ type FuncRow = {
   tem_sabado: boolean
   alterado: boolean
 }
+
+const TODAS = '__todas__'
 
 export default function ValoresBeneficiosPage() {
   const [empresas, setEmpresas] = useState<Empresa[]>([])
@@ -25,6 +30,8 @@ export default function ValoresBeneficiosPage() {
   const [salvando, setSalvando] = useState(false)
   const [sucesso, setSucesso] = useState(false)
 
+  const modoTodas = empresaId === TODAS
+
   useEffect(() => {
     supabase.from('empresas').select('*').order('razao_social').then(({ data }) => {
       setEmpresas(data ?? [])
@@ -34,6 +41,41 @@ export default function ValoresBeneficiosPage() {
   const carregar = useCallback(async () => {
     if (!empresaId) return
     setLoading(true)
+
+    if (modoTodas) {
+      setEmpresa(null)
+      setValorVA(0)
+      const todos: FuncRow[] = []
+      for (const emp of empresas) {
+        const unidadeId = await getOrCreateDefaultUnidade(emp.id)
+        if (!unidadeId) continue
+        const { data: funcs } = await supabase
+          .from('funcionarios')
+          .select('id, nome, funcao, valor_vt, valor_vt_sabado')
+          .eq('unidade_id', unidadeId)
+          .eq('ativo', true)
+          .order('nome')
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        for (const f of (funcs ?? []) as any[]) {
+          todos.push({
+            id: f.id,
+            empresaId: emp.id,
+            empresaNome: emp.razao_social,
+            valorVAEmpresa: emp.valor_va ?? 0,
+            nome: f.nome,
+            funcao: f.funcao,
+            valor_vt: f.valor_vt ?? 0,
+            valor_vt_sabado: f.valor_vt_sabado ?? 0,
+            tem_sabado: (f.valor_vt_sabado ?? 0) > 0,
+            alterado: false,
+          })
+        }
+      }
+      setFuncionarios(todos)
+      setLoading(false)
+      return
+    }
+
     const emp = empresas.find(e => e.id === empresaId) ?? null
     setEmpresa(emp)
     setValorVA(emp?.valor_va ?? 0)
@@ -52,6 +94,9 @@ export default function ValoresBeneficiosPage() {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (funcs ?? []).map((f: any) => ({
         id: f.id,
+        empresaId: empresaId,
+        empresaNome: emp?.razao_social ?? '',
+        valorVAEmpresa: emp?.valor_va ?? 0,
         nome: f.nome,
         funcao: f.funcao,
         valor_vt: f.valor_vt ?? 0,
@@ -61,7 +106,7 @@ export default function ValoresBeneficiosPage() {
       }))
     )
     setLoading(false)
-  }, [empresaId, empresas])
+  }, [empresaId, empresas, modoTodas])
 
   useEffect(() => {
     if (empresaId) carregar()
@@ -85,14 +130,14 @@ export default function ValoresBeneficiosPage() {
   }
 
   async function salvar() {
-    if (!empresa) return
     setSalvando(true)
     setSucesso(false)
 
-    // Salva VA da empresa
-    await supabase.from('empresas').update({ valor_va: valorVA }).eq('id', empresa.id)
+    if (!modoTodas && empresa) {
+      await supabase.from('empresas').update({ valor_va: valorVA }).eq('id', empresa.id)
+      setEmpresas(prev => prev.map(e => e.id === empresa.id ? { ...e, valor_va: valorVA } : e))
+    }
 
-    // Salva VT de cada funcionário alterado
     const alterados = funcionarios.filter(f => f.alterado)
     for (const f of alterados) {
       await supabase
@@ -101,17 +146,15 @@ export default function ValoresBeneficiosPage() {
         .eq('id', f.id)
     }
 
-    // Atualiza lista de empresas localmente com novo VA
-    setEmpresas(prev => prev.map(e => e.id === empresa.id ? { ...e, valor_va: valorVA } : e))
     setFuncionarios(prev => prev.map(f => ({ ...f, alterado: false })))
-
     setSalvando(false)
     setSucesso(true)
     setTimeout(() => setSucesso(false), 3000)
   }
 
   const totalMensalEstimado = funcionarios.reduce((sum, f) => {
-    return sum + (22 * (f.valor_vt + valorVA)) + (4 * (f.tem_sabado ? f.valor_vt_sabado : 0))
+    const va = modoTodas ? f.valorVAEmpresa : valorVA
+    return sum + (22 * (f.valor_vt + va)) + (4 * (f.tem_sabado ? f.valor_vt_sabado : 0))
   }, 0)
 
   return (
@@ -127,6 +170,7 @@ export default function ValoresBeneficiosPage() {
             className="input-field max-w-md"
           >
             <option value="">Selecione uma empresa</option>
+            <option value={TODAS}>— Todas as empresas —</option>
             {empresas.map((emp) => (
               <option key={emp.id} value={emp.id}>{emp.razao_social}</option>
             ))}
@@ -144,39 +188,43 @@ export default function ValoresBeneficiosPage() {
 
         {empresaId && (
           <>
-            {/* VA da empresa */}
-            <div className="card">
-              <h2 className="text-sm font-semibold text-gray-700 mb-1">Vale Alimentação (VA)</h2>
-              <p className="text-xs text-gray-400 mb-4">
-                Mesmo valor para todos os funcionários. Será pré-preenchido automaticamente nas competências.
-              </p>
-              <div className="flex items-end gap-6">
-                <div>
-                  <label className="label-field">Valor VA / dia útil (R$)</label>
-                  <input
-                    type="number"
-                    value={valorVA}
-                    onChange={(e) => setValorVA(Number(e.target.value))}
-                    min={0}
-                    step={0.01}
-                    className="input-field w-40 text-lg font-semibold"
-                    placeholder="0,00"
-                  />
-                </div>
-                <div className="pb-1 text-sm text-gray-500">
-                  Mensal estimado (22 dias): <span className="font-semibold text-blue-600">{formatarMoeda(22 * valorVA)}</span> por funcionário
+            {/* VA da empresa — só exibe quando empresa específica */}
+            {!modoTodas && (
+              <div className="card">
+                <h2 className="text-sm font-semibold text-gray-700 mb-1">Vale Alimentação (VA)</h2>
+                <p className="text-xs text-gray-400 mb-4">
+                  Mesmo valor para todos os funcionários. Será pré-preenchido automaticamente nas competências.
+                </p>
+                <div className="flex items-end gap-6">
+                  <div>
+                    <label className="label-field">Valor VA / dia útil (R$)</label>
+                    <input
+                      type="number"
+                      value={valorVA}
+                      onChange={(e) => setValorVA(Number(e.target.value))}
+                      min={0}
+                      step={0.01}
+                      className="input-field w-40 text-lg font-semibold"
+                      placeholder="0,00"
+                    />
+                  </div>
+                  <div className="pb-1 text-sm text-gray-500">
+                    Mensal estimado (22 dias): <span className="font-semibold text-blue-600">{formatarMoeda(22 * valorVA)}</span> por funcionário
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
 
             {/* VT por funcionário */}
             <div className="card">
               <div className="flex items-center justify-between mb-1">
                 <div>
                   <h2 className="text-sm font-semibold text-gray-700">Vale Transporte (VT) por Funcionário</h2>
-                  <p className="text-xs text-gray-400 mt-0.5">
-                    Cada funcionário tem seu próprio VT (baseado no trajeto). Será pré-preenchido nas competências.
-                  </p>
+                  {modoTodas && (
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      Visualizando todos os funcionários de todas as empresas. VA é editado por empresa individualmente.
+                    </p>
+                  )}
                 </div>
                 {funcionarios.some(f => f.alterado) && (
                   <span className="text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded">Alterações não salvas</span>
@@ -186,14 +234,16 @@ export default function ValoresBeneficiosPage() {
               {loading ? (
                 <div className="text-center py-10 text-gray-400 text-sm">Carregando...</div>
               ) : funcionarios.length === 0 ? (
-                <div className="text-center py-10 text-gray-400 text-sm">Nenhum funcionário ativo nesta empresa.</div>
+                <div className="text-center py-10 text-gray-400 text-sm">Nenhum funcionário ativo.</div>
               ) : (
                 <div className="mt-4 overflow-x-auto">
                   <table className="w-full border-collapse text-sm">
                     <thead>
                       <tr className="bg-gray-50 border-b border-gray-200">
+                        {modoTodas && <th className="table-header text-left">Empresa</th>}
                         <th className="table-header text-left">Funcionário</th>
                         <th className="table-header text-left">Cargo</th>
+                        {modoTodas && <th className="table-header text-center">VA/dia</th>}
                         <th className="table-header text-center min-w-[130px]">VT / dia útil (R$)</th>
                         <th className="table-header text-center">VT Sábado diferente?</th>
                         <th className="table-header text-right">Estimativa mensal</th>
@@ -201,11 +251,18 @@ export default function ValoresBeneficiosPage() {
                     </thead>
                     <tbody className="divide-y divide-gray-100">
                       {funcionarios.map((f, idx) => {
-                        const estimativa = (22 * (f.valor_vt + valorVA)) + (4 * (f.tem_sabado ? f.valor_vt_sabado : 0))
+                        const va = modoTodas ? f.valorVAEmpresa : valorVA
+                        const estimativa = (22 * (f.valor_vt + va)) + (4 * (f.tem_sabado ? f.valor_vt_sabado : 0))
                         return (
                           <tr key={f.id} className={`hover:bg-gray-50 ${f.alterado ? 'bg-amber-50/30' : ''}`}>
+                            {modoTodas && (
+                              <td className="table-cell text-xs text-gray-500">{f.empresaNome}</td>
+                            )}
                             <td className="table-cell font-medium text-gray-900">{f.nome}</td>
                             <td className="table-cell text-gray-500 text-xs">{f.funcao}</td>
+                            {modoTodas && (
+                              <td className="table-cell text-center text-xs text-gray-500">{formatarMoeda(f.valorVAEmpresa)}</td>
+                            )}
                             <td className="table-cell text-center">
                               <input
                                 type="number"
@@ -246,8 +303,8 @@ export default function ValoresBeneficiosPage() {
                     </tbody>
                     <tfoot>
                       <tr className="border-t-2 border-gray-200 bg-gray-50">
-                        <td colSpan={4} className="table-cell text-right text-sm font-semibold text-gray-600">
-                          Total mensal estimado (empresa):
+                        <td colSpan={modoTodas ? 6 : 4} className="table-cell text-right text-sm font-semibold text-gray-600">
+                          Total mensal estimado {modoTodas ? '(todas as empresas)' : '(empresa)'}:
                         </td>
                         <td className="table-cell text-right font-bold text-blue-700">
                           {formatarMoeda(totalMensalEstimado)}
@@ -287,7 +344,7 @@ export default function ValoresBeneficiosPage() {
             <svg className="w-12 h-12 mx-auto mb-4 opacity-40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
-            <p className="text-sm">Selecione uma empresa para configurar os valores de VT e VA.</p>
+            <p className="text-sm">Selecione uma empresa (ou todas) para configurar os valores de VT e VA.</p>
           </div>
         )}
       </div>
