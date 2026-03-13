@@ -75,6 +75,7 @@ export type CFDesconto = {
   dias: number
   data_inicio: string | null  // 'YYYY-MM-DD'
   data_fim: string | null     // 'YYYY-MM-DD'
+  dias_proximo_mes: number    // dias que transbordam para o mês seguinte
   tipos_desconto?: TipoDesconto
 }
 

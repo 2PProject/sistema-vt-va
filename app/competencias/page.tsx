@@ -20,28 +20,17 @@ import {
   MESES,
 } from '../../utils/calculoVT'
 
+// ─── Types ────────────────────────────────────────────────────────────────────
+
 type DescontoLocal = {
   id: string
   tipo_id: string
   tipo_nome: string
   dias: number
-  data_inicio: string  // 'YYYY-MM-DD'
-  data_fim: string     // 'YYYY-MM-DD'
-}
-
-/** Conta dias Mon–Sat no intervalo [inicio, fim] inclusivo */
-function contarDiasUteisIntervalo(inicio: string, fim: string): number {
-  if (!inicio) return 1
-  const end = fim || inicio
-  const start = new Date(inicio + 'T12:00:00')
-  const finish = new Date(end + 'T12:00:00')
-  let count = 0
-  const cur = new Date(start)
-  while (cur <= finish) {
-    if (cur.getDay() !== 0) count++ // 0 = domingo
-    cur.setDate(cur.getDate() + 1)
-  }
-  return Math.max(1, count)
+  data_inicio: string   // 'YYYY-MM-DD'
+  data_fim: string      // 'YYYY-MM-DD'
+  dias_proximo_mes: number
+  isCarryOver: boolean  // read-only carry-over from previous month
 }
 
 type CFLocal = {
@@ -53,27 +42,65 @@ type CFLocal = {
   valor_vt: number
   valor_vt_sabado: number
   funcionario: Funcionario
+  empresaNome: string    // used in modoTodas
+  valorVAItem: number    // VA per-item (from competência)
 }
 
 const TODAS = '__todas__'
 
-type ItemResumo = {
-  empresaNome: string
-  funcionarioNome: string
-  funcionarioFuncao: string
-  diasEfetivos: number
-  totalVA: number
-  totalVT: number
-  totalVTSabado: number
-  valorTotal: number
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function contarDiasNoPeriodo(start: Date, end: Date): number {
+  let count = 0
+  const cur = new Date(start)
+  while (cur <= end) {
+    if (cur.getDay() !== 0) count++ // não conta domingo
+    cur.setDate(cur.getDate() + 1)
+  }
+  return Math.max(0, count)
 }
+
+/** Retorna o último dia do mês como Date (com hora 12:00) */
+function ultimoDiaDoMes(m: number, y: number): Date {
+  const d = new Date(y, m, 0) // day 0 of month m+1 = last day of month m
+  d.setHours(12, 0, 0, 0)
+  return d
+}
+
+/**
+ * Calcula dias (Mon–Sat) do intervalo inicio→fim que caem no mês corrente
+ * e dias que transbordam para o próximo mês.
+ */
+function calcularDiasComCarryOver(
+  inicio: string,
+  fim: string,
+  mes: number,
+  ano: number
+): { diasCorrente: number; diasProximo: number } {
+  if (!inicio) return { diasCorrente: 1, diasProximo: 0 }
+  const start = new Date(inicio + 'T12:00:00')
+  const end = new Date((fim || inicio) + 'T12:00:00')
+  const lastDay = ultimoDiaDoMes(mes, ano)
+
+  const endCorrente = end <= lastDay ? end : lastDay
+  const diasCorrente = contarDiasNoPeriodo(start, endCorrente)
+
+  let diasProximo = 0
+  if (end > lastDay) {
+    const nextStart = new Date(lastDay)
+    nextStart.setDate(nextStart.getDate() + 1)
+    diasProximo = contarDiasNoPeriodo(nextStart, end)
+  }
+  return { diasCorrente, diasProximo }
+}
+
+// ─── Componente ──────────────────────────────────────────────────────────────
 
 export default function CompetenciasPage() {
   const [empresas, setEmpresas] = useState<Empresa[]>([])
   const [tiposDesconto, setTiposDesconto] = useState<TipoDesconto[]>([])
   const [competencia, setCompetencia] = useState<Competencia | null>(null)
   const [itens, setItens] = useState<CFLocal[]>([])
-  const [itensResumo, setItensResumo] = useState<ItemResumo[]>([])
   const [feriadosDoMes, setFeriadosDoMes] = useState(0)
   const [loading, setLoading] = useState(false)
   const [salvando, setSalvando] = useState(false)
@@ -93,91 +120,155 @@ export default function CompetenciasPage() {
   const [novoDias, setNovoDias] = useState(1)
   const [novaDataInicio, setNovaDataInicio] = useState('')
   const [novaDataFim, setNovaDataFim] = useState('')
+  const [novoDiasProximo, setNovoDiasProximo] = useState(0)
 
   useEffect(() => {
     supabase.from('empresas').select('*').order('razao_social').then(({ data }) => setEmpresas(data ?? []))
     supabase.from('tipos_desconto').select('*').order('nome').then(({ data }) => setTiposDesconto(data ?? []))
   }, [])
 
+  // ─── Carregar ───────────────────────────────────────────────────────────────
+
   const carregarCompetencia = useCallback(async () => {
     if (!empresaId) return
     setLoading(true)
     setSucesso(false)
 
-    // Modo "Todas" — carrega resumo de todas as empresas
-    if (modoTodas) {
-      const mesStr = String(mes).padStart(2, '0')
-      const { data: feriadosRows } = await supabase
-        .from('feriados').select('data')
-        .gte('data', `${ano}-${mesStr}-01`)
-        .lte('data', `${ano}-${mesStr}-31`)
-      const feriados = feriadosRows?.length ?? 0
-      setFeriadosDoMes(feriados)
+    const mesStr = String(mes).padStart(2, '0')
+    const { data: feriadosRows } = await supabase
+      .from('feriados').select('data')
+      .gte('data', `${ano}-${mesStr}-01`)
+      .lte('data', `${ano}-${mesStr}-31`)
+    const feriados = feriadosRows?.length ?? 0
+    setFeriadosDoMes(feriados)
 
-      const resumoResults = await Promise.all(empresas.map(async (emp) => {
-        const unidadeId = await getOrCreateDefaultUnidade(emp.id)
-        if (!unidadeId) return []
-        const { data: comp } = await supabase
-          .from('competencias').select('*')
-          .eq('unidade_id', unidadeId).eq('mes', mes).eq('ano', ano).maybeSingle()
-        if (!comp) return []
-        const { data: cfs } = await supabase
-          .from('competencia_funcionario').select('*, funcionarios(*)')
-          .eq('competencia_id', comp.id)
-        return ((cfs ?? []) as Array<CompetenciaFuncionario & { funcionarios: Funcionario }>).map(cf => {
-          const f = cf.funcionarios
-          const vtSabado = cf.valor_vt_sabado ?? f.valor_vt_sabado ?? 0
-          const ehExcecao = vtSabado > 0
-          const diasAuto = calcularDiasUteisAuto(mes, ano, f.folga_semanal, feriados)
-          const r = calcularVTVA({
-            diasUteis: diasAuto, diasFeriado: 0,
-            diasSabado: ehExcecao ? (cf.dias_sabado ?? 0) : 0,
-            diasDesconto: cf.dias_desconto,
-            valorVT: cf.valor_vt ?? f.valor_vt ?? 0,
-            valorVTSabado: ehExcecao ? vtSabado : 0,
-            valorVA: (comp as Competencia).valor_va ?? 0,
+    // ── MODO TODAS: batch loading ─────────────────────────────────────────────
+    if (modoTodas) {
+      const sabadosDoMes = calcularSabadosDoMes(mes, ano)
+
+      // 1. Todas as unidades das empresas
+      const { data: allUnidades } = await supabase
+        .from('unidades').select('id, empresa_id')
+        .in('empresa_id', empresas.map(e => e.id))
+      const unidadeIds = (allUnidades ?? []).map(u => u.id)
+      const empresaByUnidade = new Map((allUnidades ?? []).map(u => [u.id, u.empresa_id]))
+
+      if (unidadeIds.length === 0) { setItens([]); setLoading(false); return }
+
+      // 2. Todas as competências do mês
+      const { data: allComps } = await supabase
+        .from('competencias').select('*')
+        .in('unidade_id', unidadeIds).eq('mes', mes).eq('ano', ano)
+      const compIds = (allComps ?? []).map(c => c.id)
+      const vaByComp = new Map((allComps ?? []).map(c => [c.id, (c as Competencia).valor_va ?? 0]))
+
+      if (compIds.length === 0) { setItens([]); setLoading(false); return }
+
+      // 3. Todos os CFs com funcionários
+      const { data: allCFs } = await supabase
+        .from('competencia_funcionario').select('*, funcionarios(*)')
+        .in('competencia_id', compIds)
+      const cfList = (allCFs ?? []) as Array<CompetenciaFuncionario & { funcionarios: Funcionario }>
+      const cfIds = cfList.map(cf => cf.id)
+
+      // 4. Todos os descontos
+      const descontosMap = new Map<string, DescontoLocal[]>()
+      if (cfIds.length > 0) {
+        const { data: descontosRows } = await supabase
+          .from('competencia_funcionario_desconto').select('*, tipos_desconto(id, nome)')
+          .in('competencia_funcionario_id', cfIds)
+        for (const d of descontosRows ?? []) {
+          const arr = descontosMap.get(d.competencia_funcionario_id) ?? []
+          arr.push({
+            id: d.id, tipo_id: d.tipo_desconto_id,
+            tipo_nome: (d.tipos_desconto as TipoDesconto)?.nome ?? '',
+            dias: d.dias, data_inicio: d.data_inicio ?? '', data_fim: d.data_fim ?? '',
+            dias_proximo_mes: d.dias_proximo_mes ?? 0, isCarryOver: false,
           })
-          return {
-            empresaNome: emp.razao_social,
-            funcionarioNome: f.nome,
-            funcionarioFuncao: f.funcao,
-            diasEfetivos: r.diasEfetivos,
-            totalVA: r.totalVA,
-            totalVT: r.totalVT,
-            totalVTSabado: r.totalVTSabado,
-            valorTotal: r.valorTotal,
-          } as ItemResumo
-        })
-      }))
-      setItensResumo(resumoResults.flat())
+          descontosMap.set(d.competencia_funcionario_id, arr)
+        }
+      }
+
+      // 5. Carry-over: descontos do mês anterior com dias_proximo_mes > 0
+      const prevMes = mes === 1 ? 12 : mes - 1
+      const prevAno = mes === 1 ? ano - 1 : ano
+      const prevMesStr = String(prevMes).padStart(2, '0')
+      const { data: prevComps } = await supabase
+        .from('competencias').select('id, unidade_id')
+        .in('unidade_id', unidadeIds).eq('mes', prevMes).eq('ano', prevAno)
+      if (prevComps && prevComps.length > 0) {
+        const prevCompIds = prevComps.map(c => c.id)
+        const { data: prevCFs } = await supabase
+          .from('competencia_funcionario').select('id, funcionario_id')
+          .in('competencia_id', prevCompIds)
+        if (prevCFs && prevCFs.length > 0) {
+          const prevCFMap = new Map(prevCFs.map(cf => [cf.id, cf.funcionario_id]))
+          const { data: carryRows } = await supabase
+            .from('competencia_funcionario_desconto').select('*, tipos_desconto(id, nome)')
+            .in('competencia_funcionario_id', prevCFs.map(cf => cf.id))
+            .gt('dias_proximo_mes', 0)
+          const carryByFunc = new Map<string, DescontoLocal[]>()
+          for (const d of carryRows ?? []) {
+            const funcId = prevCFMap.get(d.competencia_funcionario_id)
+            if (!funcId) continue
+            const arr = carryByFunc.get(funcId) ?? []
+            arr.push({
+              id: d.id + '_carry', tipo_id: d.tipo_desconto_id,
+              tipo_nome: `↩ ${MESES[prevMes - 1]}: ${(d.tipos_desconto as TipoDesconto)?.nome ?? ''}`,
+              dias: d.dias_proximo_mes, data_inicio: '', data_fim: '',
+              dias_proximo_mes: 0, isCarryOver: true,
+            })
+            carryByFunc.set(funcId, arr)
+          }
+          // Merge carry-over into descontosMap by CF
+          for (const cf of cfList) {
+            const carries = carryByFunc.get(cf.funcionario_id)
+            if (carries && carries.length > 0) {
+              const existing = descontosMap.get(cf.id) ?? []
+              descontosMap.set(cf.id, [...existing, ...carries])
+            }
+          }
+        }
+      }
+      void prevMesStr // suppress unused var warning
+
+      // Build itens
+      const items: CFLocal[] = cfList.map(cf => {
+        const f = cf.funcionarios
+        const loadedVtSabado = cf.valor_vt_sabado ?? f.valor_vt_sabado ?? 0
+        const ehExcecao = loadedVtSabado > 0
+        const comp = (allComps ?? []).find(c => c.id === cf.competencia_id)
+        const unidadeId = comp?.unidade_id
+        const empId = unidadeId ? empresaByUnidade.get(unidadeId) : undefined
+        const emp = empId ? empresas.find(e => e.id === empId) : undefined
+        return {
+          id: cf.id, competencia_id: cf.competencia_id, funcionario_id: cf.funcionario_id,
+          dias_sabado: ehExcecao ? (cf.dias_sabado ?? sabadosDoMes) : 0,
+          descontos: descontosMap.get(cf.id) ?? [],
+          valor_vt: cf.valor_vt ?? f.valor_vt ?? 0,
+          valor_vt_sabado: loadedVtSabado,
+          funcionario: f,
+          empresaNome: emp?.razao_social ?? '',
+          valorVAItem: vaByComp.get(cf.competencia_id) ?? 0,
+        }
+      })
+
+      setItens(items)
       setLoading(false)
       return
     }
 
-    // Conta feriados do mês via tabela de feriados
-    const mesStr = String(mes).padStart(2, '0')
-    const { data: feriadosRows } = await supabase
-      .from('feriados')
-      .select('data')
-      .gte('data', `${ano}-${mesStr}-01`)
-      .lte('data', `${ano}-${mesStr}-31`)
-
-    setFeriadosDoMes(feriadosRows?.length ?? 0)
+    // ── MODO EMPRESA ÚNICA ────────────────────────────────────────────────────
 
     const unidadeId = await getOrCreateDefaultUnidade(empresaId)
     if (!unidadeId) { setLoading(false); return }
 
-    // VA pré-carregado da empresa
     const emp = empresas.find(e => e.id === empresaId)
     if (emp) setValorVA(emp.valor_va ?? 0)
 
     const { data: compExistente } = await supabase
-      .from('competencias')
-      .select('*')
-      .eq('unidade_id', unidadeId)
-      .eq('mes', mes)
-      .eq('ano', ano)
-      .maybeSingle()
+      .from('competencias').select('*')
+      .eq('unidade_id', unidadeId).eq('mes', mes).eq('ano', ano).maybeSingle()
 
     const comp = compExistente as Competencia | null
     const sabadosDoMes = calcularSabadosDoMes(mes, ano)
@@ -190,40 +281,60 @@ export default function CompetenciasPage() {
     }
 
     const { data: funcs } = await supabase
-      .from('funcionarios')
-      .select('*')
-      .eq('unidade_id', unidadeId)
-      .eq('ativo', true)
-      .order('nome')
+      .from('funcionarios').select('*')
+      .eq('unidade_id', unidadeId).eq('ativo', true).order('nome')
+
+    // Carry-over do mês anterior
+    const prevMes = mes === 1 ? 12 : mes - 1
+    const prevAno = mes === 1 ? ano - 1 : ano
+    const carryByFunc = new Map<string, DescontoLocal[]>()
+    const { data: prevComp } = await supabase
+      .from('competencias').select('id')
+      .eq('unidade_id', unidadeId).eq('mes', prevMes).eq('ano', prevAno).maybeSingle()
+    if (prevComp) {
+      const { data: prevCFs } = await supabase
+        .from('competencia_funcionario').select('id, funcionario_id')
+        .eq('competencia_id', prevComp.id)
+      if (prevCFs && prevCFs.length > 0) {
+        const prevCFMap = new Map(prevCFs.map(cf => [cf.id, cf.funcionario_id]))
+        const { data: carryRows } = await supabase
+          .from('competencia_funcionario_desconto').select('*, tipos_desconto(id, nome)')
+          .in('competencia_funcionario_id', prevCFs.map(cf => cf.id))
+          .gt('dias_proximo_mes', 0)
+        for (const d of carryRows ?? []) {
+          const funcId = prevCFMap.get(d.competencia_funcionario_id)
+          if (!funcId) continue
+          const arr = carryByFunc.get(funcId) ?? []
+          arr.push({
+            id: d.id + '_carry', tipo_id: d.tipo_desconto_id,
+            tipo_nome: `↩ ${MESES[prevMes - 1]}: ${(d.tipos_desconto as TipoDesconto)?.nome ?? ''}`,
+            dias: d.dias_proximo_mes, data_inicio: '', data_fim: '',
+            dias_proximo_mes: 0, isCarryOver: true,
+          })
+          carryByFunc.set(funcId, arr)
+        }
+      }
+    }
 
     if (funcs && comp) {
       const { data: cfExistente } = await supabase
-        .from('competencia_funcionario')
-        .select('*')
-        .eq('competencia_id', comp.id)
-
+        .from('competencia_funcionario').select('*').eq('competencia_id', comp.id)
       const cfMap = new Map(
         (cfExistente ?? []).map((cf: CompetenciaFuncionario) => [cf.funcionario_id, cf])
       )
-
-      // Carrega descontos de todos os CF
       const cfIds = (cfExistente ?? []).map((cf: CompetenciaFuncionario) => cf.id)
-      let descontosMap = new Map<string, DescontoLocal[]>()
+      const descontosMap = new Map<string, DescontoLocal[]>()
       if (cfIds.length > 0) {
         const { data: descontosRows } = await supabase
-          .from('competencia_funcionario_desconto')
-          .select('*, tipos_desconto(id, nome)')
+          .from('competencia_funcionario_desconto').select('*, tipos_desconto(id, nome)')
           .in('competencia_funcionario_id', cfIds)
-
         for (const d of descontosRows ?? []) {
           const arr = descontosMap.get(d.competencia_funcionario_id) ?? []
           arr.push({
-            id: d.id,
-            tipo_id: d.tipo_desconto_id,
+            id: d.id, tipo_id: d.tipo_desconto_id,
             tipo_nome: (d.tipos_desconto as TipoDesconto)?.nome ?? '',
-            dias: d.dias,
-            data_inicio: d.data_inicio ?? '',
-            data_fim: d.data_fim ?? '',
+            dias: d.dias, data_inicio: d.data_inicio ?? '', data_fim: d.data_fim ?? '',
+            dias_proximo_mes: d.dias_proximo_mes ?? 0, isCarryOver: false,
           })
           descontosMap.set(d.competencia_funcionario_id, arr)
         }
@@ -234,30 +345,35 @@ export default function CompetenciasPage() {
           const cf = cfMap.get(f.id)
           const loadedVtSabado = cf?.valor_vt_sabado ?? f.valor_vt_sabado ?? 0
           const ehExcecao = loadedVtSabado > 0
+          const cfDescontos = cf ? (descontosMap.get(cf.id) ?? []) : []
+          const carries = carryByFunc.get(f.id) ?? []
           return {
-            id: cf?.id ?? '',
-            competencia_id: comp.id,
-            funcionario_id: f.id,
+            id: cf?.id ?? '', competencia_id: comp.id, funcionario_id: f.id,
             dias_sabado: ehExcecao ? (cf?.dias_sabado ?? sabadosDoMes) : 0,
-            descontos: cf ? (descontosMap.get(cf.id) ?? []) : [],
+            descontos: [...cfDescontos, ...carries],
             valor_vt: cf?.valor_vt ?? f.valor_vt ?? 0,
             valor_vt_sabado: loadedVtSabado,
             funcionario: f,
+            empresaNome: emp?.razao_social ?? '',
+            valorVAItem: comp.valor_va ?? emp?.valor_va ?? 0,
           }
         })
       )
     } else if (funcs) {
       setItens(
-        funcs.map((f: Funcionario) => ({
-          id: '',
-          competencia_id: '',
-          funcionario_id: f.id,
-          dias_sabado: (f.valor_vt_sabado ?? 0) > 0 ? sabadosDoMes : 0,
-          descontos: [],
-          valor_vt: f.valor_vt ?? 0,
-          valor_vt_sabado: f.valor_vt_sabado ?? 0,
-          funcionario: f,
-        }))
+        funcs.map((f: Funcionario) => {
+          const carries = carryByFunc.get(f.id) ?? []
+          return {
+            id: '', competencia_id: '', funcionario_id: f.id,
+            dias_sabado: (f.valor_vt_sabado ?? 0) > 0 ? sabadosDoMes : 0,
+            descontos: carries,
+            valor_vt: f.valor_vt ?? 0,
+            valor_vt_sabado: f.valor_vt_sabado ?? 0,
+            funcionario: f,
+            empresaNome: emp?.razao_social ?? '',
+            valorVAItem: emp?.valor_va ?? 0,
+          }
+        })
       )
     } else {
       setItens([])
@@ -274,7 +390,7 @@ export default function CompetenciasPage() {
     setItens(prev => { const n = [...prev]; n[idx] = { ...n[idx], [campo]: valor }; return n })
   }
 
-  // ─── Modal de descontos ────────────────────────────────────────────────────
+  // ─── Modal de descontos ──────────────────────────────────────────────────────
 
   function abrirModal(idx: number) {
     setModalIdx(idx)
@@ -282,17 +398,27 @@ export default function CompetenciasPage() {
     setNovoDias(1)
     setNovaDataInicio('')
     setNovaDataFim('')
+    setNovoDiasProximo(0)
   }
 
   function handleDataInicioChange(val: string) {
     setNovaDataInicio(val)
-    const fim = novaDataFim || val
-    if (val) setNovoDias(contarDiasUteisIntervalo(val, fim))
+    if (val) {
+      const fim = novaDataFim || val
+      const { diasCorrente, diasProximo } = calcularDiasComCarryOver(val, fim, mes, ano)
+      setNovoDias(diasCorrente || 1)
+      setNovoDiasProximo(diasProximo)
+    }
   }
 
   function handleDataFimChange(val: string) {
     setNovaDataFim(val)
-    if (novaDataInicio) setNovoDias(contarDiasUteisIntervalo(novaDataInicio, val || novaDataInicio))
+    if (novaDataInicio) {
+      const fim = val || novaDataInicio
+      const { diasCorrente, diasProximo } = calcularDiasComCarryOver(novaDataInicio, fim, mes, ano)
+      setNovoDias(diasCorrente || 1)
+      setNovoDiasProximo(diasProximo)
+    }
   }
 
   function adicionarDesconto() {
@@ -304,12 +430,12 @@ export default function CompetenciasPage() {
       n[modalIdx] = {
         ...n[modalIdx],
         descontos: [...n[modalIdx].descontos, {
-          id: '',
-          tipo_id: novoTipoId,
-          tipo_nome: tipo.nome,
+          id: '', tipo_id: novoTipoId, tipo_nome: tipo.nome,
           dias: novoDias,
           data_inicio: novaDataInicio,
           data_fim: novaDataFim || novaDataInicio,
+          dias_proximo_mes: novoDiasProximo,
+          isCarryOver: false,
         }],
       }
       return n
@@ -317,6 +443,7 @@ export default function CompetenciasPage() {
     setNovoDias(1)
     setNovaDataInicio('')
     setNovaDataFim('')
+    setNovoDiasProximo(0)
     if (tiposDesconto.length > 0) setNovoTipoId(tiposDesconto[0].id)
   }
 
@@ -328,76 +455,86 @@ export default function CompetenciasPage() {
     })
   }
 
-  // ─── Salvar ────────────────────────────────────────────────────────────────
+  // ─── Salvar (helper por item) ────────────────────────────────────────────────
+
+  async function salvarItemCF(item: CFLocal, vaEfetivo: number) {
+    const ehExcecao = (item.valor_vt_sabado ?? 0) > 0
+    const diasSabadoSalvar = ehExcecao ? item.dias_sabado : 0
+    const valorVtSabadoSalvar = ehExcecao ? item.valor_vt_sabado : 0
+    const descontosReais = item.descontos.filter(d => !d.isCarryOver)
+    const totalDescontos = descontosReais.reduce((s, d) => s + d.dias, 0)
+    const diasUteisAuto = calcularDiasUteisAuto(mes, ano, item.funcionario.folga_semanal, feriadosDoMes)
+    const resultado = calcularVTVA({
+      diasUteis: diasUteisAuto, diasFeriado: 0, diasSabado: diasSabadoSalvar,
+      diasDesconto: totalDescontos, valorVT: item.valor_vt,
+      valorVTSabado: valorVtSabadoSalvar, valorVA: vaEfetivo,
+    })
+
+    const payload = {
+      competencia_id: item.competencia_id,
+      funcionario_id: item.funcionario_id,
+      dias_feriado: feriadosDoMes,
+      dias_sabado: diasSabadoSalvar,
+      dias_desconto: totalDescontos,
+      valor_vt: item.valor_vt,
+      valor_vt_sabado: valorVtSabadoSalvar,
+      valor_total: resultado.valorTotal,
+    }
+
+    let cfId = item.id
+    if (cfId) {
+      await supabase.from('competencia_funcionario').update(payload).eq('id', cfId)
+    } else {
+      const { data: novoCF } = await supabase.from('competencia_funcionario').insert(payload).select().single()
+      cfId = (novoCF as CFDesconto)?.id ?? ''
+    }
+
+    if (cfId) {
+      await supabase.from('competencia_funcionario_desconto').delete().eq('competencia_funcionario_id', cfId)
+      for (const d of descontosReais) {
+        await supabase.from('competencia_funcionario_desconto').insert({
+          competencia_funcionario_id: cfId,
+          tipo_desconto_id: d.tipo_id,
+          dias: d.dias,
+          data_inicio: d.data_inicio || null,
+          data_fim: d.data_fim || null,
+          dias_proximo_mes: d.dias_proximo_mes ?? 0,
+        })
+      }
+    }
+  }
+
+  // ─── Salvar ──────────────────────────────────────────────────────────────────
 
   async function salvar() {
     if (!empresaId) return
     setSalvando(true)
     setSucesso(false)
 
-    const unidadeId = await getOrCreateDefaultUnidade(empresaId)
-    if (!unidadeId) { setSalvando(false); return }
-
-    let compId = competencia?.id ?? ''
-    if (!competencia) {
-      const { data: novaComp } = await supabase
-        .from('competencias')
-        .insert({ unidade_id: unidadeId, mes, ano, dias_uteis: 0, feriados_mes: feriadosDoMes, valor_va: valorVA })
-        .select()
-        .single()
-      compId = (novaComp as Competencia)?.id ?? ''
-      setCompetencia(novaComp as Competencia)
+    if (modoTodas) {
+      // Em modoTodas: itens já têm competencia_id, salva em paralelo
+      await Promise.all(itens.map(item => {
+        if (!item.competencia_id) return Promise.resolve()
+        return salvarItemCF(item, item.valorVAItem)
+      }))
     } else {
-      await supabase.from('competencias').update({ feriados_mes: feriadosDoMes, valor_va: valorVA }).eq('id', competencia.id)
-    }
+      const unidadeId = await getOrCreateDefaultUnidade(empresaId)
+      if (!unidadeId) { setSalvando(false); return }
 
-    for (const item of itens) {
-      const ehExcecao = (item.valor_vt_sabado ?? 0) > 0
-      const diasSabadoSalvar = ehExcecao ? item.dias_sabado : 0
-      const valorVtSabadoSalvar = ehExcecao ? item.valor_vt_sabado : 0
-      const totalDescontos = item.descontos.reduce((s, d) => s + d.dias, 0)
-      const diasUteisAuto = calcularDiasUteisAuto(mes, ano, item.funcionario.folga_semanal, feriadosDoMes)
-      const resultado = calcularVTVA({
-        diasUteis: diasUteisAuto,
-        diasFeriado: 0,
-        diasSabado: diasSabadoSalvar,
-        diasDesconto: totalDescontos,
-        valorVT: item.valor_vt,
-        valorVTSabado: valorVtSabadoSalvar,
-        valorVA,
-      })
-
-      const payload = {
-        competencia_id: compId,
-        funcionario_id: item.funcionario_id,
-        dias_feriado: feriadosDoMes,
-        dias_sabado: diasSabadoSalvar,
-        dias_desconto: totalDescontos,
-        valor_vt: item.valor_vt,
-        valor_vt_sabado: valorVtSabadoSalvar,
-        valor_total: resultado.valorTotal,
-      }
-
-      let cfId = item.id
-      if (cfId) {
-        await supabase.from('competencia_funcionario').update(payload).eq('id', cfId)
+      let compId = competencia?.id ?? ''
+      if (!competencia) {
+        const { data: novaComp } = await supabase
+          .from('competencias')
+          .insert({ unidade_id: unidadeId, mes, ano, dias_uteis: 0, feriados_mes: feriadosDoMes, valor_va: valorVA })
+          .select().single()
+        compId = (novaComp as Competencia)?.id ?? ''
+        setCompetencia(novaComp as Competencia)
       } else {
-        const { data: novoCF } = await supabase.from('competencia_funcionario').insert(payload).select().single()
-        cfId = (novoCF as CFDesconto)?.id ?? ''
+        await supabase.from('competencias').update({ feriados_mes: feriadosDoMes, valor_va: valorVA }).eq('id', competencia.id)
       }
 
-      if (cfId) {
-        // Recria descontos: deleta antigos, insere novos
-        await supabase.from('competencia_funcionario_desconto').delete().eq('competencia_funcionario_id', cfId)
-        for (const d of item.descontos) {
-          await supabase.from('competencia_funcionario_desconto').insert({
-            competencia_funcionario_id: cfId,
-            tipo_desconto_id: d.tipo_id,
-            dias: d.dias,
-            data_inicio: d.data_inicio || null,
-            data_fim: d.data_fim || null,
-          })
-        }
+      for (const item of itens) {
+        await salvarItemCF({ ...item, competencia_id: compId }, valorVA)
       }
     }
 
@@ -406,6 +543,8 @@ export default function CompetenciasPage() {
     setTimeout(() => setSucesso(false), 3000)
     carregarCompetencia()
   }
+
+  // ─── Inicializar / Salvar para Todas ────────────────────────────────────────
 
   async function inicializarTodasCompetencias() {
     setCriando(true)
@@ -423,7 +562,6 @@ export default function CompetenciasPage() {
       const unidadeId = await getOrCreateDefaultUnidade(emp.id)
       if (!unidadeId) return
 
-      // Get or create competência
       const { data: existingComp } = await supabase
         .from('competencias').select('id, valor_va')
         .eq('unidade_id', unidadeId).eq('mes', mes).eq('ano', ano).maybeSingle()
@@ -448,7 +586,6 @@ export default function CompetenciasPage() {
         .eq('unidade_id', unidadeId).eq('ativo', true)
 
       await Promise.all(((funcs ?? []) as Funcionario[]).map(async (f) => {
-        // Skip if CF already exists (don't overwrite manual edits)
         const { data: existingCF } = await supabase
           .from('competencia_funcionario').select('id')
           .eq('competencia_id', compId).eq('funcionario_id', f.id).maybeSingle()
@@ -523,15 +660,9 @@ export default function CompetenciasPage() {
           .from('competencia_funcionario').select('id, dias_desconto, dias_sabado, valor_vt, valor_vt_sabado')
           .eq('competencia_id', compId).eq('funcionario_id', f.id).maybeSingle()
 
-        const ehExcecao = existingCF
-          ? (existingCF.valor_vt_sabado ?? 0) > 0
-          : (f.valor_vt_sabado ?? 0) > 0
-        const diasSabado = ehExcecao
-          ? (existingCF?.dias_sabado ?? sabadosDoMes)
-          : 0
-        const valorVtSabado = ehExcecao
-          ? (existingCF?.valor_vt_sabado ?? f.valor_vt_sabado ?? 0)
-          : 0
+        const ehExcecao = existingCF ? (existingCF.valor_vt_sabado ?? 0) > 0 : (f.valor_vt_sabado ?? 0) > 0
+        const diasSabado = ehExcecao ? (existingCF?.dias_sabado ?? sabadosDoMes) : 0
+        const valorVtSabado = ehExcecao ? (existingCF?.valor_vt_sabado ?? f.valor_vt_sabado ?? 0) : 0
         const valorVt = existingCF?.valor_vt ?? f.valor_vt ?? 0
         const diasDesconto = existingCF?.dias_desconto ?? 0
         const diasAuto = calcularDiasUteisAuto(mes, ano, f.folga_semanal, feriados)
@@ -539,18 +670,11 @@ export default function CompetenciasPage() {
           diasUteis: diasAuto, diasFeriado: 0, diasSabado,
           diasDesconto, valorVT: valorVt, valorVTSabado: valorVtSabado, valorVA: compValorVA,
         })
-
         const payload = {
-          competencia_id: compId,
-          funcionario_id: f.id,
-          dias_feriado: feriados,
-          dias_sabado: diasSabado,
-          dias_desconto: diasDesconto,
-          valor_vt: valorVt,
-          valor_vt_sabado: valorVtSabado,
-          valor_total: resultado.valorTotal,
+          competencia_id: compId, funcionario_id: f.id,
+          dias_feriado: feriados, dias_sabado: diasSabado, dias_desconto: diasDesconto,
+          valor_vt: valorVt, valor_vt_sabado: valorVtSabado, valor_total: resultado.valorTotal,
         }
-
         if (existingCF) {
           await supabase.from('competencia_funcionario').update(payload).eq('id', existingCF.id)
         } else {
@@ -565,15 +689,27 @@ export default function CompetenciasPage() {
     carregarCompetencia()
   }
 
+  // ─── Totais ──────────────────────────────────────────────────────────────────
+
   const totalGeral = itens.reduce((sum, item) => {
     const ehExcecao = (item.valor_vt_sabado ?? 0) > 0
-    const totalDesc = item.descontos.reduce((s, d) => s + d.dias, 0)
+    const vaEfetivo = modoTodas ? (item.valorVAItem ?? 0) : valorVA
+    const totalDesc = item.descontos.filter(d => !d.isCarryOver).reduce((s, d) => s + d.dias, 0)
     const diasAuto = calcularDiasUteisAuto(mes, ano, item.funcionario.folga_semanal, feriadosDoMes)
-    const r = calcularVTVA({ diasUteis: diasAuto, diasFeriado: 0, diasSabado: ehExcecao ? item.dias_sabado : 0, diasDesconto: totalDesc, valorVT: item.valor_vt, valorVTSabado: ehExcecao ? item.valor_vt_sabado : 0, valorVA })
+    const r = calcularVTVA({
+      diasUteis: diasAuto, diasFeriado: 0,
+      diasSabado: ehExcecao ? item.dias_sabado : 0,
+      diasDesconto: totalDesc,
+      valorVT: item.valor_vt,
+      valorVTSabado: ehExcecao ? item.valor_vt_sabado : 0,
+      valorVA: vaEfetivo,
+    })
     return sum + r.valorTotal
   }, 0)
 
   const modalItem = modalIdx !== null ? itens[modalIdx] : null
+
+  // ─── JSX ─────────────────────────────────────────────────────────────────────
 
   return (
     <LayoutAdmin title="Competências Mensais">
@@ -599,9 +735,9 @@ export default function CompetenciasPage() {
               {modalItem.descontos.length > 0 ? (
                 <div className="space-y-2 mb-4">
                   {modalItem.descontos.map((d, di) => (
-                    <div key={di} className="flex items-center justify-between bg-gray-50 rounded-lg px-3 py-2">
+                    <div key={di} className={`flex items-center justify-between rounded-lg px-3 py-2 ${d.isCarryOver ? 'bg-amber-50 border border-amber-200' : 'bg-gray-50'}`}>
                       <div>
-                        <span className="text-sm font-medium text-gray-800">{d.tipo_nome}</span>
+                        <span className={`text-sm font-medium ${d.isCarryOver ? 'text-amber-800' : 'text-gray-800'}`}>{d.tipo_nome}</span>
                         <span className="ml-2 text-xs text-gray-500">{d.dias} dia(s)</span>
                         {d.data_inicio && (
                           <span className="ml-2 text-xs text-blue-500">
@@ -611,16 +747,22 @@ export default function CompetenciasPage() {
                             }
                           </span>
                         )}
+                        {d.dias_proximo_mes > 0 && (
+                          <span className="ml-2 text-xs text-orange-500">+{d.dias_proximo_mes}d no próx. mês</span>
+                        )}
+                        {d.isCarryOver && <span className="ml-2 text-xs bg-amber-100 text-amber-700 px-1 rounded">carry-over</span>}
                       </div>
-                      <button onClick={() => removerDesconto(modalIdx, di)} className="text-red-500 hover:text-red-700">
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                        </svg>
-                      </button>
+                      {!d.isCarryOver && (
+                        <button onClick={() => removerDesconto(modalIdx, di)} className="text-red-500 hover:text-red-700">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                        </button>
+                      )}
                     </div>
                   ))}
                   <div className="text-right text-sm font-semibold text-gray-700 pt-1">
-                    Total: {modalItem.descontos.reduce((s, d) => s + d.dias, 0)} dia(s) descontados
+                    Total: {modalItem.descontos.filter(d => !d.isCarryOver).reduce((s, d) => s + d.dias, 0)} dia(s) descontados
                   </div>
                 </div>
               ) : (
@@ -631,6 +773,10 @@ export default function CompetenciasPage() {
               {tiposDesconto.length > 0 ? (
                 <div className="border-t border-gray-100 pt-4">
                   <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Adicionar desconto</p>
+                  <p className="text-xs text-gray-400 mb-2">
+                    Datas podem ser do mês anterior (para descontos retroativos de VT pago antecipadamente).
+                    Se o período ultrapassar o fim deste mês, os dias excedentes serão aplicados automaticamente no próximo.
+                  </p>
                   <div className="flex gap-2 mb-2">
                     <select
                       value={novoTipoId}
@@ -658,7 +804,6 @@ export default function CompetenciasPage() {
                         type="date"
                         value={novaDataFim}
                         onChange={(e) => handleDataFimChange(e.target.value)}
-                        min={novaDataInicio}
                         className="w-full border border-gray-300 rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
                       />
                     </div>
@@ -673,6 +818,14 @@ export default function CompetenciasPage() {
                       />
                     </div>
                   </div>
+                  {novoDiasProximo > 0 && (
+                    <div className="flex items-center gap-1 text-xs text-orange-600 bg-orange-50 rounded px-2 py-1 mb-2">
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                      </svg>
+                      <strong>{novoDiasProximo} dia(s)</strong>&nbsp;serão aplicados automaticamente no próximo mês.
+                    </div>
+                  )}
                   <button onClick={adicionarDesconto} className="btn-primary w-full py-2 text-sm">
                     + Adicionar desconto
                   </button>
@@ -683,8 +836,8 @@ export default function CompetenciasPage() {
                 </p>
               )}
 
-              <button onClick={() => setModalIdx(null)} className="btn-primary w-full mt-4">
-                Confirmar
+              <button onClick={() => setModalIdx(null)} className="btn-secondary w-full mt-4">
+                Fechar
               </button>
             </div>
           </div>
@@ -698,7 +851,7 @@ export default function CompetenciasPage() {
               <label className="label-field">Empresa</label>
               <select value={empresaId} onChange={(e) => setEmpresaId(e.target.value)} className="input-field">
                 <option value="">Selecione uma empresa</option>
-                <option value={TODAS}>— Todas as empresas (resumo) —</option>
+                <option value={TODAS}>— Todas as empresas —</option>
                 {empresas.map((emp) => (
                   <option key={emp.id} value={emp.id}>{emp.razao_social}</option>
                 ))}
@@ -721,12 +874,9 @@ export default function CompetenciasPage() {
               <div>
                 <label className="label-field">VA / dia útil (R$)</label>
                 <input
-                  type="number"
-                  value={valorVA}
+                  type="number" value={valorVA}
                   onChange={(e) => setValorVA(Number(e.target.value))}
-                  min={0} step={0.01}
-                  className="input-field w-36"
-                  placeholder="0,00"
+                  min={0} step={0.01} className="input-field w-36" placeholder="0,00"
                 />
               </div>
               <div className="pb-1">
@@ -750,143 +900,92 @@ export default function CompetenciasPage() {
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
             </svg>
-            {modoTodas ? 'Competências inicializadas com sucesso!' : 'Competência salva com sucesso!'}
+            Salvo com sucesso!
           </div>
         )}
 
-        {/* ── Tabela resumo (Todas as empresas) ── */}
-        {modoTodas && empresaId && (
-          <div className="card">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm font-semibold text-gray-700">Resumo — {MESES[mes - 1]}/{ano} — Todas as empresas</h2>
-              <div className="flex items-center gap-3">
-                {itensResumo.length > 0 && (
-                  <div className="text-sm font-semibold text-gray-700">
-                    Total: <span className="text-blue-600">{formatarMoeda(itensResumo.reduce((s, i) => s + i.valorTotal, 0))}</span>
-                  </div>
-                )}
-                <button
-                  onClick={salvarTodasCompetencias}
-                  disabled={salvando || criando || loading}
-                  className="btn-secondary flex items-center gap-2 text-sm"
-                >
-                  {salvando ? (
-                    <>
-                      <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
-                      </svg>
-                      Salvando...
-                    </>
-                  ) : (
-                    <>
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                      </svg>
-                      Salvar para todas
-                    </>
-                  )}
-                </button>
-                <button
-                  onClick={inicializarTodasCompetencias}
-                  disabled={criando || salvando || loading}
-                  className="btn-primary flex items-center gap-2 text-sm"
-                >
-                  {criando ? (
-                    <>
-                      <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
-                      </svg>
-                      Criando...
-                    </>
-                  ) : (
-                    <>
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                      </svg>
-                      Inicializar mês para todas
-                    </>
-                  )}
-                </button>
-              </div>
-            </div>
-            <p className="text-xs text-amber-600 mb-4">
-              O botão &quot;Inicializar mês para todas&quot; cria competências com valores padrão para empresas que ainda não têm registro neste mês. Registros já existentes não serão alterados.
-            </p>
-            {loading ? (
-              <div className="text-center py-12 text-gray-400 text-sm">Carregando...</div>
-            ) : itensResumo.length === 0 ? (
-              <div className="text-center py-12 text-gray-400 text-sm">Nenhuma competência encontrada para este período.</div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full border-collapse text-sm">
-                  <thead>
-                    <tr className="bg-gray-50 border-b border-gray-200">
-                      <th className="table-header text-left">Empresa</th>
-                      <th className="table-header text-left">Funcionário</th>
-                      <th className="table-header text-right bg-blue-50 text-blue-700">Dias Ef.</th>
-                      <th className="table-header text-right">VA</th>
-                      <th className="table-header text-right">VT</th>
-                      <th className="table-header text-right">VT Sáb.</th>
-                      <th className="table-header text-right font-bold">Total</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {itensResumo.map((item, i) => (
-                      <tr key={i} className="hover:bg-gray-50">
-                        <td className="table-cell text-xs text-gray-500">{item.empresaNome}</td>
-                        <td className="table-cell">
-                          <div className="font-medium text-gray-900">{item.funcionarioNome}</div>
-                          <div className="text-xs text-gray-400">{item.funcionarioFuncao}</div>
-                        </td>
-                        <td className="table-cell text-right bg-blue-50 font-bold text-blue-700 text-sm">{item.diasEfetivos}d</td>
-                        <td className="table-cell text-right text-xs text-gray-500">{formatarMoeda(item.totalVA)}</td>
-                        <td className="table-cell text-right text-xs text-gray-500">{formatarMoeda(item.totalVT)}</td>
-                        <td className="table-cell text-right text-xs text-gray-500">{item.totalVTSabado > 0 ? formatarMoeda(item.totalVTSabado) : <span className="text-gray-300">—</span>}</td>
-                        <td className="table-cell text-right font-semibold text-blue-700">{formatarMoeda(item.valorTotal)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot>
-                    <tr className="border-t-2 border-gray-200 bg-gray-50">
-                      <td colSpan={6} className="table-cell text-right text-sm font-semibold text-gray-600">Total geral:</td>
-                      <td className="table-cell text-right font-bold text-blue-700">{formatarMoeda(itensResumo.reduce((s, i) => s + i.valorTotal, 0))}</td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            )}
-            <p className="text-xs text-gray-400 mt-3">Para editar uma competência, selecione a empresa específica.</p>
-          </div>
-        )}
-
-        {/* ── Tabela edição (empresa específica) ── */}
-        {!modoTodas && empresaId && (
+        {/* ── Tabela de funcionários (funciona para empresa única e todas) ── */}
+        {empresaId && (
           <div className="card">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-sm font-semibold text-gray-700">
-                Funcionários — {MESES[mes - 1]}/{ano}
+                {modoTodas
+                  ? `Todas as empresas — ${MESES[mes - 1]}/${ano}`
+                  : `Funcionários — ${MESES[mes - 1]}/${ano}`
+                }
               </h2>
-              {itens.length > 0 && (
-                <div className="text-sm font-semibold text-gray-700">
-                  Total: <span className="text-blue-600">{formatarMoeda(totalGeral)}</span>
-                </div>
-              )}
+              <div className="flex items-center gap-3">
+                {itens.length > 0 && (
+                  <div className="text-sm font-semibold text-gray-700">
+                    Total: <span className="text-blue-600">{formatarMoeda(totalGeral)}</span>
+                  </div>
+                )}
+                {modoTodas && (
+                  <>
+                    <button
+                      onClick={salvarTodasCompetencias}
+                      disabled={salvando || criando || loading}
+                      className="btn-secondary flex items-center gap-2 text-sm"
+                    >
+                      {salvando ? (
+                        <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                        </svg>
+                      ) : (
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                      )}
+                      Recalcular para todas
+                    </button>
+                    <button
+                      onClick={inicializarTodasCompetencias}
+                      disabled={criando || salvando || loading}
+                      className="btn-primary flex items-center gap-2 text-sm"
+                    >
+                      {criando ? (
+                        <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                        </svg>
+                      ) : (
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                        </svg>
+                      )}
+                      {criando ? 'Inicializando...' : 'Inicializar mês para todas'}
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
+
+            {modoTodas && (
+              <p className="text-xs text-amber-600 mb-3">
+                &quot;Inicializar&quot; cria registros novos (não sobrescreve existentes).
+                &quot;Recalcular&quot; atualiza todos os registros com valores atuais.
+              </p>
+            )}
 
             {loading ? (
               <div className="text-center py-12 text-gray-400 text-sm">Carregando...</div>
             ) : itens.length === 0 ? (
-              <div className="text-center py-12 text-gray-400 text-sm">Nenhum funcionário ativo nesta empresa.</div>
+              <div className="text-center py-12 text-gray-400 text-sm">
+                {modoTodas
+                  ? 'Nenhum registro encontrado. Clique em "Inicializar mês para todas" para criar.'
+                  : 'Nenhum funcionário ativo nesta empresa.'
+                }
+              </div>
             ) : (
               <>
                 <div className="overflow-x-auto">
                   <table className="w-full border-collapse text-sm">
                     <thead>
                       <tr className="bg-gray-50 border-b border-gray-200">
+                        {modoTodas && <th className="table-header text-left min-w-[120px]">Empresa</th>}
                         <th className="table-header text-left min-w-[160px]">Funcionário</th>
-                        <th className="table-header text-left min-w-[100px]">Folga</th>
+                        <th className="table-header text-left min-w-[80px]">Folga</th>
                         <th className="table-header text-center min-w-[90px]">VT/dia</th>
                         <th className="table-header text-center min-w-[90px]">VT Sáb</th>
                         <th className="table-header text-center">Sáb. trab.</th>
@@ -903,19 +1002,20 @@ export default function CompetenciasPage() {
                         const ehExcecao = (item.valor_vt_sabado ?? 0) > 0
                         const diasSabadoEfetivo = ehExcecao ? item.dias_sabado : 0
                         const valorVtSabadoEfetivo = ehExcecao ? item.valor_vt_sabado : 0
-                        const totalDesc = item.descontos.reduce((s, d) => s + d.dias, 0)
+                        const vaEfetivo = modoTodas ? (item.valorVAItem ?? 0) : valorVA
+                        const totalDesc = item.descontos.filter(d => !d.isCarryOver).reduce((s, d) => s + d.dias, 0)
+                        const totalDescComCarry = item.descontos.reduce((s, d) => s + d.dias, 0)
                         const diasAuto = calcularDiasUteisAuto(mes, ano, item.funcionario.folga_semanal, feriadosDoMes)
                         const r = calcularVTVA({
-                          diasUteis: diasAuto,
-                          diasFeriado: 0,
-                          diasSabado: diasSabadoEfetivo,
-                          diasDesconto: totalDesc,
-                          valorVT: item.valor_vt,
-                          valorVTSabado: valorVtSabadoEfetivo,
-                          valorVA,
+                          diasUteis: diasAuto, diasFeriado: 0,
+                          diasSabado: diasSabadoEfetivo, diasDesconto: totalDescComCarry,
+                          valorVT: item.valor_vt, valorVTSabado: valorVtSabadoEfetivo, valorVA: vaEfetivo,
                         })
                         return (
-                          <tr key={item.funcionario_id} className="hover:bg-gray-50">
+                          <tr key={`${item.competencia_id}-${item.funcionario_id}`} className="hover:bg-gray-50">
+                            {modoTodas && (
+                              <td className="table-cell text-xs text-gray-500">{item.empresaNome}</td>
+                            )}
                             <td className="table-cell">
                               <div className="font-medium text-gray-900">{item.funcionario.nome}</div>
                               <div className="text-xs text-gray-400">{item.funcionario.funcao}</div>
@@ -926,17 +1026,26 @@ export default function CompetenciasPage() {
                               </span>
                             </td>
                             <td className="table-cell text-center">
-                              <input type="number" value={item.valor_vt} onChange={(e) => atualizarItem(idx, 'valor_vt', Number(e.target.value))} className="w-20 border border-gray-300 rounded px-2 py-1 text-center text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" min={0} step={0.01} />
+                              <input type="number" value={item.valor_vt}
+                                onChange={(e) => atualizarItem(idx, 'valor_vt', Number(e.target.value))}
+                                className="w-20 border border-gray-300 rounded px-2 py-1 text-center text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                min={0} step={0.01} />
                             </td>
                             <td className="table-cell text-center">
                               {ehExcecao
-                                ? <input type="number" value={item.valor_vt_sabado} onChange={(e) => atualizarItem(idx, 'valor_vt_sabado', Number(e.target.value))} className="w-20 border border-blue-300 rounded px-2 py-1 text-center text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" min={0} step={0.01} />
+                                ? <input type="number" value={item.valor_vt_sabado}
+                                    onChange={(e) => atualizarItem(idx, 'valor_vt_sabado', Number(e.target.value))}
+                                    className="w-20 border border-blue-300 rounded px-2 py-1 text-center text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                    min={0} step={0.01} />
                                 : <span className="text-gray-300 text-xs">—</span>
                               }
                             </td>
                             <td className="table-cell text-center">
                               {ehExcecao
-                                ? <input type="number" value={item.dias_sabado} onChange={(e) => atualizarItem(idx, 'dias_sabado', Number(e.target.value))} className="w-16 border border-blue-300 rounded px-2 py-1 text-center text-sm focus:outline-none focus:ring-1 focus:ring-blue-500" min={0} max={5} />
+                                ? <input type="number" value={item.dias_sabado}
+                                    onChange={(e) => atualizarItem(idx, 'dias_sabado', Number(e.target.value))}
+                                    className="w-16 border border-blue-300 rounded px-2 py-1 text-center text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                                    min={0} max={5} />
                                 : <span className="text-gray-300 text-xs">—</span>
                               }
                             </td>
@@ -944,7 +1053,7 @@ export default function CompetenciasPage() {
                               <button
                                 onClick={() => abrirModal(idx)}
                                 className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium transition-colors ${
-                                  totalDesc > 0
+                                  totalDesc > 0 || item.descontos.some(d => d.isCarryOver)
                                     ? 'bg-red-50 text-red-700 hover:bg-red-100'
                                     : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
                                 }`}
@@ -952,7 +1061,7 @@ export default function CompetenciasPage() {
                                 <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                                 </svg>
-                                {totalDesc > 0 ? `${totalDesc}d` : 'Adicionar'}
+                                {totalDescComCarry > 0 ? `${totalDescComCarry}d` : 'Adicionar'}
                               </button>
                             </td>
                             <td className="table-cell text-right bg-blue-50">
@@ -984,7 +1093,7 @@ export default function CompetenciasPage() {
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                         </svg>
-                        Salvar Competência
+                        {modoTodas ? 'Salvar Todas' : 'Salvar Competência'}
                       </>
                     )}
                   </button>

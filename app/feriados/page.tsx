@@ -16,6 +16,8 @@ export default function FeriadosPage() {
   const [data, setData] = useState('')
   const [descricao, setDescricao] = useState('')
   const [salvando, setSalvando] = useState(false)
+  const [importando, setImportando] = useState(false)
+  const [msgImport, setMsgImport] = useState<{ tipo: 'sucesso' | 'erro'; texto: string } | null>(null)
 
   useEffect(() => { carregar() }, [])
 
@@ -67,6 +69,37 @@ export default function FeriadosPage() {
     await carregar()
   }
 
+  async function importarBrasilAPI() {
+    setImportando(true)
+    setMsgImport(null)
+    try {
+      const resp = await fetch(`https://brasilapi.com.br/api/feriados/v1/${filtroAno}`)
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+      const lista: Array<{ date: string; name: string }> = await resp.json()
+
+      // Busca feriados já existentes no ano
+      const { data: existentes } = await supabase
+        .from('feriados').select('data').gte('data', `${filtroAno}-01-01`).lte('data', `${filtroAno}-12-31`)
+      const datasExistentes = new Set((existentes ?? []).map(f => f.data))
+
+      let inseridos = 0
+      for (const f of lista) {
+        if (!datasExistentes.has(f.date)) {
+          await supabase.from('feriados').insert({ data: f.date, descricao: f.name })
+          inseridos++
+        }
+      }
+
+      await carregar()
+      setMsgImport({ tipo: 'sucesso', texto: `${inseridos} feriado(s) importado(s) de ${lista.length} nacionais para ${filtroAno}.` })
+    } catch (e) {
+      setMsgImport({ tipo: 'erro', texto: `Erro ao importar: ${e instanceof Error ? e.message : 'falha de rede'}` })
+    } finally {
+      setImportando(false)
+      setTimeout(() => setMsgImport(null), 5000)
+    }
+  }
+
   // Group by year for display
   const anos = Array.from(new Set(feriados.map(f => new Date(f.data + 'T00:00:00').getFullYear()))).sort()
   const feriadosFiltrados = feriados.filter(f => {
@@ -93,12 +126,31 @@ export default function FeriadosPage() {
     <LayoutAdmin
       title="Feriados"
       actions={
-        <button onClick={abrirNovo} className="btn-primary flex items-center gap-2">
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-          </svg>
-          Novo Feriado
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={importarBrasilAPI}
+            disabled={importando}
+            className="btn-secondary flex items-center gap-2 text-sm"
+          >
+            {importando ? (
+              <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+              </svg>
+            ) : (
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg>
+            )}
+            Importar {filtroAno} (Brasil API)
+          </button>
+          <button onClick={abrirNovo} className="btn-primary flex items-center gap-2">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+            Novo Feriado
+          </button>
+        </div>
       }
     >
       <div className="space-y-6">
@@ -142,6 +194,12 @@ export default function FeriadosPage() {
                 </div>
               </form>
             </div>
+          </div>
+        )}
+
+        {msgImport && (
+          <div className={`px-4 py-3 rounded-lg text-sm ${msgImport.tipo === 'sucesso' ? 'bg-green-50 border border-green-200 text-green-700' : 'bg-red-50 border border-red-200 text-red-700'}`}>
+            {msgImport.texto}
           </div>
         )}
 

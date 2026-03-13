@@ -148,8 +148,44 @@ export default function RecibosPage() {
   }
 
   async function gerarTodosPDFs() {
-    for (const reg of registros) {
-      await gerarPDF(reg)
+    if (registros.length === 0) return
+    setGerando('__todos__')
+    try {
+      const { gerarMultiplosPDFs } = await import('../../services/gerarReciboPDF')
+      const dadosList = registros.map(reg => {
+        const vtSabadoBase = reg.valor_vt_sabado ?? reg.funcionarios?.valor_vt_sabado ?? 0
+        const ehExcecao = vtSabadoBase > 0
+        const valorVT = reg.valor_vt ?? reg.funcionarios?.valor_vt ?? 0
+        const valorVTSabado = ehExcecao ? vtSabadoBase : 0
+        const diasSabado = ehExcecao ? (reg.dias_sabado ?? 0) : 0
+        const valorVA = reg.competenciaObj.valor_va ?? 0
+        const diasUteisAuto = calcularDiasUteisAuto(mes, ano, reg.funcionarios?.folga_semanal, reg.competenciaObj.feriados_mes ?? 0)
+        const resultado = calcularVTVA({
+          diasUteis: diasUteisAuto, diasFeriado: 0, diasSabado,
+          diasDesconto: reg.dias_desconto,
+          valorVT, valorVTSabado, valorVA,
+        })
+        return {
+          razaoSocial: reg.empresaObj.razao_social,
+          cnpj: reg.empresaObj.cnpj ?? '',
+          nomeFuncionario: reg.funcionarios.nome,
+          funcao: reg.funcionarios.funcao,
+          ctps: reg.funcionarios.ctps ?? '',
+          serie: reg.funcionarios.serie ?? '',
+          mes, ano,
+          diasUteis: diasUteisAuto,
+          diasEfetivos: resultado.diasEfetivos,
+          diasSabado, valorVT, valorVTSabado, valorVA,
+          resultado,
+          descontos: reg.descontosRecibo,
+        }
+      })
+      await gerarMultiplosPDFs(dadosList)
+    } catch (err) {
+      console.error('Erro ao gerar PDFs:', err)
+      alert('Erro ao gerar PDFs. Tente novamente.')
+    } finally {
+      setGerando(null)
     }
   }
 
@@ -228,10 +264,18 @@ export default function RecibosPage() {
                     </p>
                   </div>
                   <button onClick={gerarTodosPDFs} className="btn-primary flex items-center gap-2 text-sm" disabled={gerando !== null}>
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
-                    Gerar Todos os PDFs
+                    {gerando === '__todos__' && (
+                      <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                      </svg>
+                    )}
+                    {gerando !== '__todos__' && (
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                    )}
+                    {gerando === '__todos__' ? 'Gerando...' : 'Gerar Todos os PDFs'}
                   </button>
                 </div>
 
