@@ -193,7 +193,7 @@ export default function DescontosPage() {
   }, [mes, ano, todosFuncionarios])
 
   async function carregarContadores() {
-    const unidadeIds = [...new Set(todosFuncionarios.map(f => f.unidadeId))]
+    const unidadeIds = Array.from(new Set(todosFuncionarios.map(f => f.unidadeId)))
     const { data: comps } = await supabase
       .from('competencias').select('id, unidade_id')
       .in('unidade_id', unidadeIds).eq('mes', mes).eq('ano', ano)
