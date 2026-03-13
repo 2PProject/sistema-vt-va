@@ -528,27 +528,19 @@ export default function DescontosPage() {
         <div className="space-y-4">
           {/* Filtro empresa */}
           <div className="card py-3">
-            <div className="flex items-center gap-3 flex-wrap">
-              <span className="text-sm font-medium text-gray-600 shrink-0">Filtrar por empresa:</span>
-              <button
-                onClick={() => setFiltroEmpresaId('')}
-                className={`px-3 py-1 rounded-lg text-sm font-medium transition-colors ${
-                  !filtroEmpresaId ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                }`}
+            <div className="flex items-center gap-3">
+              <label className="text-sm font-medium text-gray-600 shrink-0">Empresa:</label>
+              <select
+                value={filtroEmpresaId}
+                onChange={e => setFiltroEmpresaId(e.target.value)}
+                className="input-field max-w-xs"
               >
-                Todas
-              </button>
-              {empresas.map(e => (
-                <button
-                  key={e.id}
-                  onClick={() => setFiltroEmpresaId(e.id)}
-                  className={`px-3 py-1 rounded-lg text-sm font-medium transition-colors ${
-                    filtroEmpresaId === e.id ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                  }`}
-                >
-                  {e.razao_social}
-                </button>
-              ))}
+                <option value="">Todas as empresas</option>
+                {empresas.map(e => (
+                  <option key={e.id} value={e.id}>{e.razao_social}</option>
+                ))}
+              </select>
+              <span className="text-xs text-gray-400">{listaFiltrada.length} funcionário(s)</span>
             </div>
           </div>
 
