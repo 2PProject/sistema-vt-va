@@ -21,8 +21,14 @@ import {
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+type FuncionarioComEmpresa = {
+  func: Funcionario
+  empresa: Empresa
+  unidadeId: string
+}
+
 type DescontoItem = {
-  id: string           // DB id (empty = não salvo)
+  id: string
   tipo_id: string
   tipo_nome: string
   dias: number
@@ -40,11 +46,9 @@ type CFCarregado = {
   valorVT: number
   valorVTSabado: number
   diasSabado: number
-  funcionario: Funcionario
-  empresa: Empresa
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function ultimoDiaDoMes(m: number, y: number): Date {
   const d = new Date(y, m, 0)
@@ -92,24 +96,29 @@ function fmtData(iso: string) {
 // ─── Componente ───────────────────────────────────────────────────────────────
 
 export default function DescontosPage() {
-  // Listas
-  const [empresas, setEmpresas] = useState<Empresa[]>([])
-  const [funcionarios, setFuncionarios] = useState<Funcionario[]>([])
-  const [tiposDesconto, setTiposDesconto] = useState<TipoDesconto[]>([])
-
-  // Seleção
-  const [empresaId, setEmpresaId] = useState('')
-  const [funcionarioId, setFuncionarioId] = useState('')
+  // Período global
   const [mes, setMes] = useState(new Date().getMonth() + 1)
   const [ano, setAno] = useState(new Date().getFullYear())
 
-  // Estado
-  const [loading, setLoading] = useState(false)
+  // Dados base
+  const [empresas, setEmpresas] = useState<Empresa[]>([])
+  const [tiposDesconto, setTiposDesconto] = useState<TipoDesconto[]>([])
+  const [todosFuncionarios, setTodosFuncionarios] = useState<FuncionarioComEmpresa[]>([])
+  const [filtroEmpresaId, setFiltroEmpresaId] = useState('')
+  const [loadingLista, setLoadingLista] = useState(true)
+
+  // Contadores de descontos já lançados
+  const [contadoresDesconto, setContadoresDesconto] = useState<Record<string, number>>({})
+
+  // View: 'list' | 'form'
+  const [view, setView] = useState<'list' | 'form'>('list')
+  const [selecionado, setSelecionado] = useState<FuncionarioComEmpresa | null>(null)
+
+  // Estado do formulário
+  const [loadingForm, setLoadingForm] = useState(false)
   const [salvando, setSalvando] = useState(false)
   const [sucesso, setSucesso] = useState<string | null>(null)
   const [erro, setErro] = useState<string | null>(null)
-
-  // Dados carregados
   const [cfCarregado, setCfCarregado] = useState<CFCarregado | null>(null)
   const [descontos, setDescontos] = useState<DescontoItem[]>([])
 
@@ -120,46 +129,121 @@ export default function DescontosPage() {
   const [novoDias, setNovoDias] = useState(1)
   const [novoDiasProximo, setNovoDiasProximo] = useState(0)
 
-  // Carga inicial
+  // ─── Carga inicial ──────────────────────────────────────────────────────────
+
   useEffect(() => {
-    supabase.from('empresas').select('*').order('razao_social').then(({ data }) => setEmpresas(data ?? []))
-    supabase.from('tipos_desconto').select('*').order('nome').then(({ data }) => {
-      setTiposDesconto(data ?? [])
-      if (data && data.length > 0) setNovoTipoId(data[0].id)
+    Promise.all([
+      supabase.from('empresas').select('*').order('razao_social'),
+      supabase.from('tipos_desconto').select('*').order('nome'),
+    ]).then(([{ data: emps }, { data: tipos }]) => {
+      setEmpresas(emps ?? [])
+      const tiposList = tipos ?? []
+      setTiposDesconto(tiposList)
+      if (tiposList.length > 0) setNovoTipoId(tiposList[0].id)
     })
   }, [])
 
-  // Carrega funcionários ao trocar empresa
+  // Carrega todos os funcionários de todas as empresas
   useEffect(() => {
-    if (!empresaId) { setFuncionarios([]); setFuncionarioId(''); setCfCarregado(null); setDescontos([]); return }
-    supabase.from('unidades').select('id').eq('empresa_id', empresaId).limit(1).maybeSingle().then(async ({ data: unidade }) => {
-      if (!unidade) { setFuncionarios([]); return }
+    async function carregarFuncionarios() {
+      setLoadingLista(true)
+      const { data: emps } = await supabase.from('empresas').select('*').order('razao_social')
+      if (!emps || emps.length === 0) { setLoadingLista(false); return }
+
+      const { data: unidades } = await supabase
+        .from('unidades').select('id, empresa_id').in('empresa_id', emps.map(e => e.id))
+
+      const unidadeMap: Record<string, string> = {}
+      const empresaDeUnidade: Record<string, string> = {}
+      for (const u of unidades ?? []) {
+        unidadeMap[u.empresa_id] = u.id
+        empresaDeUnidade[u.id] = u.empresa_id
+      }
+
+      const unidadeIds = Object.values(unidadeMap)
+      if (unidadeIds.length === 0) { setLoadingLista(false); return }
+
       const { data: funcs } = await supabase
-        .from('funcionarios').select('*').eq('unidade_id', unidade.id).eq('ativo', true).order('nome')
-      setFuncionarios(funcs ?? [])
-      setFuncionarioId('')
-      setCfCarregado(null)
-      setDescontos([])
-    })
-  }, [empresaId])
+        .from('funcionarios').select('*')
+        .in('unidade_id', unidadeIds)
+        .eq('ativo', true)
+        .order('nome')
 
-  // ─── Buscar dados do funcionário/mês ────────────────────────────────────────
+      const empMap: Record<string, Empresa> = {}
+      for (const e of emps) empMap[e.id] = e
 
-  async function buscar() {
-    if (!empresaId || !funcionarioId) return
-    setLoading(true)
+      const lista: FuncionarioComEmpresa[] = (funcs ?? []).map(f => ({
+        func: f as Funcionario,
+        empresa: empMap[empresaDeUnidade[f.unidade_id]] ?? emps[0],
+        unidadeId: f.unidade_id,
+      }))
+
+      setTodosFuncionarios(lista)
+      setEmpresas(emps)
+      setLoadingLista(false)
+    }
+    carregarFuncionarios()
+  }, [])
+
+  // Carrega contadores ao trocar período
+  useEffect(() => {
+    if (todosFuncionarios.length === 0) return
+    carregarContadores()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mes, ano, todosFuncionarios])
+
+  async function carregarContadores() {
+    const unidadeIds = [...new Set(todosFuncionarios.map(f => f.unidadeId))]
+    const { data: comps } = await supabase
+      .from('competencias').select('id, unidade_id')
+      .in('unidade_id', unidadeIds).eq('mes', mes).eq('ano', ano)
+    if (!comps || comps.length === 0) { setContadoresDesconto({}); return }
+
+    const compIds = comps.map(c => c.id)
+    const { data: cfs } = await supabase
+      .from('competencia_funcionario').select('id, funcionario_id')
+      .in('competencia_id', compIds)
+    if (!cfs || cfs.length === 0) { setContadoresDesconto({}); return }
+
+    const cfIds = cfs.map(c => c.id)
+    const cfPorFuncionario: Record<string, string> = {}
+    for (const cf of cfs) cfPorFuncionario[cf.id] = cf.funcionario_id
+
+    const { data: descs } = await supabase
+      .from('competencia_funcionario_desconto').select('competencia_funcionario_id')
+      .in('competencia_funcionario_id', cfIds)
+
+    const contadores: Record<string, number> = {}
+    for (const d of descs ?? []) {
+      const funcId = cfPorFuncionario[d.competencia_funcionario_id]
+      if (funcId) contadores[funcId] = (contadores[funcId] ?? 0) + 1
+    }
+    setContadoresDesconto(contadores)
+  }
+
+  // ─── Abrir formulário ───────────────────────────────────────────────────────
+
+  async function abrirFormulario(item: FuncionarioComEmpresa) {
+    setSelecionado(item)
+    setView('form')
+    setLoadingForm(true)
     setCfCarregado(null)
     setDescontos([])
     setErro(null)
+    setSucesso(null)
+    setNovaDataInicio('')
+    setNovaDataFim('')
+    setNovoDias(1)
+    setNovoDiasProximo(0)
+    if (tiposDesconto.length > 0) setNovoTipoId(tiposDesconto[0].id)
 
-    const func = funcionarios.find(f => f.id === funcionarioId)
-    const emp = empresas.find(e => e.id === empresaId)
-    if (!func || !emp) { setLoading(false); return }
+    await buscarDados(item)
+    setLoadingForm(false)
+  }
 
-    const unidadeId = await getOrCreateDefaultUnidade(empresaId)
-    if (!unidadeId) { setErro('Não foi possível encontrar a unidade da empresa.'); setLoading(false); return }
+  async function buscarDados(item: FuncionarioComEmpresa) {
+    const { func, empresa, unidadeId } = item
 
-    // Feriados do mês
     const mesStr = String(mes).padStart(2, '0')
     const { data: feriadosRows } = await supabase
       .from('feriados').select('data')
@@ -167,44 +251,32 @@ export default function DescontosPage() {
       .lte('data', `${ano}-${mesStr}-31`)
     const feriados = feriadosRows?.length ?? 0
 
-    // Competência
     const { data: comp } = await supabase
       .from('competencias').select('*')
       .eq('unidade_id', unidadeId).eq('mes', mes).eq('ano', ano).maybeSingle()
 
-    // CF
     let cfId = ''
     let competenciaId = ''
-    let valorVA = 0
-    let valorVT = 0
-    let valorVTSabado = 0
-    let diasSabado = 0
+    let valorVA = empresa.valor_va ?? 0
+    let valorVT = func.valor_vt ?? 0
+    let valorVTSabado = func.valor_vt_sabado ?? 0
+    let diasSabado = (valorVTSabado > 0) ? calcularSabadosDoMes(mes, ano) : 0
 
     if (comp) {
       competenciaId = (comp as Competencia).id
-      valorVA = (comp as Competencia).valor_va ?? emp.valor_va ?? 0
+      valorVA = (comp as Competencia).valor_va ?? empresa.valor_va ?? 0
       const { data: cf } = await supabase
         .from('competencia_funcionario').select('*')
-        .eq('competencia_id', competenciaId).eq('funcionario_id', funcionarioId).maybeSingle()
+        .eq('competencia_id', competenciaId).eq('funcionario_id', func.id).maybeSingle()
       if (cf) {
         const cfObj = cf as CompetenciaFuncionario
         cfId = cfObj.id
         valorVT = cfObj.valor_vt ?? func.valor_vt ?? 0
         valorVTSabado = cfObj.valor_vt_sabado ?? func.valor_vt_sabado ?? 0
         diasSabado = cfObj.dias_sabado ?? 0
-      } else {
-        valorVT = func.valor_vt ?? 0
-        valorVTSabado = func.valor_vt_sabado ?? 0
-        diasSabado = (valorVTSabado > 0) ? calcularSabadosDoMes(mes, ano) : 0
       }
-    } else {
-      valorVA = emp.valor_va ?? 0
-      valorVT = func.valor_vt ?? 0
-      valorVTSabado = func.valor_vt_sabado ?? 0
-      diasSabado = (valorVTSabado > 0) ? calcularSabadosDoMes(mes, ano) : 0
     }
 
-    // Descontos existentes
     const descontosCarregados: DescontoItem[] = []
     if (cfId) {
       const { data: descontosRows } = await supabase
@@ -233,7 +305,7 @@ export default function DescontosPage() {
     if (prevComp) {
       const { data: prevCF } = await supabase
         .from('competencia_funcionario').select('id')
-        .eq('competencia_id', prevComp.id).eq('funcionario_id', funcionarioId).maybeSingle()
+        .eq('competencia_id', prevComp.id).eq('funcionario_id', func.id).maybeSingle()
       if (prevCF) {
         const { data: carryRows } = await supabase
           .from('competencia_funcionario_desconto').select('*, tipos_desconto(id, nome)')
@@ -253,12 +325,23 @@ export default function DescontosPage() {
       }
     }
 
-    setCfCarregado({ cfId, competenciaId, feriados, valorVA, valorVT, valorVTSabado, diasSabado, funcionario: func, empresa: emp })
+    setCfCarregado({ cfId, competenciaId, feriados, valorVA, valorVT, valorVTSabado, diasSabado })
     setDescontos(descontosCarregados)
-    setLoading(false)
   }
 
-  // ─── Adicionar desconto local ─────────────────────────────────────────────
+  // ─── Voltar para lista ───────────────────────────────────────────────────────
+
+  function voltar() {
+    setView('list')
+    setSelecionado(null)
+    setCfCarregado(null)
+    setDescontos([])
+    setSucesso(null)
+    setErro(null)
+    carregarContadores()
+  }
+
+  // ─── Desconto helpers ───────────────────────────────────────────────────────
 
   function handleDataInicioChange(val: string) {
     setNovaDataInicio(val)
@@ -308,29 +391,28 @@ export default function DescontosPage() {
   // ─── Salvar ─────────────────────────────────────────────────────────────────
 
   async function salvar() {
-    if (!cfCarregado) return
+    if (!cfCarregado || !selecionado) return
     setSalvando(true)
     setErro(null)
     setSucesso(null)
 
-    const unidadeId = await getOrCreateDefaultUnidade(empresaId)
-    if (!unidadeId) { setErro('Erro ao obter unidade.'); setSalvando(false); return }
+    const { func, empresa, unidadeId } = selecionado
+    const unidadeIdFinal = unidadeId || await getOrCreateDefaultUnidade(empresa.id)
+    if (!unidadeIdFinal) { setErro('Erro ao obter unidade.'); setSalvando(false); return }
 
-    // Garante competência
     let compId = cfCarregado.competenciaId
     if (!compId) {
       const { data: novaComp } = await supabase
         .from('competencias')
-        .insert({ unidade_id: unidadeId, mes, ano, dias_uteis: 0, feriados_mes: cfCarregado.feriados, valor_va: cfCarregado.valorVA })
+        .insert({ unidade_id: unidadeIdFinal, mes, ano, dias_uteis: 0, feriados_mes: cfCarregado.feriados, valor_va: cfCarregado.valorVA })
         .select().single()
       if (!novaComp) { setErro('Erro ao criar competência.'); setSalvando(false); return }
       compId = (novaComp as Competencia).id
     }
 
-    // Garante CF
     const descontosReais = descontos.filter(d => !d.isCarryOver)
     const totalDescontos = descontosReais.reduce((s, d) => s + d.dias, 0)
-    const { funcionario: func, valorVT, valorVTSabado, diasSabado, feriados, valorVA } = cfCarregado
+    const { valorVT, valorVTSabado, diasSabado, feriados, valorVA } = cfCarregado
     const ehExcecao = valorVTSabado > 0
     const diasAuto = calcularDiasUteisAuto(mes, ano, func.folga_semanal, feriados)
     const resultado = calcularVTVA({
@@ -342,7 +424,7 @@ export default function DescontosPage() {
 
     const payload = {
       competencia_id: compId,
-      funcionario_id: funcionarioId,
+      funcionario_id: func.id,
       dias_feriado: feriados,
       dias_sabado: ehExcecao ? diasSabado : 0,
       dias_desconto: totalDescontos,
@@ -361,7 +443,6 @@ export default function DescontosPage() {
 
     if (!cfId) { setErro('Erro ao criar registro do funcionário.'); setSalvando(false); return }
 
-    // Recria descontos
     await supabase.from('competencia_funcionario_desconto').delete().eq('competencia_funcionario_id', cfId)
     for (const d of descontosReais) {
       await supabase.from('competencia_funcionario_desconto').insert({
@@ -374,20 +455,19 @@ export default function DescontosPage() {
       })
     }
 
-    // Atualiza estado
     setCfCarregado(prev => prev ? { ...prev, cfId, competenciaId: compId } : prev)
     setSalvando(false)
-    setSucesso(`Descontos salvos! Total: ${totalDescontos} dia(s) — Valor recalculado: ${formatarMoeda(resultado.valorTotal)}`)
-    setTimeout(() => setSucesso(null), 5000)
+    setSucesso(`Salvo! ${totalDescontos} dia(s) de desconto — ${formatarMoeda(resultado.valorTotal)}`)
+    setTimeout(() => setSucesso(null), 4000)
   }
 
-  // ─── Cálculo de preview ──────────────────────────────────────────────────────
+  // ─── Preview ─────────────────────────────────────────────────────────────────
 
-  const previewResultado = cfCarregado ? (() => {
-    const { funcionario: func, valorVT, valorVTSabado, diasSabado, feriados, valorVA } = cfCarregado
+  const previewResultado = cfCarregado && selecionado ? (() => {
+    const { func } = selecionado
+    const { valorVT, valorVTSabado, diasSabado, feriados, valorVA } = cfCarregado
     const ehExcecao = valorVTSabado > 0
-    const descontosReais = descontos.filter(d => !d.isCarryOver)
-    const totalDesc = descontosReais.reduce((s, d) => s + d.dias, 0)
+    const totalDesc = descontos.filter(d => !d.isCarryOver).reduce((s, d) => s + d.dias, 0)
     const diasAuto = calcularDiasUteisAuto(mes, ano, func.folga_semanal, feriados)
     return calcularVTVA({
       diasUteis: diasAuto, diasFeriado: 0,
@@ -397,123 +477,226 @@ export default function DescontosPage() {
     })
   })() : null
 
-  // ─── JSX ─────────────────────────────────────────────────────────────────────
+  // ─── Lista filtrada ──────────────────────────────────────────────────────────
 
-  return (
-    <LayoutAdmin title="Lançamento de Descontos">
-      <div className="space-y-6">
+  const listaFiltrada = filtroEmpresaId
+    ? todosFuncionarios.filter(f => f.empresa.id === filtroEmpresaId)
+    : todosFuncionarios
 
-        {/* ── Seleção ── */}
-        <div className="card">
-          <h2 className="text-sm font-semibold text-gray-700 mb-4">Selecionar Funcionário e Período</h2>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="md:col-span-2">
-              <label className="label-field">Empresa</label>
-              <select value={empresaId} onChange={e => setEmpresaId(e.target.value)} className="input-field">
-                <option value="">Selecione uma empresa</option>
-                {empresas.map(e => <option key={e.id} value={e.id}>{e.razao_social}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="label-field">Mês</label>
-              <select value={mes} onChange={e => setMes(Number(e.target.value))} className="input-field">
-                {MESES.map((m, i) => <option key={i + 1} value={i + 1}>{m}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="label-field">Ano</label>
-              <input type="number" value={ano} onChange={e => setAno(Number(e.target.value))} className="input-field" min={2020} max={2099} />
+  // ─── JSX — View Lista ────────────────────────────────────────────────────────
+
+  if (view === 'list') {
+    return (
+      <LayoutAdmin
+        title="Lançamento de Descontos"
+        actions={
+          <div className="flex items-center gap-3">
+            <select value={mes} onChange={e => setMes(Number(e.target.value))} className="input-field py-1.5 text-sm">
+              {MESES.map((m, i) => <option key={i + 1} value={i + 1}>{m}</option>)}
+            </select>
+            <input
+              type="number" value={ano} onChange={e => setAno(Number(e.target.value))}
+              min={2020} max={2099}
+              className="input-field py-1.5 text-sm w-24"
+            />
+          </div>
+        }
+      >
+        <div className="space-y-4">
+          {/* Filtro empresa */}
+          <div className="card py-3">
+            <div className="flex items-center gap-3 flex-wrap">
+              <span className="text-sm font-medium text-gray-600 shrink-0">Filtrar por empresa:</span>
+              <button
+                onClick={() => setFiltroEmpresaId('')}
+                className={`px-3 py-1 rounded-lg text-sm font-medium transition-colors ${
+                  !filtroEmpresaId ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                Todas
+              </button>
+              {empresas.map(e => (
+                <button
+                  key={e.id}
+                  onClick={() => setFiltroEmpresaId(e.id)}
+                  className={`px-3 py-1 rounded-lg text-sm font-medium transition-colors ${
+                    filtroEmpresaId === e.id ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  {e.razao_social}
+                </button>
+              ))}
             </div>
           </div>
 
-          {empresaId && (
-            <div className="mt-4 pt-4 border-t border-gray-100">
-              <label className="label-field">Funcionário</label>
-              <div className="flex gap-3">
-                <select value={funcionarioId} onChange={e => setFuncionarioId(e.target.value)} className="input-field flex-1">
-                  <option value="">Selecione um funcionário</option>
-                  {funcionarios.map(f => <option key={f.id} value={f.id}>{f.nome} — {f.funcao}</option>)}
-                </select>
-                <button
-                  onClick={buscar}
-                  disabled={!funcionarioId || loading}
-                  className="btn-primary flex items-center gap-2 px-6"
-                >
-                  {loading ? (
-                    <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
-                    </svg>
-                  ) : (
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                    </svg>
-                  )}
-                  Buscar
-                </button>
+          {/* Tabela de funcionários */}
+          <div className="card p-0 overflow-hidden">
+            {loadingLista ? (
+              <div className="text-center py-16 text-gray-400 text-sm">Carregando funcionários...</div>
+            ) : listaFiltrada.length === 0 ? (
+              <div className="text-center py-16 text-gray-400 text-sm">Nenhum funcionário ativo encontrado.</div>
+            ) : (
+              <table className="w-full border-collapse text-sm">
+                <thead>
+                  <tr className="bg-gray-50 border-b border-gray-200">
+                    <th className="table-header text-left">Funcionário</th>
+                    <th className="table-header text-left">Função</th>
+                    <th className="table-header text-left">Empresa</th>
+                    <th className="table-header text-center">Descontos ({MESES[mes - 1]}/{ano})</th>
+                    <th className="table-header text-right">Ação</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {listaFiltrada.map(item => {
+                    const count = contadoresDesconto[item.func.id] ?? 0
+                    return (
+                      <tr key={item.func.id} className="hover:bg-blue-50/40 transition-colors">
+                        <td className="table-cell font-medium text-gray-900">{item.func.nome}</td>
+                        <td className="table-cell text-gray-500">{item.func.funcao}</td>
+                        <td className="table-cell text-gray-500">{item.empresa.razao_social}</td>
+                        <td className="table-cell text-center">
+                          {count > 0 ? (
+                            <span className="inline-flex items-center gap-1 bg-amber-100 text-amber-700 text-xs font-medium px-2 py-0.5 rounded-full">
+                              {count} desconto{count > 1 ? 's' : ''}
+                            </span>
+                          ) : (
+                            <span className="text-gray-300 text-xs">—</span>
+                          )}
+                        </td>
+                        <td className="table-cell text-right">
+                          <button
+                            onClick={() => abrirFormulario(item)}
+                            className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg transition-colors"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            Lançar
+                          </button>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      </LayoutAdmin>
+    )
+  }
+
+  // ─── JSX — View Formulário ───────────────────────────────────────────────────
+
+  return (
+    <LayoutAdmin
+      title={selecionado ? selecionado.func.nome : 'Lançar Desconto'}
+      actions={
+        <button onClick={voltar} className="btn-secondary flex items-center gap-2 text-sm">
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+          </svg>
+          Voltar à lista
+        </button>
+      }
+    >
+      <div className="space-y-5">
+
+        {/* Cabeçalho do funcionário */}
+        {selecionado && (
+          <div className="card py-4">
+            <div className="flex items-center justify-between flex-wrap gap-3">
+              <div>
+                <p className="font-semibold text-gray-900 text-lg">{selecionado.func.nome}</p>
+                <p className="text-sm text-gray-500">{selecionado.func.funcao} — {selecionado.empresa.razao_social}</p>
+              </div>
+              <div className="flex items-center gap-2 bg-blue-50 px-4 py-2 rounded-lg">
+                <span className="text-sm font-medium text-blue-700">{MESES[mes - 1]} / {ano}</span>
               </div>
             </div>
-          )}
-        </div>
+          </div>
+        )}
 
-        {/* ── Feedback ── */}
+        {/* Feedback */}
         {sucesso && (
-          <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg text-sm">{sucesso}</div>
+          <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg text-sm flex items-center gap-2">
+            <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            </svg>
+            {sucesso}
+          </div>
         )}
         {erro && (
           <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">{erro}</div>
         )}
 
-        {/* ── Painel principal ── */}
-        {cfCarregado && (
-          <div className="grid md:grid-cols-3 gap-6">
+        {loadingForm ? (
+          <div className="card text-center py-16 text-gray-400 text-sm">
+            <svg className="w-8 h-8 animate-spin mx-auto mb-3 text-blue-400" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+            </svg>
+            Carregando dados...
+          </div>
+        ) : cfCarregado && (
+          <div className="grid md:grid-cols-5 gap-5">
 
-            {/* Coluna esquerda: info + preview */}
-            <div className="space-y-4">
+            {/* Coluna esquerda: desconto atual + preview */}
+            <div className="md:col-span-2 space-y-4">
 
-              {/* Card do funcionário */}
+              {/* Descontos lançados */}
               <div className="card">
-                <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Funcionário</h3>
-                <p className="font-semibold text-gray-900">{cfCarregado.funcionario.nome}</p>
-                <p className="text-sm text-gray-500">{cfCarregado.funcionario.funcao}</p>
-                <p className="text-xs text-gray-400 mt-1">{cfCarregado.empresa.razao_social}</p>
-                <div className="mt-3 pt-3 border-t border-gray-100 grid grid-cols-2 gap-2 text-xs text-gray-500">
-                  <div>
-                    <span className="text-gray-400">Folga:</span>{' '}
-                    {cfCarregado.funcionario.folga_semanal ?? '—'}
-                  </div>
-                  <div>
-                    <span className="text-gray-400">Feriados:</span>{' '}
-                    {cfCarregado.feriados}
-                  </div>
-                  <div>
-                    <span className="text-gray-400">VT/dia:</span>{' '}
-                    {formatarMoeda(cfCarregado.valorVT)}
-                  </div>
-                  {cfCarregado.valorVTSabado > 0 && (
-                    <div>
-                      <span className="text-gray-400">VT Sáb:</span>{' '}
-                      {formatarMoeda(cfCarregado.valorVTSabado)}
-                    </div>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-semibold text-gray-700">Descontos lançados</h3>
+                  {descontos.filter(d => !d.isCarryOver).length > 0 && (
+                    <span className="text-xs text-gray-500 font-mono">
+                      {descontos.filter(d => !d.isCarryOver).reduce((s, d) => s + d.dias, 0)} dia(s)
+                    </span>
                   )}
-                  <div>
-                    <span className="text-gray-400">VA/dia:</span>{' '}
-                    {formatarMoeda(cfCarregado.valorVA)}
-                  </div>
                 </div>
-                {!cfCarregado.cfId && (
-                  <p className="text-xs text-amber-600 mt-2">⚠ Sem registro neste mês — será criado ao salvar.</p>
+                {descontos.length === 0 ? (
+                  <p className="text-xs text-gray-400 py-3 text-center">Nenhum desconto neste mês.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {descontos.map((d, i) => (
+                      <div
+                        key={i}
+                        className={`flex items-start justify-between rounded-lg px-3 py-2 gap-2 ${
+                          d.isCarryOver ? 'bg-amber-50 border border-amber-200' : 'bg-gray-50'
+                        }`}
+                      >
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-xs font-medium leading-tight ${d.isCarryOver ? 'text-amber-800' : 'text-gray-800'}`}>
+                            {d.tipo_nome}
+                            {d.isCarryOver && <span className="ml-1 text-amber-600">(carry-over)</span>}
+                          </p>
+                          <p className="text-xs text-gray-400 mt-0.5">
+                            {d.dias} dia(s)
+                            {d.data_inicio && ` · ${d.data_inicio === d.data_fim || !d.data_fim ? fmtData(d.data_inicio) : `${fmtData(d.data_inicio)} → ${fmtData(d.data_fim)}`}`}
+                            {d.dias_proximo_mes > 0 && ` · +${d.dias_proximo_mes}d próx.`}
+                          </p>
+                        </div>
+                        {!d.isCarryOver && (
+                          <button onClick={() => removerDesconto(i)} className="text-red-400 hover:text-red-600 shrink-0 mt-0.5">
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 )}
               </div>
 
-              {/* Preview de cálculo */}
+              {/* Preview */}
               {previewResultado && (
                 <div className="card">
-                  <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Preview — {MESES[mes - 1]}/{ano}</h3>
-                  <div className="space-y-2 text-sm">
+                  <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Preview do cálculo</h3>
+                  <div className="space-y-1.5 text-sm">
                     <div className="flex justify-between">
                       <span className="text-gray-500">Dias efetivos</span>
-                      <span className="font-mono font-bold text-blue-700">{previewResultado.diasEfetivos}d</span>
+                      <span className="font-mono font-semibold text-blue-700">{previewResultado.diasEfetivos}d</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-gray-500">VA</span>
@@ -536,94 +719,30 @@ export default function DescontosPage() {
                   </div>
                 </div>
               )}
+
+              {!cfCarregado.cfId && (
+                <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                  ⚠ Sem registro neste mês — será criado ao salvar.
+                </p>
+              )}
             </div>
 
-            {/* Coluna direita: gerenciar descontos */}
-            <div className="md:col-span-2 space-y-4">
-
-              {/* Descontos existentes */}
+            {/* Coluna direita: formulário */}
+            <div className="md:col-span-3 space-y-4">
               <div className="card">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-sm font-semibold text-gray-700">
-                    Descontos — {MESES[mes - 1]}/{ano}
-                  </h3>
-                  {descontos.filter(d => !d.isCarryOver).length > 0 && (
-                    <span className="text-xs text-gray-500">
-                      Total: <strong>{descontos.filter(d => !d.isCarryOver).reduce((s, d) => s + d.dias, 0)} dia(s)</strong>
-                    </span>
-                  )}
-                </div>
-
-                {descontos.length === 0 ? (
-                  <p className="text-sm text-gray-400 py-4 text-center">Nenhum desconto neste mês.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {descontos.map((d, i) => (
-                      <div
-                        key={i}
-                        className={`flex items-center justify-between rounded-lg px-3 py-2.5 ${
-                          d.isCarryOver ? 'bg-amber-50 border border-amber-200' : 'bg-gray-50'
-                        }`}
-                      >
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className={`text-sm font-medium ${d.isCarryOver ? 'text-amber-800' : 'text-gray-800'}`}>
-                              {d.tipo_nome}
-                            </span>
-                            {d.isCarryOver && (
-                              <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">carry-over</span>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-3 mt-0.5">
-                            <span className="text-xs text-gray-500 font-mono">{d.dias} dia(s)</span>
-                            {d.data_inicio && (
-                              <span className="text-xs text-blue-500">
-                                {d.data_inicio === d.data_fim || !d.data_fim
-                                  ? fmtData(d.data_inicio)
-                                  : `${fmtData(d.data_inicio)} → ${fmtData(d.data_fim)}`
-                                }
-                              </span>
-                            )}
-                            {d.dias_proximo_mes > 0 && (
-                              <span className="text-xs text-orange-500">+{d.dias_proximo_mes}d no próx. mês</span>
-                            )}
-                          </div>
-                        </div>
-                        {!d.isCarryOver && (
-                          <button
-                            onClick={() => removerDesconto(i)}
-                            className="ml-2 text-red-400 hover:text-red-600 shrink-0"
-                          >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                            </svg>
-                          </button>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Formulário: adicionar desconto */}
-              <div className="card">
-                <h3 className="text-sm font-semibold text-gray-700 mb-1">Adicionar Desconto</h3>
-                <p className="text-xs text-gray-400 mb-4">
-                  As datas podem ser do mês anterior (para cobrar retroativamente vales pagos antecipadamente).
-                  Se o período ultrapassar o fim deste mês, os dias excedentes são registrados automaticamente no próximo.
-                </p>
+                <h3 className="text-sm font-semibold text-gray-700 mb-4">Adicionar Desconto</h3>
 
                 {tiposDesconto.length === 0 ? (
                   <p className="text-xs text-amber-600">Cadastre tipos de desconto em <strong>Tipos de Desconto</strong> primeiro.</p>
                 ) : (
-                  <div className="space-y-3">
+                  <div className="space-y-4">
                     <div>
-                      <label className="label-field">Tipo</label>
+                      <label className="label-field">Tipo de desconto</label>
                       <select value={novoTipoId} onChange={e => setNovoTipoId(e.target.value)} className="input-field">
                         {tiposDesconto.map(t => <option key={t.id} value={t.id}>{t.nome}</option>)}
                       </select>
                     </div>
-                    <div className="grid grid-cols-3 gap-3">
+                    <div className="grid grid-cols-2 gap-3">
                       <div>
                         <label className="label-field">Data início</label>
                         <input
@@ -640,20 +759,21 @@ export default function DescontosPage() {
                           className="input-field"
                         />
                       </div>
-                      <div>
-                        <label className="label-field">Dias (seg–sáb)</label>
-                        <input
-                          type="number" value={novoDias}
-                          onChange={e => setNovoDias(Number(e.target.value))}
-                          min={1} max={31}
-                          className="input-field text-center"
-                        />
-                      </div>
+                    </div>
+                    <div>
+                      <label className="label-field">Dias úteis (seg–sáb) calculados</label>
+                      <input
+                        type="number" value={novoDias}
+                        onChange={e => setNovoDias(Number(e.target.value))}
+                        min={1} max={31}
+                        className="input-field w-28 text-center"
+                      />
+                      <p className="text-xs text-gray-400 mt-1">Calculado automaticamente ao preencher as datas. Pode ajustar manualmente.</p>
                     </div>
 
                     {novoDiasProximo > 0 && (
-                      <div className="flex items-center gap-2 text-xs text-orange-600 bg-orange-50 border border-orange-200 rounded-lg px-3 py-2">
-                        <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <div className="flex items-start gap-2 text-xs text-orange-700 bg-orange-50 border border-orange-200 rounded-lg px-3 py-2.5">
+                        <svg className="w-4 h-4 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                         </svg>
                         <span><strong>{novoDiasProximo} dia(s)</strong> do período caem em {MESES[mes === 12 ? 0 : mes]} e serão aplicados automaticamente no próximo mês.</span>
@@ -674,12 +794,12 @@ export default function DescontosPage() {
                 )}
               </div>
 
-              {/* Botão salvar */}
-              <div className="flex justify-end">
+              {/* Botões de ação */}
+              <div className="flex gap-3">
                 <button
                   onClick={salvar}
                   disabled={salvando}
-                  className="btn-primary px-8 flex items-center gap-2"
+                  className="btn-primary flex-1 flex items-center justify-center gap-2"
                 >
                   {salvando ? (
                     <>
@@ -698,18 +818,14 @@ export default function DescontosPage() {
                     </>
                   )}
                 </button>
+                <button onClick={voltar} className="btn-secondary flex items-center gap-2 px-5">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                  </svg>
+                  Voltar
+                </button>
               </div>
             </div>
-          </div>
-        )}
-
-        {/* Estado inicial */}
-        {!cfCarregado && !loading && (
-          <div className="card text-center py-16 text-gray-400">
-            <svg className="w-12 h-12 mx-auto mb-4 opacity-40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l3.5-2 3.5 2 3.5-2 3.5 2z" />
-            </svg>
-            <p className="text-sm">Selecione empresa, funcionário e período, depois clique em <strong>Buscar</strong>.</p>
           </div>
         )}
       </div>
