@@ -30,11 +30,13 @@ export function calcularVTVA(params: ParamsCalculo): ResultadoCalculo {
   // Dias efetivos = dias úteis - feriados - descontos (faltas)
   const diasEfetivos = Math.max(0, diasUteis - diasFeriado - diasDesconto)
 
-  // VA = dias efetivos × valor diário VA
+  // VA = dias efetivos × valor diário VA (inclui sábados trabalhados)
   const totalVA = diasEfetivos * valorVA
 
-  // VT = dias efetivos × valor diário VT
-  const totalVT = diasEfetivos * valorVT
+  // VT dias úteis = (dias efetivos - sábados) × valor VT
+  // Sábados são tratados separadamente para evitar dupla contagem
+  const diasUteisVT = Math.max(0, diasEfetivos - diasSabado)
+  const totalVT = diasUteisVT * valorVT
 
   // VT sábado = dias sábado × valor VT sábado
   const totalVTSabado = diasSabado * valorVTSabado
