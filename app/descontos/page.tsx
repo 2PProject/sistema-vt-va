@@ -477,6 +477,18 @@ export default function DescontosPage() {
     })
   })() : null
 
+  // ─── Navegação de período ────────────────────────────────────────────────────
+
+  function mesAnterior() {
+    if (mes === 1) { setMes(12); setAno(a => a - 1) }
+    else setMes(m => m - 1)
+  }
+
+  function mesSeguinte() {
+    if (mes === 12) { setMes(1); setAno(a => a + 1) }
+    else setMes(m => m + 1)
+  }
+
   // ─── Lista filtrada ──────────────────────────────────────────────────────────
 
   const listaFiltrada = filtroEmpresaId
@@ -490,15 +502,26 @@ export default function DescontosPage() {
       <LayoutAdmin
         title="Lançamento de Descontos"
         actions={
-          <div className="flex items-center gap-3">
-            <select value={mes} onChange={e => setMes(Number(e.target.value))} className="input-field py-1.5 text-sm">
-              {MESES.map((m, i) => <option key={i + 1} value={i + 1}>{m}</option>)}
-            </select>
-            <input
-              type="number" value={ano} onChange={e => setAno(Number(e.target.value))}
-              min={2020} max={2099}
-              className="input-field py-1.5 text-sm w-24"
-            />
+          <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
+            <button
+              onClick={mesAnterior}
+              className="p-1.5 rounded-md hover:bg-white hover:shadow-sm transition-all text-gray-600"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </svg>
+            </button>
+            <span className="px-3 py-1 text-sm font-semibold text-gray-700 min-w-[130px] text-center">
+              {MESES[mes - 1]} {ano}
+            </span>
+            <button
+              onClick={mesSeguinte}
+              className="p-1.5 rounded-md hover:bg-white hover:shadow-sm transition-all text-gray-600"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+            </button>
           </div>
         }
       >
