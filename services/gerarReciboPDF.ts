@@ -97,14 +97,16 @@ function desenharVia(doc: any, dados: DadosRecibo, mesNome: string, referencia: 
   doc.setTextColor(0, 0, 0)
   doc.setFont('helvetica', 'normal')
 
-  const diasVTUteis = dados.valorVTSabado > 0
+  // Exceção real = valor de sábado diferente do valor do dia útil
+  const ehExcecaoPDF = dados.valorVTSabado > 0 && dados.valorVTSabado !== dados.valorVT
+  const diasVTUteis = ehExcecaoPDF
     ? Math.max(0, dados.diasEfetivos - dados.diasSabado)
     : dados.diasEfetivos
 
   const linhas = [
     ['Vale Alimentação (VA)', String(dados.diasEfetivos), formatarMoeda(dados.valorVA), formatarMoeda(dados.resultado.totalVA)],
     ['Vale Transporte - Dias Úteis', String(diasVTUteis), formatarMoeda(dados.valorVT), formatarMoeda(dados.resultado.totalVT)],
-    ...(dados.valorVTSabado > 0 ? [['Vale Transporte - Sábados', String(dados.diasSabado), formatarMoeda(dados.valorVTSabado), formatarMoeda(dados.resultado.totalVTSabado)]] : []),
+    ...(ehExcecaoPDF ? [['Vale Transporte - Sábados', String(dados.diasSabado), formatarMoeda(dados.valorVTSabado), formatarMoeda(dados.resultado.totalVTSabado)]] : []),
   ]
 
   linhas.forEach((linha, i) => {
