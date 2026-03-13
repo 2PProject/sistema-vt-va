@@ -45,10 +45,9 @@ export default function ValoresBeneficiosPage() {
     if (modoTodas) {
       setEmpresa(null)
       setValorVA(0)
-      const todos: FuncRow[] = []
-      for (const emp of empresas) {
+      const results = await Promise.all(empresas.map(async (emp) => {
         const unidadeId = await getOrCreateDefaultUnidade(emp.id)
-        if (!unidadeId) continue
+        if (!unidadeId) return []
         const { data: funcs } = await supabase
           .from('funcionarios')
           .select('id, nome, funcao, valor_vt, valor_vt_sabado')
@@ -56,22 +55,20 @@ export default function ValoresBeneficiosPage() {
           .eq('ativo', true)
           .order('nome')
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        for (const f of (funcs ?? []) as any[]) {
-          todos.push({
-            id: f.id,
-            empresaId: emp.id,
-            empresaNome: emp.razao_social,
-            valorVAEmpresa: emp.valor_va ?? 0,
-            nome: f.nome,
-            funcao: f.funcao,
-            valor_vt: f.valor_vt ?? 0,
-            valor_vt_sabado: f.valor_vt_sabado ?? 0,
-            tem_sabado: (f.valor_vt_sabado ?? 0) > 0,
-            alterado: false,
-          })
-        }
-      }
-      setFuncionarios(todos)
+        return ((funcs ?? []) as any[]).map((f) => ({
+          id: f.id,
+          empresaId: emp.id,
+          empresaNome: emp.razao_social,
+          valorVAEmpresa: emp.valor_va ?? 0,
+          nome: f.nome,
+          funcao: f.funcao,
+          valor_vt: f.valor_vt ?? 0,
+          valor_vt_sabado: f.valor_vt_sabado ?? 0,
+          tem_sabado: (f.valor_vt_sabado ?? 0) > 0,
+          alterado: false,
+        } as FuncRow))
+      }))
+      setFuncionarios(results.flat())
       setLoading(false)
       return
     }
@@ -139,12 +136,12 @@ export default function ValoresBeneficiosPage() {
     }
 
     const alterados = funcionarios.filter(f => f.alterado)
-    for (const f of alterados) {
-      await supabase
+    await Promise.all(alterados.map(f =>
+      supabase
         .from('funcionarios')
         .update({ valor_vt: f.valor_vt, valor_vt_sabado: f.valor_vt_sabado })
         .eq('id', f.id)
-    }
+    ))
 
     setFuncionarios(prev => prev.map(f => ({ ...f, alterado: false })))
     setSalvando(false)

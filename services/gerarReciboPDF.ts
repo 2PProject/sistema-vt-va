@@ -156,15 +156,21 @@ export async function gerarReciboPDF(dados: DadosRecibo): Promise<void> {
       ? `Dias Úteis: ${dados.diasUteis}  |  Dias Efetivos: ${dados.diasEfetivos}  |  Sábados Trabalhados: ${dados.diasSabado}`
       : `Dias Úteis: ${dados.diasUteis}  |  Dias Efetivos: ${dados.diasEfetivos}`
     doc.text(rodape, 12, y)
-    y += 12
+    y += 8
 
-    // Assinatura do funcionário
+    // Data alinhada à direita
+    doc.setFontSize(8)
+    doc.setTextColor(80, 80, 80)
+    doc.text(`_______________, ___ de ${mesNome} de ${dados.ano}.`, 200, y, { align: 'right' })
+    y += 10
+
+    // Assinatura do funcionário — centralizada
     doc.setDrawColor(0, 0, 0)
-    doc.line(12, y, 140, y)
+    doc.line(55, y, 155, y)
     y += 5
     doc.setFontSize(7)
     doc.setTextColor(100, 100, 100)
-    doc.text('Assinatura do Funcionário', 12, y)
+    doc.text('Assinatura do Funcionário', 105, y, { align: 'center' })
     y += 7
     doc.setFontSize(8)
     doc.setTextColor(120, 120, 120)

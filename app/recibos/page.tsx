@@ -46,11 +46,9 @@ export default function RecibosPage() {
       ? empresas
       : empresas.filter(e => e.id === empresaId)
 
-    const todos: RegistroCompleto[] = []
-
-    for (const emp of empresasParaBuscar) {
+    const results = await Promise.all(empresasParaBuscar.map(async (emp) => {
       const unidadeId = await getOrCreateDefaultUnidade(emp.id)
-      if (!unidadeId) continue
+      if (!unidadeId) return []
 
       const { data: comp } = await supabase
         .from('competencias')
@@ -60,19 +58,17 @@ export default function RecibosPage() {
         .eq('ano', ano)
         .maybeSingle()
 
-      if (!comp) continue
+      if (!comp) return []
 
       const { data: cfs } = await supabase
         .from('competencia_funcionario')
         .select('*, funcionarios(*)')
         .eq('competencia_id', comp.id)
 
-      for (const cf of (cfs as CFComFunc[]) ?? []) {
-        todos.push({ ...cf, competenciaObj: comp as Competencia, empresaObj: emp })
-      }
-    }
+      return ((cfs as CFComFunc[]) ?? []).map(cf => ({ ...cf, competenciaObj: comp as Competencia, empresaObj: emp }))
+    }))
 
-    setRegistros(todos)
+    setRegistros(results.flat())
     setLoading(false)
   }, [empresaId, mes, ano, empresas])
 
@@ -84,9 +80,10 @@ export default function RecibosPage() {
     setGerando(reg.funcionario_id)
     try {
       const { gerarReciboPDF } = await import('../../services/gerarReciboPDF')
-      const ehExcecao = (reg.funcionarios?.valor_vt_sabado ?? 0) > 0
+      const valorVTSabadoBase = reg.valor_vt_sabado ?? reg.funcionarios?.valor_vt_sabado ?? 0
+      const ehExcecao = valorVTSabadoBase > 0
       const valorVT = reg.valor_vt ?? reg.funcionarios?.valor_vt ?? 0
-      const valorVTSabado = ehExcecao ? (reg.valor_vt_sabado ?? reg.funcionarios?.valor_vt_sabado ?? 0) : 0
+      const valorVTSabado = ehExcecao ? valorVTSabadoBase : 0
       const diasSabado = ehExcecao ? (reg.dias_sabado ?? 0) : 0
       const valorVA = reg.competenciaObj.valor_va ?? 0
       const diasUteisAuto = calcularDiasUteisAuto(mes, ano, reg.funcionarios?.folga_semanal, reg.competenciaObj.feriados_mes ?? 0)
@@ -133,7 +130,8 @@ export default function RecibosPage() {
   }
 
   const totalGeral = registros.reduce((sum, reg) => {
-    const ehExcecao = (reg.funcionarios?.valor_vt_sabado ?? 0) > 0
+    const vtSabadoBase = reg.valor_vt_sabado ?? reg.funcionarios?.valor_vt_sabado ?? 0
+    const ehExcecao = vtSabadoBase > 0
     const diasUteisAuto = calcularDiasUteisAuto(mes, ano, reg.funcionarios?.folga_semanal, reg.competenciaObj.feriados_mes ?? 0)
     const r = calcularVTVA({
       diasUteis: diasUteisAuto,
@@ -141,7 +139,7 @@ export default function RecibosPage() {
       diasSabado: ehExcecao ? (reg.dias_sabado ?? 0) : 0,
       diasDesconto: reg.dias_desconto,
       valorVT: reg.valor_vt ?? reg.funcionarios?.valor_vt ?? 0,
-      valorVTSabado: ehExcecao ? (reg.valor_vt_sabado ?? reg.funcionarios?.valor_vt_sabado ?? 0) : 0,
+      valorVTSabado: ehExcecao ? vtSabadoBase : 0,
       valorVA: reg.competenciaObj.valor_va ?? 0,
     })
     return sum + r.valorTotal
@@ -229,7 +227,8 @@ export default function RecibosPage() {
                     </thead>
                     <tbody className="divide-y divide-gray-100">
                       {registros.map((reg) => {
-                        const ehExcecao = (reg.funcionarios?.valor_vt_sabado ?? 0) > 0
+                        const vtSabadoBase = reg.valor_vt_sabado ?? reg.funcionarios?.valor_vt_sabado ?? 0
+                        const ehExcecao = vtSabadoBase > 0
                         const diasUteisAuto = calcularDiasUteisAuto(mes, ano, reg.funcionarios?.folga_semanal, reg.competenciaObj.feriados_mes ?? 0)
                         const r = calcularVTVA({
                           diasUteis: diasUteisAuto,
@@ -237,7 +236,7 @@ export default function RecibosPage() {
                           diasSabado: ehExcecao ? (reg.dias_sabado ?? 0) : 0,
                           diasDesconto: reg.dias_desconto,
                           valorVT: reg.valor_vt ?? reg.funcionarios?.valor_vt ?? 0,
-                          valorVTSabado: ehExcecao ? (reg.valor_vt_sabado ?? reg.funcionarios?.valor_vt_sabado ?? 0) : 0,
+                          valorVTSabado: ehExcecao ? vtSabadoBase : 0,
                           valorVA: reg.competenciaObj.valor_va ?? 0,
                         })
                         return (
