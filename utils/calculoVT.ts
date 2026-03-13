@@ -116,13 +116,15 @@ export function contarDiasSemana(mes: number, ano: number): Record<number, numbe
 /**
  * Calcula os dias úteis efetivos de um funcionário para o mês,
  * descontando: domingos (já excluídos), folga semanal e feriados.
+ * Apenas feriados que caem em dias efetivamente trabalhados pelo funcionário
+ * são contados (feriados em domingo ou no dia de folga são ignorados).
  * Descontos individuais (faltas) são aplicados depois, na soma final.
  */
 export function calcularDiasUteisAuto(
   mes: number,
   ano: number,
   folgaSemanal: string | null | undefined,
-  feriadosDoMes: number
+  feriadosDatas: string[]
 ): number {
   const counts = contarDiasSemana(mes, ano)
   // Total de dias úteis (seg–sáb): todos os funcionários podem trabalhar sábado
@@ -130,8 +132,14 @@ export function calcularDiasUteisAuto(
   // Subtrai a folga semanal do funcionário
   const dow = folgaSemanal ? (FOLGA_TO_DOW[folgaSemanal] ?? -1) : -1
   if (dow >= 1 && dow <= 6) total -= counts[dow]
-  // Subtrai feriados compartilhados
-  total -= feriadosDoMes
+  // Subtrai apenas feriados que caem em dias úteis do funcionário
+  for (const dateStr of feriadosDatas) {
+    const d = new Date(dateStr + 'T12:00:00') // meio-dia evita problemas de fuso
+    const feriadoDow = d.getDay() // 0=Dom … 6=Sáb
+    if (feriadoDow === 0) continue // domingo já excluído da contagem
+    if (feriadoDow === dow) continue // dia de folga do funcionário já subtraído
+    total -= 1
+  }
   return Math.max(0, total)
 }
 

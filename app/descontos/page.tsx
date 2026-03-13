@@ -41,7 +41,7 @@ type DescontoItem = {
 type CFCarregado = {
   cfId: string
   competenciaId: string
-  feriados: number
+  feriados: string[]
   valorVA: number
   valorVT: number
   valorVTSabado: number
@@ -245,11 +245,12 @@ export default function DescontosPage() {
     const { func, empresa, unidadeId } = item
 
     const mesStr = String(mes).padStart(2, '0')
+    const ultimoDia = new Date(ano, mes, 0).getDate()
     const { data: feriadosRows } = await supabase
       .from('feriados').select('data')
       .gte('data', `${ano}-${mesStr}-01`)
-      .lte('data', `${ano}-${mesStr}-31`)
-    const feriados = feriadosRows?.length ?? 0
+      .lte('data', `${ano}-${mesStr}-${String(ultimoDia).padStart(2, '0')}`)
+    const feriados: string[] = (feriadosRows ?? []).map(f => f.data as string)
 
     const { data: comp } = await supabase
       .from('competencias').select('*')
@@ -404,7 +405,7 @@ export default function DescontosPage() {
     if (!compId) {
       const { data: novaComp } = await supabase
         .from('competencias')
-        .insert({ unidade_id: unidadeIdFinal, mes, ano, dias_uteis: 0, feriados_mes: cfCarregado.feriados, valor_va: cfCarregado.valorVA })
+        .insert({ unidade_id: unidadeIdFinal, mes, ano, dias_uteis: 0, feriados_mes: cfCarregado.feriados.length, valor_va: cfCarregado.valorVA })
         .select().single()
       if (!novaComp) { setErro('Erro ao criar competência.'); setSalvando(false); return }
       compId = (novaComp as Competencia).id
@@ -425,7 +426,7 @@ export default function DescontosPage() {
     const payload = {
       competencia_id: compId,
       funcionario_id: func.id,
-      dias_feriado: feriados,
+      dias_feriado: feriados.length,
       dias_sabado: ehExcecao ? diasSabado : 0,
       dias_desconto: totalDescontos,
       valor_vt: valorVT,

@@ -101,7 +101,8 @@ export default function CompetenciasPage() {
   const [tiposDesconto, setTiposDesconto] = useState<TipoDesconto[]>([])
   const [competencia, setCompetencia] = useState<Competencia | null>(null)
   const [itens, setItens] = useState<CFLocal[]>([])
-  const [feriadosDoMes, setFeriadosDoMes] = useState(0)
+  const [feriadosDatas, setFeriadosDatas] = useState<string[]>([])
+  const [feriadosDoMes, setFeriadosDoMes] = useState(0) // apenas para exibição
   const [loading, setLoading] = useState(false)
   const [salvando, setSalvando] = useState(false)
   const [sucesso, setSucesso] = useState(false)
@@ -135,12 +136,14 @@ export default function CompetenciasPage() {
     setSucesso(false)
 
     const mesStr = String(mes).padStart(2, '0')
+    const ultimoDia = new Date(ano, mes, 0).getDate()
     const { data: feriadosRows } = await supabase
       .from('feriados').select('data')
       .gte('data', `${ano}-${mesStr}-01`)
-      .lte('data', `${ano}-${mesStr}-31`)
-    const feriados = feriadosRows?.length ?? 0
-    setFeriadosDoMes(feriados)
+      .lte('data', `${ano}-${mesStr}-${String(ultimoDia).padStart(2, '0')}`)
+    const feriados: string[] = (feriadosRows ?? []).map(f => f.data as string)
+    setFeriadosDatas(feriados)
+    setFeriadosDoMes(feriados.length)
 
     // ── MODO TODAS: batch loading ─────────────────────────────────────────────
     if (modoTodas) {
@@ -463,7 +466,7 @@ export default function CompetenciasPage() {
     const valorVtSabadoSalvar = ehExcecao ? item.valor_vt_sabado : 0
     const descontosReais = item.descontos.filter(d => !d.isCarryOver)
     const totalDescontos = descontosReais.reduce((s, d) => s + d.dias, 0)
-    const diasUteisAuto = calcularDiasUteisAuto(mes, ano, item.funcionario.folga_semanal, feriadosDoMes)
+    const diasUteisAuto = calcularDiasUteisAuto(mes, ano, item.funcionario.folga_semanal, feriadosDatas)
     const resultado = calcularVTVA({
       diasUteis: diasUteisAuto, diasFeriado: 0, diasSabado: diasSabadoSalvar,
       diasDesconto: totalDescontos, valorVT: item.valor_vt,
@@ -473,7 +476,7 @@ export default function CompetenciasPage() {
     const payload = {
       competencia_id: item.competencia_id,
       funcionario_id: item.funcionario_id,
-      dias_feriado: feriadosDoMes,
+      dias_feriado: feriadosDatas.length,
       dias_sabado: diasSabadoSalvar,
       dias_desconto: totalDescontos,
       valor_vt: item.valor_vt,
@@ -525,12 +528,12 @@ export default function CompetenciasPage() {
       if (!competencia) {
         const { data: novaComp } = await supabase
           .from('competencias')
-          .insert({ unidade_id: unidadeId, mes, ano, dias_uteis: 0, feriados_mes: feriadosDoMes, valor_va: valorVA })
+          .insert({ unidade_id: unidadeId, mes, ano, dias_uteis: 0, feriados_mes: feriadosDatas.length, valor_va: valorVA })
           .select().single()
         compId = (novaComp as Competencia)?.id ?? ''
         setCompetencia(novaComp as Competencia)
       } else {
-        await supabase.from('competencias').update({ feriados_mes: feriadosDoMes, valor_va: valorVA }).eq('id', competencia.id)
+        await supabase.from('competencias').update({ feriados_mes: feriadosDatas.length, valor_va: valorVA }).eq('id', competencia.id)
       }
 
       for (const item of itens) {
@@ -551,11 +554,12 @@ export default function CompetenciasPage() {
     setSucesso(false)
 
     const mesStr = String(mes).padStart(2, '0')
+    const ultimoDia = new Date(ano, mes, 0).getDate()
     const { data: feriadosRows } = await supabase
       .from('feriados').select('data')
       .gte('data', `${ano}-${mesStr}-01`)
-      .lte('data', `${ano}-${mesStr}-31`)
-    const feriados = feriadosRows?.length ?? 0
+      .lte('data', `${ano}-${mesStr}-${String(ultimoDia).padStart(2, '0')}`)
+    const feriados: string[] = (feriadosRows ?? []).map(f => f.data as string)
     const sabadosDoMes = calcularSabadosDoMes(mes, ano)
 
     await Promise.all(empresas.map(async (emp) => {
@@ -574,7 +578,7 @@ export default function CompetenciasPage() {
       } else {
         const { data: nova } = await supabase
           .from('competencias')
-          .insert({ unidade_id: unidadeId, mes, ano, dias_uteis: 0, feriados_mes: feriados, valor_va: emp.valor_va ?? 0 })
+          .insert({ unidade_id: unidadeId, mes, ano, dias_uteis: 0, feriados_mes: feriados.length, valor_va: emp.valor_va ?? 0 })
           .select().single()
         if (!nova) return
         compId = (nova as Competencia).id
@@ -620,11 +624,12 @@ export default function CompetenciasPage() {
     setSucesso(false)
 
     const mesStr = String(mes).padStart(2, '0')
+    const ultimoDia = new Date(ano, mes, 0).getDate()
     const { data: feriadosRows } = await supabase
       .from('feriados').select('data')
       .gte('data', `${ano}-${mesStr}-01`)
-      .lte('data', `${ano}-${mesStr}-31`)
-    const feriados = feriadosRows?.length ?? 0
+      .lte('data', `${ano}-${mesStr}-${String(ultimoDia).padStart(2, '0')}`)
+    const feriados: string[] = (feriadosRows ?? []).map(f => f.data as string)
     const sabadosDoMes = calcularSabadosDoMes(mes, ano)
 
     await Promise.all(empresas.map(async (emp) => {
@@ -644,7 +649,7 @@ export default function CompetenciasPage() {
       } else {
         const { data: nova } = await supabase
           .from('competencias')
-          .insert({ unidade_id: unidadeId, mes, ano, dias_uteis: 0, feriados_mes: feriados, valor_va: emp.valor_va ?? 0 })
+          .insert({ unidade_id: unidadeId, mes, ano, dias_uteis: 0, feriados_mes: feriados.length, valor_va: emp.valor_va ?? 0 })
           .select().single()
         if (!nova) return
         compId = (nova as Competencia).id
@@ -695,7 +700,7 @@ export default function CompetenciasPage() {
     const ehExcecao = (item.valor_vt_sabado ?? 0) > 0
     const vaEfetivo = modoTodas ? (item.valorVAItem ?? 0) : valorVA
     const totalDesc = item.descontos.filter(d => !d.isCarryOver).reduce((s, d) => s + d.dias, 0)
-    const diasAuto = calcularDiasUteisAuto(mes, ano, item.funcionario.folga_semanal, feriadosDoMes)
+    const diasAuto = calcularDiasUteisAuto(mes, ano, item.funcionario.folga_semanal, feriadosDatas)
     const r = calcularVTVA({
       diasUteis: diasAuto, diasFeriado: 0,
       diasSabado: ehExcecao ? item.dias_sabado : 0,
@@ -1004,7 +1009,7 @@ export default function CompetenciasPage() {
                         const vaEfetivo = modoTodas ? (item.valorVAItem ?? 0) : valorVA
                         const totalDesc = item.descontos.filter(d => !d.isCarryOver).reduce((s, d) => s + d.dias, 0)
                         const totalDescComCarry = item.descontos.reduce((s, d) => s + d.dias, 0)
-                        const diasAuto = calcularDiasUteisAuto(mes, ano, item.funcionario.folga_semanal, feriadosDoMes)
+                        const diasAuto = calcularDiasUteisAuto(mes, ano, item.funcionario.folga_semanal, feriadosDatas)
                         const r = calcularVTVA({
                           diasUteis: diasAuto, diasFeriado: 0,
                           diasSabado: diasSabadoEfetivo, diasDesconto: totalDescComCarry,

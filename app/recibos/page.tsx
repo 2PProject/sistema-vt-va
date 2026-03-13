@@ -17,7 +17,7 @@ type CFComFunc = CompetenciaFuncionario & { funcionarios: Funcionario }
 type RegistroCompleto = CFComFunc & {
   competenciaObj: Competencia
   empresaObj: Empresa
-  feriadosDoMes: number
+  feriadosDatas: string[]
   descontosRecibo: Array<{ tipo_nome: string; dias: number; data_inicio: string | null; data_fim: string | null }>
 }
 
@@ -46,11 +46,12 @@ export default function RecibosPage() {
 
     // Consulta feriados diretamente da tabela para garantir valor atualizado
     const mesStr = String(mes).padStart(2, '0')
+    const ultimoDia = new Date(ano, mes, 0).getDate()
     const { data: feriadosRows } = await supabase
       .from('feriados').select('data')
       .gte('data', `${ano}-${mesStr}-01`)
-      .lte('data', `${ano}-${mesStr}-31`)
-    const feriadosCount = feriadosRows?.length ?? 0
+      .lte('data', `${ano}-${mesStr}-${String(ultimoDia).padStart(2, '0')}`)
+    const feriadosDatas: string[] = (feriadosRows ?? []).map(f => f.data as string)
     const empresasParaBuscar: Empresa[] = empresaId === TODAS
       ? empresas
       : empresas.filter(e => e.id === empresaId)
@@ -96,7 +97,7 @@ export default function RecibosPage() {
         }
       }
 
-      return cfList.map(cf => ({ ...cf, competenciaObj: comp as Competencia, empresaObj: emp, feriadosDoMes: feriadosCount, descontosRecibo: descontosMap.get(cf.id) ?? [] }))
+      return cfList.map(cf => ({ ...cf, competenciaObj: comp as Competencia, empresaObj: emp, feriadosDatas, descontosRecibo: descontosMap.get(cf.id) ?? [] }))
     }))
 
     setRegistros(results.flat())
@@ -117,7 +118,7 @@ export default function RecibosPage() {
       const valorVTSabado = ehExcecao ? valorVTSabadoBase : 0
       const diasSabado = ehExcecao ? (reg.dias_sabado ?? 0) : 0
       const valorVA = reg.competenciaObj.valor_va ?? 0
-      const diasUteisAuto = calcularDiasUteisAuto(mes, ano, reg.funcionarios?.folga_semanal, reg.feriadosDoMes)
+      const diasUteisAuto = calcularDiasUteisAuto(mes, ano, reg.funcionarios?.folga_semanal, reg.feriadosDatas)
 
       const resultado = calcularVTVA({
         diasUteis: diasUteisAuto,
@@ -167,7 +168,7 @@ export default function RecibosPage() {
         const valorVTSabado = ehExcecao ? vtSabadoBase : 0
         const diasSabado = ehExcecao ? (reg.dias_sabado ?? 0) : 0
         const valorVA = reg.competenciaObj.valor_va ?? 0
-        const diasUteisAuto = calcularDiasUteisAuto(mes, ano, reg.funcionarios?.folga_semanal, reg.feriadosDoMes)
+        const diasUteisAuto = calcularDiasUteisAuto(mes, ano, reg.funcionarios?.folga_semanal, reg.feriadosDatas)
         const resultado = calcularVTVA({
           diasUteis: diasUteisAuto, diasFeriado: 0, diasSabado,
           diasDesconto: reg.dias_desconto,
@@ -205,7 +206,7 @@ export default function RecibosPage() {
       const dados = registros.map(reg => {
         const vtSabadoBase = reg.valor_vt_sabado ?? reg.funcionarios?.valor_vt_sabado ?? 0
         const ehExcecao = vtSabadoBase > 0
-        const diasUteisAuto = calcularDiasUteisAuto(mes, ano, reg.funcionarios?.folga_semanal, reg.feriadosDoMes)
+        const diasUteisAuto = calcularDiasUteisAuto(mes, ano, reg.funcionarios?.folga_semanal, reg.feriadosDatas)
         const r = calcularVTVA({
           diasUteis: diasUteisAuto, diasFeriado: 0,
           diasSabado: ehExcecao ? (reg.dias_sabado ?? 0) : 0,
@@ -239,7 +240,7 @@ export default function RecibosPage() {
   const totalGeral = registros.reduce((sum, reg) => {
     const vtSabadoBase = reg.valor_vt_sabado ?? reg.funcionarios?.valor_vt_sabado ?? 0
     const ehExcecao = vtSabadoBase > 0
-    const diasUteisAuto = calcularDiasUteisAuto(mes, ano, reg.funcionarios?.folga_semanal, reg.feriadosDoMes)
+    const diasUteisAuto = calcularDiasUteisAuto(mes, ano, reg.funcionarios?.folga_semanal, reg.feriadosDatas)
     const r = calcularVTVA({
       diasUteis: diasUteisAuto,
       diasFeriado: 0,
@@ -358,7 +359,7 @@ export default function RecibosPage() {
                       {registros.map((reg) => {
                         const vtSabadoBase = reg.valor_vt_sabado ?? reg.funcionarios?.valor_vt_sabado ?? 0
                         const ehExcecao = vtSabadoBase > 0
-                        const diasUteisAuto = calcularDiasUteisAuto(mes, ano, reg.funcionarios?.folga_semanal, reg.feriadosDoMes)
+                        const diasUteisAuto = calcularDiasUteisAuto(mes, ano, reg.funcionarios?.folga_semanal, reg.feriadosDatas)
                         const r = calcularVTVA({
                           diasUteis: diasUteisAuto,
                           diasFeriado: 0,
