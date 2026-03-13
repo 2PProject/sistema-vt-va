@@ -105,6 +105,11 @@ export async function gerarReciboPDF(dados: DadosRecibo): Promise<void> {
     doc.setTextColor(0, 0, 0)
     doc.setFont('helvetica', 'normal')
 
+    // Para funcionários com exceção de sábado, os dias de VT úteis = diasEfetivos - diasSabado
+    const diasVTUteis = dados.valorVTSabado > 0
+      ? Math.max(0, dados.diasEfetivos - dados.diasSabado)
+      : dados.diasEfetivos
+
     const linhas = [
       [
         'Vale Alimentação (VA)',
@@ -114,7 +119,7 @@ export async function gerarReciboPDF(dados: DadosRecibo): Promise<void> {
       ],
       [
         'Vale Transporte - Dias Úteis',
-        String(dados.diasEfetivos),
+        String(diasVTUteis),
         formatarMoeda(dados.valorVT),
         formatarMoeda(dados.resultado.totalVT),
       ],
