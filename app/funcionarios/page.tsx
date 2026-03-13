@@ -66,6 +66,16 @@ export default function FuncionariosPage() {
     await carregar()
   }
 
+  async function demitir(id: string) {
+    await supabase.from('funcionarios').update({ ativo: false }).eq('id', id)
+    await carregar()
+  }
+
+  async function reativar(id: string) {
+    await supabase.from('funcionarios').update({ ativo: true }).eq('id', id)
+    await carregar()
+  }
+
   function editar(funcionario: Funcionario) {
     // Resolve empresa do funcionário a partir da relação unidades -> empresas
     const empId = funcionario.unidades?.empresa_id ?? ''
@@ -183,6 +193,8 @@ export default function FuncionariosPage() {
               funcionarios={funcionariosFiltrados}
               onEdit={editar}
               onDelete={excluir}
+              onDemitir={demitir}
+              onReativar={reativar}
             />
           )}
         </div>

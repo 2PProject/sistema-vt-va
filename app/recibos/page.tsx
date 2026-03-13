@@ -17,6 +17,7 @@ type CFComFunc = CompetenciaFuncionario & { funcionarios: Funcionario }
 type RegistroCompleto = CFComFunc & {
   competenciaObj: Competencia
   empresaObj: Empresa
+  descontosRecibo: Array<{ tipo_nome: string; dias: number; data_inicio: string | null; data_fim: string | null }>
 }
 
 const TODAS = '__todas__'
@@ -65,7 +66,29 @@ export default function RecibosPage() {
         .select('*, funcionarios(*)')
         .eq('competencia_id', comp.id)
 
-      return ((cfs as CFComFunc[]) ?? []).map(cf => ({ ...cf, competenciaObj: comp as Competencia, empresaObj: emp }))
+      const cfList = (cfs as CFComFunc[]) ?? []
+
+      // Carrega descontos de todos os CFs de uma vez
+      const cfIds = cfList.map(cf => cf.id)
+      let descontosMap = new Map<string, Array<{ tipo_nome: string; dias: number; data_inicio: string | null; data_fim: string | null }>>()
+      if (cfIds.length > 0) {
+        const { data: descontosRows } = await supabase
+          .from('competencia_funcionario_desconto')
+          .select('*, tipos_desconto(id, nome)')
+          .in('competencia_funcionario_id', cfIds)
+        for (const d of descontosRows ?? []) {
+          const arr = descontosMap.get(d.competencia_funcionario_id) ?? []
+          arr.push({
+            tipo_nome: (d.tipos_desconto as { nome: string } | null)?.nome ?? '',
+            dias: d.dias,
+            data_inicio: d.data_inicio ?? null,
+            data_fim: d.data_fim ?? null,
+          })
+          descontosMap.set(d.competencia_funcionario_id, arr)
+        }
+      }
+
+      return cfList.map(cf => ({ ...cf, competenciaObj: comp as Competencia, empresaObj: emp, descontosRecibo: descontosMap.get(cf.id) ?? [] }))
     }))
 
     setRegistros(results.flat())
@@ -114,6 +137,7 @@ export default function RecibosPage() {
         valorVTSabado,
         valorVA,
         resultado,
+        descontos: reg.descontosRecibo,
       })
     } catch (err) {
       console.error('Erro ao gerar PDF:', err)

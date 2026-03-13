@@ -73,6 +73,8 @@ export type CFDesconto = {
   competencia_funcionario_id: string
   tipo_desconto_id: string
   dias: number
+  data_inicio: string | null  // 'YYYY-MM-DD'
+  data_fim: string | null     // 'YYYY-MM-DD'
   tipos_desconto?: TipoDesconto
 }
 

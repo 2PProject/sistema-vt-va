@@ -1,5 +1,12 @@
 import { ResultadoCalculo, formatarMoeda, MESES } from '../utils/calculoVT'
 
+export type DescontoRecibo = {
+  tipo_nome: string
+  dias: number
+  data_inicio: string | null
+  data_fim: string | null
+}
+
 export type DadosRecibo = {
   razaoSocial: string
   cnpj: string
@@ -16,6 +23,7 @@ export type DadosRecibo = {
   valorVTSabado: number
   valorVA: number
   resultado: ResultadoCalculo
+  descontos?: DescontoRecibo[]
 }
 
 export async function gerarReciboPDF(dados: DadosRecibo): Promise<void> {
@@ -142,6 +150,45 @@ export async function gerarReciboPDF(dados: DadosRecibo): Promise<void> {
       doc.text(linha[3], 175, y)
       y += 8
     })
+
+    // Descontos
+    if (dados.descontos && dados.descontos.length > 0) {
+      y += 2
+      doc.setFillColor(254, 243, 199)
+      doc.rect(10, y - 4, 190, 8, 'F')
+      doc.setTextColor(120, 80, 0)
+      doc.setFont('helvetica', 'bold')
+      doc.setFontSize(8)
+      doc.text('DESCONTOS', 12, y)
+      y += 7
+
+      doc.setFont('helvetica', 'normal')
+      doc.setTextColor(0, 0, 0)
+      dados.descontos.forEach((d, i) => {
+        if (i % 2 === 0) {
+          doc.setFillColor(255, 251, 235)
+          doc.rect(10, y - 4, 190, 7, 'F')
+        }
+        doc.setFontSize(8)
+        doc.text(d.tipo_nome, 12, y)
+        doc.text(`${d.dias} dia(s)`, 100, y)
+        // Formata a data
+        let dataStr = ''
+        if (d.data_inicio) {
+          const fmt = (s: string) => {
+            const [a, m, dia] = s.split('-')
+            return `${dia}/${m}/${a}`
+          }
+          if (!d.data_fim || d.data_fim === d.data_inicio) {
+            dataStr = fmt(d.data_inicio)
+          } else {
+            dataStr = `${fmt(d.data_inicio)} a ${fmt(d.data_fim)}`
+          }
+        }
+        if (dataStr) doc.text(dataStr, 130, y)
+        y += 7
+      })
+    }
 
     // Total
     y += 2

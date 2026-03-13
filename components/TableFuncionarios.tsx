@@ -6,12 +6,16 @@ interface TableFuncionariosProps {
   funcionarios: Funcionario[]
   onEdit: (funcionario: Funcionario) => void
   onDelete: (id: string) => void
+  onDemitir?: (id: string) => void
+  onReativar?: (id: string) => void
 }
 
 export default function TableFuncionarios({
   funcionarios,
   onEdit,
   onDelete,
+  onDemitir,
+  onReativar,
 }: TableFuncionariosProps) {
   if (funcionarios.length === 0) {
     return (
@@ -60,13 +64,33 @@ export default function TableFuncionarios({
               <td className="table-cell text-right">
                 <button
                   onClick={() => onEdit(f)}
-                  className="text-blue-600 hover:text-blue-800 text-sm font-medium mr-4 transition-colors"
+                  className="text-blue-600 hover:text-blue-800 text-sm font-medium mr-3 transition-colors"
                 >
                   Editar
                 </button>
+                {f.ativo && onDemitir && (
+                  <button
+                    onClick={() => {
+                      if (confirm(`Demitir funcionário "${f.nome}"? O registro será mantido como inativo.`)) onDemitir(f.id)
+                    }}
+                    className="text-amber-600 hover:text-amber-800 text-sm font-medium mr-3 transition-colors"
+                  >
+                    Demitir
+                  </button>
+                )}
+                {!f.ativo && onReativar && (
+                  <button
+                    onClick={() => {
+                      if (confirm(`Reativar funcionário "${f.nome}"?`)) onReativar(f.id)
+                    }}
+                    className="text-green-600 hover:text-green-800 text-sm font-medium mr-3 transition-colors"
+                  >
+                    Reativar
+                  </button>
+                )}
                 <button
                   onClick={() => {
-                    if (confirm(`Excluir funcionário "${f.nome}"?`)) onDelete(f.id)
+                    if (confirm(`Excluir permanentemente funcionário "${f.nome}"?`)) onDelete(f.id)
                   }}
                   className="text-red-500 hover:text-red-700 text-sm font-medium transition-colors"
                 >

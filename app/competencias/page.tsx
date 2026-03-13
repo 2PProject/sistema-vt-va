@@ -20,7 +20,29 @@ import {
   MESES,
 } from '../../utils/calculoVT'
 
-type DescontoLocal = { id: string; tipo_id: string; tipo_nome: string; dias: number }
+type DescontoLocal = {
+  id: string
+  tipo_id: string
+  tipo_nome: string
+  dias: number
+  data_inicio: string  // 'YYYY-MM-DD'
+  data_fim: string     // 'YYYY-MM-DD'
+}
+
+/** Conta dias Mon–Sat no intervalo [inicio, fim] inclusivo */
+function contarDiasUteisIntervalo(inicio: string, fim: string): number {
+  if (!inicio) return 1
+  const end = fim || inicio
+  const start = new Date(inicio + 'T12:00:00')
+  const finish = new Date(end + 'T12:00:00')
+  let count = 0
+  const cur = new Date(start)
+  while (cur <= finish) {
+    if (cur.getDay() !== 0) count++ // 0 = domingo
+    cur.setDate(cur.getDate() + 1)
+  }
+  return Math.max(1, count)
+}
 
 type CFLocal = {
   id: string
@@ -69,6 +91,8 @@ export default function CompetenciasPage() {
   const [modalIdx, setModalIdx] = useState<number | null>(null)
   const [novoTipoId, setNovoTipoId] = useState<string>('')
   const [novoDias, setNovoDias] = useState(1)
+  const [novaDataInicio, setNovaDataInicio] = useState('')
+  const [novaDataFim, setNovaDataFim] = useState('')
 
   useEffect(() => {
     supabase.from('empresas').select('*').order('razao_social').then(({ data }) => setEmpresas(data ?? []))
@@ -198,6 +222,8 @@ export default function CompetenciasPage() {
             tipo_id: d.tipo_desconto_id,
             tipo_nome: (d.tipos_desconto as TipoDesconto)?.nome ?? '',
             dias: d.dias,
+            data_inicio: d.data_inicio ?? '',
+            data_fim: d.data_fim ?? '',
           })
           descontosMap.set(d.competencia_funcionario_id, arr)
         }
@@ -254,6 +280,19 @@ export default function CompetenciasPage() {
     setModalIdx(idx)
     setNovoTipoId(tiposDesconto[0]?.id ?? '')
     setNovoDias(1)
+    setNovaDataInicio('')
+    setNovaDataFim('')
+  }
+
+  function handleDataInicioChange(val: string) {
+    setNovaDataInicio(val)
+    const fim = novaDataFim || val
+    if (val) setNovoDias(contarDiasUteisIntervalo(val, fim))
+  }
+
+  function handleDataFimChange(val: string) {
+    setNovaDataFim(val)
+    if (novaDataInicio) setNovoDias(contarDiasUteisIntervalo(novaDataInicio, val || novaDataInicio))
   }
 
   function adicionarDesconto() {
@@ -264,11 +303,20 @@ export default function CompetenciasPage() {
       const n = [...prev]
       n[modalIdx] = {
         ...n[modalIdx],
-        descontos: [...n[modalIdx].descontos, { id: '', tipo_id: novoTipoId, tipo_nome: tipo.nome, dias: novoDias }],
+        descontos: [...n[modalIdx].descontos, {
+          id: '',
+          tipo_id: novoTipoId,
+          tipo_nome: tipo.nome,
+          dias: novoDias,
+          data_inicio: novaDataInicio,
+          data_fim: novaDataFim || novaDataInicio,
+        }],
       }
       return n
     })
     setNovoDias(1)
+    setNovaDataInicio('')
+    setNovaDataFim('')
     if (tiposDesconto.length > 0) setNovoTipoId(tiposDesconto[0].id)
   }
 
@@ -346,6 +394,8 @@ export default function CompetenciasPage() {
             competencia_funcionario_id: cfId,
             tipo_desconto_id: d.tipo_id,
             dias: d.dias,
+            data_inicio: d.data_inicio || null,
+            data_fim: d.data_fim || null,
           })
         }
       }
@@ -428,6 +478,93 @@ export default function CompetenciasPage() {
     carregarCompetencia()
   }
 
+  async function salvarTodasCompetencias() {
+    setSalvando(true)
+    setSucesso(false)
+
+    const mesStr = String(mes).padStart(2, '0')
+    const { data: feriadosRows } = await supabase
+      .from('feriados').select('data')
+      .gte('data', `${ano}-${mesStr}-01`)
+      .lte('data', `${ano}-${mesStr}-31`)
+    const feriados = feriadosRows?.length ?? 0
+    const sabadosDoMes = calcularSabadosDoMes(mes, ano)
+
+    await Promise.all(empresas.map(async (emp) => {
+      const unidadeId = await getOrCreateDefaultUnidade(emp.id)
+      if (!unidadeId) return
+
+      const { data: existingComp } = await supabase
+        .from('competencias').select('id, valor_va')
+        .eq('unidade_id', unidadeId).eq('mes', mes).eq('ano', ano).maybeSingle()
+
+      let compId: string
+      let compValorVA: number
+      if (existingComp) {
+        compId = (existingComp as Competencia).id
+        compValorVA = (existingComp as Competencia).valor_va ?? emp.valor_va ?? 0
+        await supabase.from('competencias').update({ feriados_mes: feriados }).eq('id', compId)
+      } else {
+        const { data: nova } = await supabase
+          .from('competencias')
+          .insert({ unidade_id: unidadeId, mes, ano, dias_uteis: 0, feriados_mes: feriados, valor_va: emp.valor_va ?? 0 })
+          .select().single()
+        if (!nova) return
+        compId = (nova as Competencia).id
+        compValorVA = emp.valor_va ?? 0
+      }
+
+      const { data: funcs } = await supabase
+        .from('funcionarios').select('*')
+        .eq('unidade_id', unidadeId).eq('ativo', true)
+
+      await Promise.all(((funcs ?? []) as Funcionario[]).map(async (f) => {
+        const { data: existingCF } = await supabase
+          .from('competencia_funcionario').select('id, dias_desconto, dias_sabado, valor_vt, valor_vt_sabado')
+          .eq('competencia_id', compId).eq('funcionario_id', f.id).maybeSingle()
+
+        const ehExcecao = existingCF
+          ? (existingCF.valor_vt_sabado ?? 0) > 0
+          : (f.valor_vt_sabado ?? 0) > 0
+        const diasSabado = ehExcecao
+          ? (existingCF?.dias_sabado ?? sabadosDoMes)
+          : 0
+        const valorVtSabado = ehExcecao
+          ? (existingCF?.valor_vt_sabado ?? f.valor_vt_sabado ?? 0)
+          : 0
+        const valorVt = existingCF?.valor_vt ?? f.valor_vt ?? 0
+        const diasDesconto = existingCF?.dias_desconto ?? 0
+        const diasAuto = calcularDiasUteisAuto(mes, ano, f.folga_semanal, feriados)
+        const resultado = calcularVTVA({
+          diasUteis: diasAuto, diasFeriado: 0, diasSabado,
+          diasDesconto, valorVT: valorVt, valorVTSabado: valorVtSabado, valorVA: compValorVA,
+        })
+
+        const payload = {
+          competencia_id: compId,
+          funcionario_id: f.id,
+          dias_feriado: feriados,
+          dias_sabado: diasSabado,
+          dias_desconto: diasDesconto,
+          valor_vt: valorVt,
+          valor_vt_sabado: valorVtSabado,
+          valor_total: resultado.valorTotal,
+        }
+
+        if (existingCF) {
+          await supabase.from('competencia_funcionario').update(payload).eq('id', existingCF.id)
+        } else {
+          await supabase.from('competencia_funcionario').insert(payload)
+        }
+      }))
+    }))
+
+    setSalvando(false)
+    setSucesso(true)
+    setTimeout(() => setSucesso(false), 3000)
+    carregarCompetencia()
+  }
+
   const totalGeral = itens.reduce((sum, item) => {
     const ehExcecao = (item.valor_vt_sabado ?? 0) > 0
     const totalDesc = item.descontos.reduce((s, d) => s + d.dias, 0)
@@ -466,6 +603,14 @@ export default function CompetenciasPage() {
                       <div>
                         <span className="text-sm font-medium text-gray-800">{d.tipo_nome}</span>
                         <span className="ml-2 text-xs text-gray-500">{d.dias} dia(s)</span>
+                        {d.data_inicio && (
+                          <span className="ml-2 text-xs text-blue-500">
+                            {d.data_inicio === d.data_fim || !d.data_fim
+                              ? new Date(d.data_inicio + 'T12:00:00').toLocaleDateString('pt-BR')
+                              : `${new Date(d.data_inicio + 'T12:00:00').toLocaleDateString('pt-BR')} – ${new Date((d.data_fim ?? d.data_inicio) + 'T12:00:00').toLocaleDateString('pt-BR')}`
+                            }
+                          </span>
+                        )}
                       </div>
                       <button onClick={() => removerDesconto(modalIdx, di)} className="text-red-500 hover:text-red-700">
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -486,7 +631,7 @@ export default function CompetenciasPage() {
               {tiposDesconto.length > 0 ? (
                 <div className="border-t border-gray-100 pt-4">
                   <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Adicionar desconto</p>
-                  <div className="flex gap-2">
+                  <div className="flex gap-2 mb-2">
                     <select
                       value={novoTipoId}
                       onChange={(e) => setNovoTipoId(e.target.value)}
@@ -496,18 +641,41 @@ export default function CompetenciasPage() {
                         <option key={t.id} value={t.id}>{t.nome}</option>
                       ))}
                     </select>
-                    <input
-                      type="number"
-                      value={novoDias}
-                      onChange={(e) => setNovoDias(Number(e.target.value))}
-                      min={1} max={31}
-                      className="w-20 border border-gray-300 rounded-lg px-2 py-2 text-center text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
-                    />
-                    <button onClick={adicionarDesconto} className="btn-primary px-3 py-2 text-sm">
-                      + Adicionar
-                    </button>
                   </div>
-                  <p className="text-xs text-gray-400 mt-1">dias</p>
+                  <div className="flex gap-2 mb-2">
+                    <div className="flex-1">
+                      <label className="text-xs text-gray-500 mb-1 block">Data início</label>
+                      <input
+                        type="date"
+                        value={novaDataInicio}
+                        onChange={(e) => handleDataInicioChange(e.target.value)}
+                        className="w-full border border-gray-300 rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div className="flex-1">
+                      <label className="text-xs text-gray-500 mb-1 block">Data fim</label>
+                      <input
+                        type="date"
+                        value={novaDataFim}
+                        onChange={(e) => handleDataFimChange(e.target.value)}
+                        min={novaDataInicio}
+                        className="w-full border border-gray-300 rounded-lg px-2 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div className="w-20">
+                      <label className="text-xs text-gray-500 mb-1 block">Dias</label>
+                      <input
+                        type="number"
+                        value={novoDias}
+                        onChange={(e) => setNovoDias(Number(e.target.value))}
+                        min={1} max={31}
+                        className="w-full border border-gray-300 rounded-lg px-2 py-2 text-center text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+                  </div>
+                  <button onClick={adicionarDesconto} className="btn-primary w-full py-2 text-sm">
+                    + Adicionar desconto
+                  </button>
                 </div>
               ) : (
                 <p className="text-xs text-amber-600 mt-2">
@@ -598,8 +766,30 @@ export default function CompetenciasPage() {
                   </div>
                 )}
                 <button
+                  onClick={salvarTodasCompetencias}
+                  disabled={salvando || criando || loading}
+                  className="btn-secondary flex items-center gap-2 text-sm"
+                >
+                  {salvando ? (
+                    <>
+                      <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                      </svg>
+                      Salvando...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                      Salvar para todas
+                    </>
+                  )}
+                </button>
+                <button
                   onClick={inicializarTodasCompetencias}
-                  disabled={criando || loading}
+                  disabled={criando || salvando || loading}
                   className="btn-primary flex items-center gap-2 text-sm"
                 >
                   {criando ? (
