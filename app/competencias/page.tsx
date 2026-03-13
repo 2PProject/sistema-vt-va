@@ -107,7 +107,7 @@ export default function CompetenciasPage() {
   const [sucesso, setSucesso] = useState(false)
 
   const [valorVA, setValorVA] = useState(0)
-  const [empresaId, setEmpresaId] = useState<string>('')
+  const [empresaId, setEmpresaId] = useState<string>(TODAS)
   const [mes, setMes] = useState(new Date().getMonth() + 1)
   const [ano, setAno] = useState(new Date().getFullYear())
   const [criando, setCriando] = useState(false)
@@ -850,7 +850,6 @@ export default function CompetenciasPage() {
             <div className="md:col-span-2">
               <label className="label-field">Empresa</label>
               <select value={empresaId} onChange={(e) => setEmpresaId(e.target.value)} className="input-field">
-                <option value="">Selecione uma empresa</option>
                 <option value={TODAS}>— Todas as empresas —</option>
                 {empresas.map((emp) => (
                   <option key={emp.id} value={emp.id}>{emp.razao_social}</option>

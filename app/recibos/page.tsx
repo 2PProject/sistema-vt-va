@@ -28,7 +28,7 @@ export default function RecibosPage() {
   const [loading, setLoading] = useState(false)
   const [gerando, setGerando] = useState<string | null>(null)
 
-  const [empresaId, setEmpresaId] = useState<string>('')
+  const [empresaId, setEmpresaId] = useState<string>(TODAS)
   const [mes, setMes] = useState(new Date().getMonth() + 1)
   const [ano, setAno] = useState(new Date().getFullYear())
 
@@ -189,6 +189,45 @@ export default function RecibosPage() {
     }
   }
 
+  async function gerarXLSX() {
+    if (registros.length === 0) return
+    setGerando('__xlsx__')
+    try {
+      const { utils, writeFile } = await import('xlsx')
+      const dados = registros.map(reg => {
+        const vtSabadoBase = reg.valor_vt_sabado ?? reg.funcionarios?.valor_vt_sabado ?? 0
+        const ehExcecao = vtSabadoBase > 0
+        const diasUteisAuto = calcularDiasUteisAuto(mes, ano, reg.funcionarios?.folga_semanal, reg.competenciaObj.feriados_mes ?? 0)
+        const r = calcularVTVA({
+          diasUteis: diasUteisAuto, diasFeriado: 0,
+          diasSabado: ehExcecao ? (reg.dias_sabado ?? 0) : 0,
+          diasDesconto: reg.dias_desconto,
+          valorVT: reg.valor_vt ?? reg.funcionarios?.valor_vt ?? 0,
+          valorVTSabado: ehExcecao ? vtSabadoBase : 0,
+          valorVA: reg.competenciaObj.valor_va ?? 0,
+        })
+        return {
+          'Empresa': reg.empresaObj.razao_social,
+          'Funcionário': reg.funcionarios.nome,
+          'Função': reg.funcionarios.funcao,
+          'Dias Efetivos': r.diasEfetivos,
+          'VA (R$)': r.totalVA,
+          'VT (R$)': r.totalVT,
+          'VT Sábado (R$)': r.totalVTSabado,
+          'Total (R$)': r.valorTotal,
+        }
+      })
+      const ws = utils.json_to_sheet(dados)
+      const wb = utils.book_new()
+      utils.book_append_sheet(wb, ws, `${MESES[mes - 1]} ${ano}`)
+      writeFile(wb, `recibos_${mes}_${ano}.xlsx`)
+    } catch (err) {
+      console.error('Erro ao gerar XLSX:', err)
+    } finally {
+      setGerando(null)
+    }
+  }
+
   const totalGeral = registros.reduce((sum, reg) => {
     const vtSabadoBase = reg.valor_vt_sabado ?? reg.funcionarios?.valor_vt_sabado ?? 0
     const ehExcecao = vtSabadoBase > 0
@@ -217,7 +256,6 @@ export default function RecibosPage() {
             <div className="md:col-span-2">
               <label className="label-field">Empresa</label>
               <select value={empresaId} onChange={(e) => setEmpresaId(e.target.value)} className="input-field">
-                <option value="">Selecione uma empresa</option>
                 <option value={TODAS}>— Todas as empresas —</option>
                 {empresas.map((emp) => (
                   <option key={emp.id} value={emp.id}>{emp.razao_social}</option>
@@ -263,6 +301,20 @@ export default function RecibosPage() {
                       Total geral: <span className="font-semibold text-blue-600">{formatarMoeda(totalGeral)}</span>
                     </p>
                   </div>
+                  <div className="flex items-center gap-2">
+                  <button onClick={gerarXLSX} className="btn-secondary flex items-center gap-2 text-sm" disabled={gerando !== null}>
+                    {gerando === '__xlsx__' ? (
+                      <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                      </svg>
+                    ) : (
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18M10 3v18M14 3v18M5 3h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2z" />
+                      </svg>
+                    )}
+                    {gerando === '__xlsx__' ? 'Gerando...' : 'Exportar XLSX'}
+                  </button>
                   <button onClick={gerarTodosPDFs} className="btn-primary flex items-center gap-2 text-sm" disabled={gerando !== null}>
                     {gerando === '__todos__' && (
                       <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
@@ -277,6 +329,7 @@ export default function RecibosPage() {
                     )}
                     {gerando === '__todos__' ? 'Gerando...' : 'Gerar Todos os PDFs'}
                   </button>
+                  </div>
                 </div>
 
                 <div className="overflow-x-auto">

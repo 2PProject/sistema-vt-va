@@ -22,7 +22,7 @@ const TODAS = '__todas__'
 
 export default function ValoresBeneficiosPage() {
   const [empresas, setEmpresas] = useState<Empresa[]>([])
-  const [empresaId, setEmpresaId] = useState<string>('')
+  const [empresaId, setEmpresaId] = useState<string>(TODAS)
   const [empresa, setEmpresa] = useState<Empresa | null>(null)
   const [valorVA, setValorVA] = useState(0)
   const [funcionarios, setFuncionarios] = useState<FuncRow[]>([])
@@ -166,7 +166,6 @@ export default function ValoresBeneficiosPage() {
             onChange={(e) => setEmpresaId(e.target.value)}
             className="input-field max-w-md"
           >
-            <option value="">Selecione uma empresa</option>
             <option value={TODAS}>— Todas as empresas —</option>
             {empresas.map((emp) => (
               <option key={emp.id} value={emp.id}>{emp.razao_social}</option>
