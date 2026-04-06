@@ -537,7 +537,7 @@ export default function DescontosPage() {
   if (view === 'list') {
     return (
       <LayoutAdmin
-        title="Lançamento de Descontos"
+        title="Acréscimos / Descontos"
         actions={
           <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
             <button
