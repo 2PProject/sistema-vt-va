@@ -24,6 +24,7 @@ export type DadosRecibo = {
   valorVA: number
   resultado: ResultadoCalculo
   descontos?: DescontoRecibo[]
+  acrescimos?: DescontoRecibo[]
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -153,6 +154,38 @@ function desenharVia(doc: any, dados: DadosRecibo, mesNome: string, referencia: 
     })
   }
 
+  if (dados.acrescimos && dados.acrescimos.length > 0) {
+    y += 2
+    doc.setFillColor(209, 250, 229)
+    doc.rect(10, y - 4, 190, 8, 'F')
+    doc.setTextColor(5, 90, 50)
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(8)
+    doc.text('ACRÉSCIMOS', 12, y)
+    y += 7
+
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(0, 0, 0)
+    dados.acrescimos.forEach((d, i) => {
+      if (i % 2 === 0) {
+        doc.setFillColor(236, 253, 245)
+        doc.rect(10, y - 4, 190, 7, 'F')
+      }
+      doc.setFontSize(8)
+      doc.text(d.tipo_nome, 12, y)
+      doc.text(`+${d.dias} dia(s)`, 100, y)
+      let dataStr = ''
+      if (d.data_inicio) {
+        const fmt = (s: string) => { const [a, m, dia] = s.split('-'); return `${dia}/${m}/${a}` }
+        dataStr = (!d.data_fim || d.data_fim === d.data_inicio)
+          ? fmt(d.data_inicio)
+          : `${fmt(d.data_inicio)} a ${fmt(d.data_fim)}`
+      }
+      if (dataStr) doc.text(dataStr, 130, y)
+      y += 7
+    })
+  }
+
   y += 2
   doc.setFillColor(30, 64, 175)
   doc.rect(10, y - 4, 190, 9, 'F')
@@ -174,7 +207,11 @@ function desenharVia(doc: any, dados: DadosRecibo, mesNome: string, referencia: 
 
   doc.setFontSize(8)
   doc.setTextColor(80, 80, 80)
-  doc.text(`_______________, ___ de ${mesNome} de ${dados.ano}.`, 200, y, { align: 'right' })
+  const hoje = new Date()
+  const diaHoje = String(hoje.getDate()).padStart(2, '0')
+  const mesHojeNome = MESES[hoje.getMonth()]
+  const anoHoje = hoje.getFullYear()
+  doc.text(`Brasília/DF, ${diaHoje} de ${mesHojeNome} de ${anoHoje}.`, 200, y, { align: 'right' })
   y += 10
 
   doc.setDrawColor(0, 0, 0)

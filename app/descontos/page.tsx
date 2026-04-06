@@ -10,6 +10,7 @@ import {
   Empresa,
   TipoDesconto,
   getOrCreateDefaultUnidade,
+  garantirFeriadosAno,
 } from '../../lib/supabase'
 import {
   calcularVTVA,
@@ -36,6 +37,7 @@ type DescontoItem = {
   data_fim: string
   dias_proximo_mes: number
   isCarryOver: boolean
+  isAcrescimo?: boolean
 }
 
 type CFCarregado = {
@@ -128,6 +130,11 @@ export default function DescontosPage() {
   const [novaDataFim, setNovaDataFim] = useState('')
   const [novoDias, setNovoDias] = useState(1)
   const [novoDiasProximo, setNovoDiasProximo] = useState(0)
+
+  // Formulário acréscimo (feriado trabalhado)
+  const [acrescimoData, setAcrescimoData] = useState('')
+  const [acrescimoDias, setAcrescimoDias] = useState(1)
+  const [acrescimoDescricao, setAcrescimoDescricao] = useState('Feriado trabalhado')
 
   // ─── Carga inicial ──────────────────────────────────────────────────────────
 
@@ -244,6 +251,8 @@ export default function DescontosPage() {
   async function buscarDados(item: FuncionarioComEmpresa) {
     const { func, empresa, unidadeId } = item
 
+    await garantirFeriadosAno(ano)
+
     const mesStr = String(mes).padStart(2, '0')
     const ultimoDia = new Date(ano, mes, 0).getDate()
     const { data: feriadosRows } = await supabase
@@ -284,15 +293,19 @@ export default function DescontosPage() {
         .from('competencia_funcionario_desconto').select('*, tipos_desconto(id, nome)')
         .eq('competencia_funcionario_id', cfId)
       for (const d of descontosRows ?? []) {
+        const isAcrescimo = (d.dias ?? 0) < 0
         descontosCarregados.push({
           id: d.id,
-          tipo_id: d.tipo_desconto_id,
-          tipo_nome: (d.tipos_desconto as TipoDesconto | null)?.nome ?? '',
+          tipo_id: d.tipo_desconto_id ?? '__acrescimo__',
+          tipo_nome: isAcrescimo
+            ? 'Feriado trabalhado'
+            : ((d.tipos_desconto as TipoDesconto | null)?.nome ?? ''),
           dias: d.dias,
           data_inicio: d.data_inicio ?? '',
           data_fim: d.data_fim ?? '',
           dias_proximo_mes: d.dias_proximo_mes ?? 0,
           isCarryOver: false,
+          isAcrescimo,
         })
       }
     }
@@ -389,6 +402,24 @@ export default function DescontosPage() {
     setDescontos(prev => prev.filter((_, i) => i !== idx))
   }
 
+  function adicionarAcrescimo() {
+    if (acrescimoDias < 1) return
+    setDescontos(prev => [...prev, {
+      id: '',
+      tipo_id: '__acrescimo__',
+      tipo_nome: acrescimoDescricao || 'Feriado trabalhado',
+      dias: -acrescimoDias, // negativo = acréscimo
+      data_inicio: acrescimoData,
+      data_fim: acrescimoData,
+      dias_proximo_mes: 0,
+      isCarryOver: false,
+      isAcrescimo: true,
+    }])
+    setAcrescimoData('')
+    setAcrescimoDias(1)
+    setAcrescimoDescricao('Feriado trabalhado')
+  }
+
   // ─── Salvar ─────────────────────────────────────────────────────────────────
 
   async function salvar() {
@@ -448,17 +479,22 @@ export default function DescontosPage() {
     for (const d of descontosReais) {
       await supabase.from('competencia_funcionario_desconto').insert({
         competencia_funcionario_id: cfId,
-        tipo_desconto_id: d.tipo_id,
-        dias: d.dias,
+        tipo_desconto_id: d.isAcrescimo ? null : d.tipo_id,
+        dias: d.dias, // negativo = acréscimo
         data_inicio: d.data_inicio || null,
         data_fim: d.data_fim || null,
         dias_proximo_mes: d.dias_proximo_mes ?? 0,
       })
     }
 
+    const totalAcrescimos = Math.abs(descontosReais.filter(d => d.isAcrescimo).reduce((s, d) => s + d.dias, 0))
+    const totalDesc = descontosReais.filter(d => !d.isAcrescimo).reduce((s, d) => s + d.dias, 0)
+    const partes: string[] = []
+    if (totalDesc > 0) partes.push(`${totalDesc} dia(s) de desconto`)
+    if (totalAcrescimos > 0) partes.push(`${totalAcrescimos} dia(s) de acréscimo`)
     setCfCarregado(prev => prev ? { ...prev, cfId, competenciaId: compId } : prev)
     setSalvando(false)
-    setSucesso(`Salvo! ${totalDescontos} dia(s) de desconto — ${formatarMoeda(resultado.valorTotal)}`)
+    setSucesso(`Salvo! ${partes.join(' · ')} — ${formatarMoeda(resultado.valorTotal)}`)
     setTimeout(() => setSucesso(null), 4000)
   }
 
@@ -660,34 +696,41 @@ export default function DescontosPage() {
             {/* Coluna esquerda: desconto atual + preview */}
             <div className="md:col-span-2 space-y-4">
 
-              {/* Descontos lançados */}
+              {/* Descontos e acréscimos lançados */}
               <div className="card">
                 <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-sm font-semibold text-gray-700">Descontos lançados</h3>
-                  {descontos.filter(d => !d.isCarryOver).length > 0 && (
-                    <span className="text-xs text-gray-500 font-mono">
-                      {descontos.filter(d => !d.isCarryOver).reduce((s, d) => s + d.dias, 0)} dia(s)
+                  <h3 className="text-sm font-semibold text-gray-700">Lançamentos</h3>
+                  {descontos.filter(d => !d.isCarryOver && !d.isAcrescimo).length > 0 && (
+                    <span className="text-xs text-red-500 font-mono">
+                      -{descontos.filter(d => !d.isCarryOver && !d.isAcrescimo).reduce((s, d) => s + d.dias, 0)} dia(s)
                     </span>
                   )}
                 </div>
                 {descontos.length === 0 ? (
-                  <p className="text-xs text-gray-400 py-3 text-center">Nenhum desconto neste mês.</p>
+                  <p className="text-xs text-gray-400 py-3 text-center">Nenhum lançamento neste mês.</p>
                 ) : (
                   <div className="space-y-2">
                     {descontos.map((d, i) => (
                       <div
                         key={i}
                         className={`flex items-start justify-between rounded-lg px-3 py-2 gap-2 ${
-                          d.isCarryOver ? 'bg-amber-50 border border-amber-200' : 'bg-gray-50'
+                          d.isAcrescimo
+                            ? 'bg-green-50 border border-green-200'
+                            : d.isCarryOver
+                              ? 'bg-amber-50 border border-amber-200'
+                              : 'bg-gray-50'
                         }`}
                       >
                         <div className="flex-1 min-w-0">
-                          <p className={`text-xs font-medium leading-tight ${d.isCarryOver ? 'text-amber-800' : 'text-gray-800'}`}>
+                          <p className={`text-xs font-medium leading-tight ${
+                            d.isAcrescimo ? 'text-green-800' : d.isCarryOver ? 'text-amber-800' : 'text-gray-800'
+                          }`}>
                             {d.tipo_nome}
                             {d.isCarryOver && <span className="ml-1 text-amber-600">(carry-over)</span>}
+                            {d.isAcrescimo && <span className="ml-1 text-green-600">(acréscimo)</span>}
                           </p>
                           <p className="text-xs text-gray-400 mt-0.5">
-                            {d.dias} dia(s)
+                            {d.isAcrescimo ? `+${Math.abs(d.dias)}` : d.dias} dia(s)
                             {d.data_inicio && ` · ${d.data_inicio === d.data_fim || !d.data_fim ? fmtData(d.data_inicio) : `${fmtData(d.data_inicio)} → ${fmtData(d.data_fim)}`}`}
                             {d.dias_proximo_mes > 0 && ` · +${d.dias_proximo_mes}d próx.`}
                           </p>
@@ -808,6 +851,55 @@ export default function DescontosPage() {
                     </button>
                   </div>
                 )}
+              </div>
+
+              {/* Acréscimos: feriados trabalhados */}
+              <div className="card border-green-200">
+                <h3 className="text-sm font-semibold text-green-700 mb-4">Feriado Trabalhado (Acréscimo)</h3>
+                <div className="space-y-3">
+                  <div>
+                    <label className="label-field">Descrição</label>
+                    <input
+                      type="text"
+                      value={acrescimoDescricao}
+                      onChange={e => setAcrescimoDescricao(e.target.value)}
+                      className="input-field"
+                      placeholder="Ex: Feriado trabalhado"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="label-field">Data do feriado</label>
+                      <input
+                        type="date"
+                        value={acrescimoData}
+                        onChange={e => setAcrescimoData(e.target.value)}
+                        className="input-field"
+                      />
+                    </div>
+                    <div>
+                      <label className="label-field">Dias trabalhados</label>
+                      <input
+                        type="number"
+                        value={acrescimoDias}
+                        onChange={e => setAcrescimoDias(Number(e.target.value))}
+                        min={1} max={31}
+                        className="input-field w-full text-center"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-xs text-gray-400">Registre dias trabalhados em feriados de meses anteriores para incluir no pagamento deste mês.</p>
+                  <button
+                    onClick={adicionarAcrescimo}
+                    disabled={acrescimoDias < 1}
+                    className="w-full flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-green-700 bg-green-50 border border-green-200 rounded-lg hover:bg-green-100 transition-colors disabled:opacity-50"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                    </svg>
+                    Adicionar acréscimo
+                  </button>
+                </div>
               </div>
 
               {/* Botões de ação */}

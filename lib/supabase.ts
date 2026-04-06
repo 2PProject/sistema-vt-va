@@ -103,6 +103,34 @@ export const supabase = createClient(
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
+ * Garante que os feriados nacionais do ano estão na tabela.
+ * Se não houver nenhum feriado cadastrado para o ano, importa da BrasilAPI.
+ */
+export async function garantirFeriadosAno(ano: number): Promise<void> {
+  const { count } = await supabase
+    .from('feriados')
+    .select('id', { count: 'exact', head: true })
+    .gte('data', `${ano}-01-01`)
+    .lte('data', `${ano}-12-31`)
+
+  if ((count ?? 0) > 0) return
+
+  try {
+    const res = await fetch(`https://brasilapi.com.br/api/feriados/v1/${ano}`)
+    if (!res.ok) return
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const lista: any[] = await res.json()
+    if (!Array.isArray(lista) || lista.length === 0) return
+    await supabase.from('feriados').upsert(
+      lista.map((f) => ({ data: f.date, descricao: f.name })),
+      { onConflict: 'data' }
+    )
+  } catch {
+    // Falha silenciosa — não bloqueia o carregamento da página
+  }
+}
+
+/**
  * Retorna o id da unidade padrão de uma empresa.
  * Se não existir nenhuma unidade, cria automaticamente.
  */

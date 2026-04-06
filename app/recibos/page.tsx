@@ -9,16 +9,20 @@ import {
   Funcionario,
   Empresa,
   getOrCreateDefaultUnidade,
+  garantirFeriadosAno,
 } from '../../lib/supabase'
 import { calcularVTVA, calcularDiasUteisAuto, formatarMoeda, MESES } from '../../utils/calculoVT'
 
 type CFComFunc = CompetenciaFuncionario & { funcionarios: Funcionario }
 
+type ItemRecibo = { tipo_nome: string; dias: number; data_inicio: string | null; data_fim: string | null }
+
 type RegistroCompleto = CFComFunc & {
   competenciaObj: Competencia
   empresaObj: Empresa
   feriadosDatas: string[]
-  descontosRecibo: Array<{ tipo_nome: string; dias: number; data_inicio: string | null; data_fim: string | null }>
+  descontosRecibo: ItemRecibo[]
+  acrescimosRecibo: ItemRecibo[]
 }
 
 const TODAS = '__todas__'
@@ -44,7 +48,8 @@ export default function RecibosPage() {
     setLoading(true)
     setRegistros([])
 
-    // Consulta feriados diretamente da tabela para garantir valor atualizado
+    // Garante feriados importados e consulta direto da tabela
+    await garantirFeriadosAno(ano)
     const mesStr = String(mes).padStart(2, '0')
     const ultimoDia = new Date(ano, mes, 0).getDate()
     const { data: feriadosRows } = await supabase
@@ -79,25 +84,36 @@ export default function RecibosPage() {
 
       // Carrega descontos de todos os CFs de uma vez
       const cfIds = cfList.map(cf => cf.id)
-      let descontosMap = new Map<string, Array<{ tipo_nome: string; dias: number; data_inicio: string | null; data_fim: string | null }>>()
+      let descontosMap = new Map<string, ItemRecibo[]>()
+      let acrescimosMap = new Map<string, ItemRecibo[]>()
       if (cfIds.length > 0) {
         const { data: descontosRows } = await supabase
           .from('competencia_funcionario_desconto')
           .select('*, tipos_desconto(id, nome)')
           .in('competencia_funcionario_id', cfIds)
         for (const d of descontosRows ?? []) {
-          const arr = descontosMap.get(d.competencia_funcionario_id) ?? []
-          arr.push({
-            tipo_nome: (d.tipos_desconto as { nome: string } | null)?.nome ?? '',
-            dias: d.dias,
+          const isAcrescimo = (d.dias ?? 0) < 0
+          const item: ItemRecibo = {
+            tipo_nome: isAcrescimo
+              ? 'Feriado trabalhado'
+              : ((d.tipos_desconto as { nome: string } | null)?.nome ?? ''),
+            dias: Math.abs(d.dias ?? 0),
             data_inicio: d.data_inicio ?? null,
             data_fim: d.data_fim ?? null,
-          })
-          descontosMap.set(d.competencia_funcionario_id, arr)
+          }
+          if (isAcrescimo) {
+            const arr = acrescimosMap.get(d.competencia_funcionario_id) ?? []
+            arr.push(item)
+            acrescimosMap.set(d.competencia_funcionario_id, arr)
+          } else {
+            const arr = descontosMap.get(d.competencia_funcionario_id) ?? []
+            arr.push(item)
+            descontosMap.set(d.competencia_funcionario_id, arr)
+          }
         }
       }
 
-      return cfList.map(cf => ({ ...cf, competenciaObj: comp as Competencia, empresaObj: emp, feriadosDatas, descontosRecibo: descontosMap.get(cf.id) ?? [] }))
+      return cfList.map(cf => ({ ...cf, competenciaObj: comp as Competencia, empresaObj: emp, feriadosDatas, descontosRecibo: descontosMap.get(cf.id) ?? [], acrescimosRecibo: acrescimosMap.get(cf.id) ?? [] }))
     }))
 
     setRegistros(results.flat())
@@ -147,6 +163,7 @@ export default function RecibosPage() {
         valorVA,
         resultado,
         descontos: reg.descontosRecibo,
+        acrescimos: reg.acrescimosRecibo,
       })
     } catch (err) {
       console.error('Erro ao gerar PDF:', err)
@@ -187,6 +204,7 @@ export default function RecibosPage() {
           diasSabado, valorVT, valorVTSabado, valorVA,
           resultado,
           descontos: reg.descontosRecibo,
+          acrescimos: reg.acrescimosRecibo,
         }
       })
       await gerarMultiplosPDFs(dadosList)

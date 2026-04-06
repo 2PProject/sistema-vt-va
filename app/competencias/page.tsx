@@ -11,6 +11,7 @@ import {
   Empresa,
   TipoDesconto,
   getOrCreateDefaultUnidade,
+  garantirFeriadosAno,
 } from '../../lib/supabase'
 import {
   calcularVTVA,
@@ -134,6 +135,8 @@ export default function CompetenciasPage() {
     if (!empresaId) return
     setLoading(true)
     setSucesso(false)
+
+    await garantirFeriadosAno(ano)
 
     const mesStr = String(mes).padStart(2, '0')
     const ultimoDia = new Date(ano, mes, 0).getDate()
