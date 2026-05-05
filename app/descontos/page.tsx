@@ -112,9 +112,17 @@ export default function DescontosPage() {
   // Contadores de descontos já lançados
   const [contadoresDesconto, setContadoresDesconto] = useState<Record<string, number>>({})
 
-  // View: 'list' | 'form'
-  const [view, setView] = useState<'list' | 'form'>('list')
+  // View: 'list' | 'form' | 'bulk-feriado'
+  const [view, setView] = useState<'list' | 'form' | 'bulk-feriado'>('list')
   const [selecionado, setSelecionado] = useState<FuncionarioComEmpresa | null>(null)
+
+  // Bulk feriado view
+  const [feriadosBulk, setFeriadosBulk] = useState<Array<{ data: string; descricao: string }>>([])
+  const [feriadoAtivo, setFeriadoAtivo] = useState<{ data: string; descricao: string } | null>(null)
+  const [checkedFuncs, setCheckedFuncs] = useState<Set<string>>(new Set())
+  const [salvandoBulk, setSalvandoBulk] = useState(false)
+  const [sucessoBulk, setSucessoBulk] = useState<string | null>(null)
+  const [erroBulk, setErroBulk] = useState<string | null>(null)
 
   // Estado do formulário
   const [loadingForm, setLoadingForm] = useState(false)
@@ -514,6 +522,154 @@ export default function DescontosPage() {
     })
   })() : null
 
+  // ─── Bulk feriado ────────────────────────────────────────────────────────────
+
+  async function abrirBulkFeriado() {
+    setView('bulk-feriado')
+    setFeriadoAtivo(null)
+    setCheckedFuncs(new Set())
+    setSucessoBulk(null)
+    setErroBulk(null)
+
+    await garantirFeriadosAno(ano)
+    const mesStr = String(mes).padStart(2, '0')
+    const ultimoDia = new Date(ano, mes, 0).getDate()
+    const { data } = await supabase.from('feriados').select('data, descricao')
+      .gte('data', `${ano}-${mesStr}-01`)
+      .lte('data', `${ano}-${mesStr}-${String(ultimoDia).padStart(2, '0')}`)
+      .order('data')
+    setFeriadosBulk((data ?? []).map(f => ({ data: f.data as string, descricao: f.descricao as string })))
+  }
+
+  function toggleFunc(funcId: string) {
+    setCheckedFuncs(prev => {
+      const next = new Set(prev)
+      if (next.has(funcId)) next.delete(funcId)
+      else next.add(funcId)
+      return next
+    })
+  }
+
+  function toggleTodos() {
+    const lista = filtroEmpresaId
+      ? todosFuncionarios.filter(f => f.empresa.id === filtroEmpresaId)
+      : todosFuncionarios
+    if (checkedFuncs.size === lista.length) setCheckedFuncs(new Set())
+    else setCheckedFuncs(new Set(lista.map(f => f.func.id)))
+  }
+
+  async function salvarBulkFeriado() {
+    if (!feriadoAtivo || checkedFuncs.size === 0) return
+    setSalvandoBulk(true)
+    setSucessoBulk(null)
+    setErroBulk(null)
+
+    const mesStr = String(mes).padStart(2, '0')
+    const ultimoDia = new Date(ano, mes, 0).getDate()
+    const { data: feriadosRows } = await supabase.from('feriados').select('data')
+      .gte('data', `${ano}-${mesStr}-01`)
+      .lte('data', `${ano}-${mesStr}-${String(ultimoDia).padStart(2, '0')}`)
+    const feriadosDatas: string[] = (feriadosRows ?? []).map(f => f.data as string)
+
+    let salvos = 0
+    let ignorados = 0
+
+    for (const funcId of checkedFuncs) {
+      const item = todosFuncionarios.find(f => f.func.id === funcId)
+      if (!item) continue
+      const { func, empresa, unidadeId } = item
+
+      // Get/create competencia
+      let { data: comp } = await supabase.from('competencias').select('*')
+        .eq('unidade_id', unidadeId).eq('mes', mes).eq('ano', ano).maybeSingle()
+      let compId = (comp as Competencia | null)?.id ?? ''
+      if (!compId) {
+        const { data: novaComp } = await supabase.from('competencias')
+          .insert({ unidade_id: unidadeId, mes, ano, dias_uteis: 0, feriados_mes: feriadosDatas.length, valor_va: empresa.valor_va })
+          .select().single()
+        compId = (novaComp as Competencia | null)?.id ?? ''
+      }
+      if (!compId) continue
+
+      // Get/create competencia_funcionario
+      let { data: cf } = await supabase.from('competencia_funcionario').select('*')
+        .eq('competencia_id', compId).eq('funcionario_id', funcId).maybeSingle()
+      let cfId = (cf as CompetenciaFuncionario | null)?.id ?? ''
+
+      const valorVT = (cf as CompetenciaFuncionario | null)?.valor_vt ?? func.valor_vt ?? 0
+      const valorVTSabadoBase = (cf as CompetenciaFuncionario | null)?.valor_vt_sabado ?? func.valor_vt_sabado ?? 0
+      const ehExcecao = valorVTSabadoBase > 0
+      const valorVTSabado = ehExcecao ? valorVTSabadoBase : 0
+      const diasSabado = ehExcecao ? ((cf as CompetenciaFuncionario | null)?.dias_sabado ?? calcularSabadosDoMes(mes, ano)) : 0
+      const valorVA = (comp as Competencia | null)?.valor_va ?? empresa.valor_va ?? 0
+
+      // Check for duplicate acréscimo
+      if (cfId) {
+        const { count } = await supabase.from('competencia_funcionario_desconto')
+          .select('id', { count: 'exact', head: true })
+          .eq('competencia_funcionario_id', cfId)
+          .eq('data_inicio', feriadoAtivo.data)
+          .lt('dias', 0)
+        if ((count ?? 0) > 0) { ignorados++; continue }
+      }
+
+      // Get existing descontos to recalculate total
+      let totalDescAtual = 0
+      if (cfId) {
+        const { data: descs } = await supabase.from('competencia_funcionario_desconto')
+          .select('dias').eq('competencia_funcionario_id', cfId)
+        totalDescAtual = (descs ?? []).reduce((s, d) => s + (d.dias ?? 0), 0)
+      }
+      const novoTotal = totalDescAtual - 1 // -1 = acréscimo de 1 dia
+
+      const diasAuto = calcularDiasUteisAuto(mes, ano, func.folga_semanal, feriadosDatas)
+      const resultado = calcularVTVA({
+        diasUteis: diasAuto, diasFeriado: 0,
+        diasSabado: ehExcecao ? diasSabado : 0,
+        diasDesconto: novoTotal,
+        valorVT, valorVTSabado, valorVA,
+      })
+
+      if (!cfId) {
+        const { data: novoCF } = await supabase.from('competencia_funcionario').insert({
+          competencia_id: compId, funcionario_id: funcId,
+          dias_feriado: feriadosDatas.length, dias_sabado: diasSabado,
+          dias_desconto: novoTotal,
+          valor_vt: valorVT, valor_vt_sabado: valorVTSabado,
+          valor_total: resultado.valorTotal,
+        }).select().single()
+        cfId = (novoCF as CompetenciaFuncionario | null)?.id ?? ''
+      } else {
+        await supabase.from('competencia_funcionario').update({
+          dias_desconto: novoTotal,
+          valor_total: resultado.valorTotal,
+        }).eq('id', cfId)
+      }
+
+      if (!cfId) continue
+
+      await supabase.from('competencia_funcionario_desconto').insert({
+        competencia_funcionario_id: cfId,
+        tipo_desconto_id: null,
+        dias: -1,
+        data_inicio: feriadoAtivo.data,
+        data_fim: feriadoAtivo.data,
+        dias_proximo_mes: 0,
+      })
+      salvos++
+    }
+
+    setSalvandoBulk(false)
+    if (ignorados > 0 && salvos === 0) {
+      setSucessoBulk(`Todos os ${ignorados} funcionário(s) já tinham esse feriado lançado.`)
+    } else {
+      setSucessoBulk(`${salvos} acréscimo(s) lançado(s)${ignorados > 0 ? ` (${ignorados} já existiam)` : ''}.`)
+    }
+    setCheckedFuncs(new Set())
+    carregarContadores()
+    setTimeout(() => setSucessoBulk(null), 5000)
+  }
+
   // ─── Navegação de período ────────────────────────────────────────────────────
 
   function mesAnterior() {
@@ -532,6 +688,179 @@ export default function DescontosPage() {
     ? todosFuncionarios.filter(f => f.empresa.id === filtroEmpresaId)
     : todosFuncionarios
 
+  // ─── JSX — View Bulk Feriado ─────────────────────────────────────────────────
+
+  if (view === 'bulk-feriado') {
+    const listaParaBulk = filtroEmpresaId
+      ? todosFuncionarios.filter(f => f.empresa.id === filtroEmpresaId)
+      : todosFuncionarios
+    const todosChecked = listaParaBulk.length > 0 && checkedFuncs.size === listaParaBulk.length
+
+    return (
+      <LayoutAdmin
+        title="Feriado Trabalhado — Lançamento em Massa"
+        actions={
+          <button onClick={() => setView('list')} className="btn-secondary flex items-center gap-2 text-sm">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+            </svg>
+            Voltar à lista
+          </button>
+        }
+      >
+        <div className="space-y-5">
+
+          {/* Feedback */}
+          {sucessoBulk && (
+            <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg text-sm flex items-center gap-2">
+              <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+              {sucessoBulk}
+            </div>
+          )}
+          {erroBulk && (
+            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">{erroBulk}</div>
+          )}
+
+          <div className="grid md:grid-cols-2 gap-5">
+
+            {/* Coluna 1: Selecionar feriado */}
+            <div className="card">
+              <h3 className="text-sm font-semibold text-gray-700 mb-1">
+                Feriados de {MESES[mes - 1]}/{ano}
+              </h3>
+              <p className="text-xs text-gray-400 mb-4">Clique no feriado em que houve trabalho.</p>
+              {feriadosBulk.length === 0 ? (
+                <p className="text-xs text-gray-400 py-6 text-center">Nenhum feriado cadastrado neste mês.</p>
+              ) : (
+                <div className="space-y-2">
+                  {feriadosBulk.map(f => {
+                    const [a, m, d] = f.data.split('-')
+                    const ativo = feriadoAtivo?.data === f.data
+                    return (
+                      <button
+                        key={f.data}
+                        onClick={() => { setFeriadoAtivo(f); setCheckedFuncs(new Set()) }}
+                        className={`w-full text-left flex items-center gap-3 px-4 py-3 rounded-lg border transition-all ${
+                          ativo
+                            ? 'bg-green-50 border-green-400 ring-1 ring-green-400'
+                            : 'bg-gray-50 border-gray-200 hover:border-green-300 hover:bg-green-50/50'
+                        }`}
+                      >
+                        <div className={`text-xl font-bold tabular-nums w-8 text-center ${ativo ? 'text-green-700' : 'text-gray-500'}`}>
+                          {d}
+                        </div>
+                        <div>
+                          <p className={`text-sm font-medium ${ativo ? 'text-green-800' : 'text-gray-700'}`}>{f.descricao}</p>
+                          <p className="text-xs text-gray-400">{d}/{m}/{a}</p>
+                        </div>
+                        {ativo && (
+                          <svg className="w-4 h-4 text-green-500 ml-auto shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          </svg>
+                        )}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Coluna 2: Selecionar funcionários */}
+            <div className="space-y-4">
+              <div className="card">
+                <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                  <h3 className="text-sm font-semibold text-gray-700">
+                    {feriadoAtivo
+                      ? <>Quem trabalhou em <span className="text-green-700">{feriadoAtivo.descricao}</span>?</>
+                      : 'Selecione um feriado ao lado'}
+                  </h3>
+                  {feriadoAtivo && listaParaBulk.length > 0 && (
+                    <button
+                      onClick={toggleTodos}
+                      className="text-xs text-blue-600 hover:text-blue-800 font-medium"
+                    >
+                      {todosChecked ? 'Desmarcar todos' : 'Selecionar todos'}
+                    </button>
+                  )}
+                </div>
+
+                {/* Filtro empresa */}
+                <div className="mb-3">
+                  <select
+                    value={filtroEmpresaId}
+                    onChange={e => { setFiltroEmpresaId(e.target.value); setCheckedFuncs(new Set()) }}
+                    className="input-field text-sm"
+                  >
+                    <option value="">Todas as empresas</option>
+                    {empresas.map(e => <option key={e.id} value={e.id}>{e.razao_social}</option>)}
+                  </select>
+                </div>
+
+                {!feriadoAtivo ? (
+                  <p className="text-xs text-gray-400 py-6 text-center">← Escolha o feriado primeiro</p>
+                ) : listaParaBulk.length === 0 ? (
+                  <p className="text-xs text-gray-400 py-6 text-center">Nenhum funcionário encontrado.</p>
+                ) : (
+                  <div className="space-y-1 max-h-72 overflow-y-auto pr-1">
+                    {listaParaBulk.map(item => {
+                      const checked = checkedFuncs.has(item.func.id)
+                      return (
+                        <label
+                          key={item.func.id}
+                          className={`flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-colors ${
+                            checked ? 'bg-green-50 border border-green-200' : 'hover:bg-gray-50 border border-transparent'
+                          }`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => toggleFunc(item.func.id)}
+                            className="w-4 h-4 text-green-600 rounded border-gray-300 focus:ring-green-500"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-gray-800 truncate">{item.func.nome}</p>
+                            <p className="text-xs text-gray-400 truncate">{item.func.funcao} · {item.empresa.razao_social}</p>
+                          </div>
+                        </label>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {feriadoAtivo && checkedFuncs.size > 0 && (
+                <button
+                  onClick={salvarBulkFeriado}
+                  disabled={salvandoBulk}
+                  className="btn-primary w-full flex items-center justify-center gap-2"
+                >
+                  {salvandoBulk ? (
+                    <>
+                      <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                      </svg>
+                      Lançando...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                      Lançar acréscimo para {checkedFuncs.size} funcionário(s)
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      </LayoutAdmin>
+    )
+  }
+
   // ─── JSX — View Lista ────────────────────────────────────────────────────────
 
   if (view === 'list') {
@@ -539,26 +868,31 @@ export default function DescontosPage() {
       <LayoutAdmin
         title="Acréscimos / Descontos"
         actions={
-          <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
+          <div className="flex items-center gap-2">
             <button
-              onClick={mesAnterior}
-              className="p-1.5 rounded-md hover:bg-white hover:shadow-sm transition-all text-gray-600"
+              onClick={abrirBulkFeriado}
+              className="flex items-center gap-1.5 text-sm font-medium text-green-700 bg-green-50 border border-green-200 hover:bg-green-100 px-3 py-1.5 rounded-lg transition-colors"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
+              Feriado Trabalhado
             </button>
-            <span className="px-3 py-1 text-sm font-semibold text-gray-700 min-w-[130px] text-center">
-              {MESES[mes - 1]} {ano}
-            </span>
-            <button
-              onClick={mesSeguinte}
-              className="p-1.5 rounded-md hover:bg-white hover:shadow-sm transition-all text-gray-600"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-              </svg>
-            </button>
+            <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
+              <button onClick={mesAnterior} className="p-1.5 rounded-md hover:bg-white hover:shadow-sm transition-all text-gray-600">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                </svg>
+              </button>
+              <span className="px-3 py-1 text-sm font-semibold text-gray-700 min-w-[130px] text-center">
+                {MESES[mes - 1]} {ano}
+              </span>
+              <button onClick={mesSeguinte} className="p-1.5 rounded-md hover:bg-white hover:shadow-sm transition-all text-gray-600">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
+              </button>
+            </div>
           </div>
         }
       >
