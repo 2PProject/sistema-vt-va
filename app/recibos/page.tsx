@@ -136,11 +136,36 @@ export default function RecibosPage() {
       const valorVA = reg.competenciaObj.valor_va ?? 0
       const diasUteisAuto = calcularDiasUteisAuto(mes, ano, reg.funcionarios?.folga_semanal, reg.feriadosDatas)
 
+      // Re-busca descontos/acréscimos frescos do banco para garantir dados atualizados
+      const { data: descontosRows } = await supabase
+        .from('competencia_funcionario_desconto')
+        .select('*, tipos_desconto(id, nome)')
+        .eq('competencia_funcionario_id', reg.id)
+      const descontosRecibo: ItemRecibo[] = []
+      const acrescimosRecibo: ItemRecibo[] = []
+      for (const d of descontosRows ?? []) {
+        const isAcrescimo = (d.dias ?? 0) < 0
+        const item: ItemRecibo = {
+          tipo_nome: isAcrescimo ? 'Feriado trabalhado' : ((d.tipos_desconto as { nome: string } | null)?.nome ?? ''),
+          dias: Math.abs(d.dias ?? 0),
+          data_inicio: d.data_inicio ?? null,
+          data_fim: d.data_fim ?? null,
+        }
+        if (isAcrescimo) acrescimosRecibo.push(item)
+        else descontosRecibo.push(item)
+      }
+
+      // Re-busca dias_desconto atualizado
+      const { data: cfAtual } = await supabase
+        .from('competencia_funcionario').select('dias_desconto')
+        .eq('id', reg.id).maybeSingle()
+      const diasDesconto = (cfAtual as { dias_desconto: number } | null)?.dias_desconto ?? reg.dias_desconto
+
       const resultado = calcularVTVA({
         diasUteis: diasUteisAuto,
         diasFeriado: 0,
         diasSabado,
-        diasDesconto: reg.dias_desconto,
+        diasDesconto,
         valorVT,
         valorVTSabado,
         valorVA,
@@ -162,8 +187,8 @@ export default function RecibosPage() {
         valorVTSabado,
         valorVA,
         resultado,
-        descontos: reg.descontosRecibo,
-        acrescimos: reg.acrescimosRecibo,
+        descontos: descontosRecibo,
+        acrescimos: acrescimosRecibo,
       })
     } catch (err) {
       console.error('Erro ao gerar PDF:', err)
@@ -396,7 +421,19 @@ export default function RecibosPage() {
                               <div className="font-medium text-gray-900">{reg.funcionarios.nome}</div>
                               <div className="text-xs text-gray-400">{reg.funcionarios.funcao}</div>
                             </td>
-                            <td className="table-cell text-center font-mono text-sm">{r.diasEfetivos}</td>
+                            <td className="table-cell text-center">
+                              <span className="font-mono text-sm">{r.diasEfetivos}</span>
+                              {reg.acrescimosRecibo.length > 0 && (
+                                <span className="ml-1.5 text-xs font-medium text-green-700 bg-green-100 px-1.5 py-0.5 rounded-full">
+                                  +{reg.acrescimosRecibo.reduce((s, a) => s + a.dias, 0)}d
+                                </span>
+                              )}
+                              {reg.descontosRecibo.length > 0 && (
+                                <span className="ml-1 text-xs font-medium text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded-full">
+                                  -{reg.descontosRecibo.reduce((s, d) => s + d.dias, 0)}d
+                                </span>
+                              )}
+                            </td>
                             <td className="table-cell text-right text-sm">{formatarMoeda(r.totalVA)}</td>
                             <td className="table-cell text-right text-sm">{formatarMoeda(r.totalVT)}</td>
                             <td className="table-cell text-right text-sm">{r.totalVTSabado > 0 ? formatarMoeda(r.totalVTSabado) : <span className="text-gray-300">—</span>}</td>
