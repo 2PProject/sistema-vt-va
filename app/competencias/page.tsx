@@ -609,7 +609,7 @@ export default function CompetenciasPage() {
 
         await supabase.from('competencia_funcionario').insert({
           competencia_id: compId, funcionario_id: f.id,
-          dias_feriado: feriados, dias_sabado: diasSabado, dias_desconto: 0,
+          dias_feriado: feriados.length, dias_sabado: diasSabado, dias_desconto: 0,
           valor_vt: f.valor_vt ?? 0, valor_vt_sabado: valorVtSabado,
           valor_total: resultado.valorTotal,
         })
@@ -648,7 +648,7 @@ export default function CompetenciasPage() {
       if (existingComp) {
         compId = (existingComp as Competencia).id
         compValorVA = (existingComp as Competencia).valor_va ?? emp.valor_va ?? 0
-        await supabase.from('competencias').update({ feriados_mes: feriados }).eq('id', compId)
+        await supabase.from('competencias').update({ feriados_mes: feriados.length }).eq('id', compId)
       } else {
         const { data: nova } = await supabase
           .from('competencias')
@@ -680,7 +680,7 @@ export default function CompetenciasPage() {
         })
         const payload = {
           competencia_id: compId, funcionario_id: f.id,
-          dias_feriado: feriados, dias_sabado: diasSabado, dias_desconto: diasDesconto,
+          dias_feriado: feriados.length, dias_sabado: diasSabado, dias_desconto: diasDesconto,
           valor_vt: valorVt, valor_vt_sabado: valorVtSabado, valor_total: resultado.valorTotal,
         }
         if (existingCF) {

@@ -122,6 +122,43 @@ function desenharVia(doc: any, dados: DadosRecibo, mesNome: string, referencia: 
     y += 8
   })
 
+  // Acréscimos (feriados trabalhados) — aparecem antes dos descontos
+  if (dados.acrescimos && dados.acrescimos.length > 0) {
+    y += 2
+    doc.setFillColor(22, 163, 74)
+    doc.rect(10, y - 4, 190, 8, 'F')
+    doc.setTextColor(255, 255, 255)
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(8)
+    doc.text('✦  FERIADOS TRABALHADOS  —  ACRÉSCIMOS', 12, y)
+    y += 7
+
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(0, 0, 0)
+    dados.acrescimos.forEach((d, i) => {
+      if (i % 2 === 0) {
+        doc.setFillColor(220, 252, 231)
+        doc.rect(10, y - 4, 190, 7, 'F')
+      }
+      doc.setFontSize(8)
+      doc.setTextColor(5, 90, 50)
+      doc.setFont('helvetica', 'bold')
+      doc.text(d.tipo_nome, 12, y)
+      doc.setFont('helvetica', 'normal')
+      doc.setTextColor(0, 0, 0)
+      doc.text(`+${d.dias} dia(s)`, 100, y)
+      let dataStr = ''
+      if (d.data_inicio) {
+        const fmt = (s: string) => { const [a, m, dia] = s.split('-'); return `${dia}/${m}/${a}` }
+        dataStr = (!d.data_fim || d.data_fim === d.data_inicio)
+          ? fmt(d.data_inicio)
+          : `${fmt(d.data_inicio)} a ${fmt(d.data_fim)}`
+      }
+      if (dataStr) doc.text(dataStr, 130, y)
+      y += 7
+    })
+  }
+
   if (dados.descontos && dados.descontos.length > 0) {
     y += 2
     doc.setFillColor(254, 243, 199)
@@ -154,38 +191,6 @@ function desenharVia(doc: any, dados: DadosRecibo, mesNome: string, referencia: 
     })
   }
 
-  if (dados.acrescimos && dados.acrescimos.length > 0) {
-    y += 2
-    doc.setFillColor(209, 250, 229)
-    doc.rect(10, y - 4, 190, 8, 'F')
-    doc.setTextColor(5, 90, 50)
-    doc.setFont('helvetica', 'bold')
-    doc.setFontSize(8)
-    doc.text('ACRÉSCIMOS', 12, y)
-    y += 7
-
-    doc.setFont('helvetica', 'normal')
-    doc.setTextColor(0, 0, 0)
-    dados.acrescimos.forEach((d, i) => {
-      if (i % 2 === 0) {
-        doc.setFillColor(236, 253, 245)
-        doc.rect(10, y - 4, 190, 7, 'F')
-      }
-      doc.setFontSize(8)
-      doc.text(d.tipo_nome, 12, y)
-      doc.text(`+${d.dias} dia(s)`, 100, y)
-      let dataStr = ''
-      if (d.data_inicio) {
-        const fmt = (s: string) => { const [a, m, dia] = s.split('-'); return `${dia}/${m}/${a}` }
-        dataStr = (!d.data_fim || d.data_fim === d.data_inicio)
-          ? fmt(d.data_inicio)
-          : `${fmt(d.data_inicio)} a ${fmt(d.data_fim)}`
-      }
-      if (dataStr) doc.text(dataStr, 130, y)
-      y += 7
-    })
-  }
-
   y += 2
   doc.setFillColor(30, 64, 175)
   doc.rect(10, y - 4, 190, 9, 'F')
@@ -199,9 +204,14 @@ function desenharVia(doc: any, dados: DadosRecibo, mesNome: string, referencia: 
   doc.setTextColor(80, 80, 80)
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(8)
-  const rodape = dados.valorVTSabado > 0
-    ? `Dias Úteis: ${dados.diasUteis}  |  Dias Efetivos: ${dados.diasEfetivos}  |  Sábados Trabalhados: ${dados.diasSabado}`
-    : `Dias Úteis: ${dados.diasUteis}  |  Dias Efetivos: ${dados.diasEfetivos}`
+  const totalAcrescimos = dados.acrescimos?.reduce((s, a) => s + a.dias, 0) ?? 0
+  const partsRodape: string[] = [
+    `Dias Úteis: ${dados.diasUteis}`,
+    `Dias Efetivos: ${dados.diasEfetivos}`,
+  ]
+  if (dados.valorVTSabado > 0) partsRodape.push(`Sábados: ${dados.diasSabado}`)
+  if (totalAcrescimos > 0) partsRodape.push(`Feriados Trabalhados: ${totalAcrescimos}`)
+  const rodape = partsRodape.join('  |  ')
   doc.text(rodape, 12, y)
   y += 8
 
