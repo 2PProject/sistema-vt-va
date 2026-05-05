@@ -187,7 +187,7 @@ export default function CompetenciasPage() {
           const arr = descontosMap.get(d.competencia_funcionario_id) ?? []
           arr.push({
             id: d.id, tipo_id: d.tipo_desconto_id,
-            tipo_nome: (d.tipos_desconto as TipoDesconto)?.nome ?? '',
+            tipo_nome: (d.dias ?? 0) < 0 ? 'Feriado trabalhado' : ((d.tipos_desconto as TipoDesconto)?.nome ?? ''),
             dias: d.dias, data_inicio: d.data_inicio ?? '', data_fim: d.data_fim ?? '',
             dias_proximo_mes: d.dias_proximo_mes ?? 0, isCarryOver: false,
           })
@@ -239,6 +239,16 @@ export default function CompetenciasPage() {
       void prevMesStr // suppress unused var warning
 
       // Build itens
+      // 3b. Todos os funcionários ativos das unidades (incluir quem não tem CF)
+      const { data: allFuncs } = await supabase
+        .from('funcionarios').select('*')
+        .in('unidade_id', unidadeIds).eq('ativo', true).order('nome')
+      const allFuncsList = (allFuncs ?? []) as Funcionario[]
+
+      const compByUnidade = new Map((allComps ?? []).map(c => [c.unidade_id, c as Competencia]))
+      const cfByFuncComp = new Map(cfList.map(cf => [cf.competencia_id + '|' + cf.funcionario_id, cf]))
+
+      // Itens de CFs existentes
       const items: CFLocal[] = cfList.map(cf => {
         const f = cf.funcionarios
         const loadedVtSabado = cf.valor_vt_sabado ?? f.valor_vt_sabado ?? 0
@@ -257,6 +267,34 @@ export default function CompetenciasPage() {
           empresaNome: emp?.razao_social ?? '',
           valorVAItem: vaByComp.get(cf.competencia_id) ?? 0,
         }
+      })
+
+      // Adicionar funcionários sem CF ainda
+      for (const f of allFuncsList) {
+        const comp = compByUnidade.get(f.unidade_id)
+        if (!comp) continue
+        if (cfByFuncComp.has(comp.id + '|' + f.id)) continue
+        const empId = empresaByUnidade.get(f.unidade_id)
+        const emp = empId ? empresas.find(e => e.id === empId) : undefined
+        const loadedVtSabado = f.valor_vt_sabado ?? 0
+        const ehExcecao = loadedVtSabado > 0
+        items.push({
+          id: '', competencia_id: comp.id, funcionario_id: f.id,
+          dias_sabado: ehExcecao ? sabadosDoMes : 0,
+          descontos: [],
+          valor_vt: f.valor_vt ?? 0,
+          valor_vt_sabado: loadedVtSabado,
+          funcionario: f,
+          empresaNome: emp?.razao_social ?? '',
+          valorVAItem: comp.valor_va ?? emp?.valor_va ?? 0,
+        })
+      }
+
+      // Ordenar por empresa + nome
+      items.sort((a, b) => {
+        const ec = a.empresaNome.localeCompare(b.empresaNome)
+        if (ec !== 0) return ec
+        return a.funcionario.nome.localeCompare(b.funcionario.nome)
       })
 
       setItens(items)
@@ -338,7 +376,7 @@ export default function CompetenciasPage() {
           const arr = descontosMap.get(d.competencia_funcionario_id) ?? []
           arr.push({
             id: d.id, tipo_id: d.tipo_desconto_id,
-            tipo_nome: (d.tipos_desconto as TipoDesconto)?.nome ?? '',
+            tipo_nome: (d.dias ?? 0) < 0 ? 'Feriado trabalhado' : ((d.tipos_desconto as TipoDesconto)?.nome ?? ''),
             dias: d.dias, data_inicio: d.data_inicio ?? '', data_fim: d.data_fim ?? '',
             dias_proximo_mes: d.dias_proximo_mes ?? 0, isCarryOver: false,
           })
@@ -742,35 +780,46 @@ export default function CompetenciasPage() {
               {/* Lista existente */}
               {modalItem.descontos.length > 0 ? (
                 <div className="space-y-2 mb-4">
-                  {modalItem.descontos.map((d, di) => (
-                    <div key={di} className={`flex items-center justify-between rounded-lg px-3 py-2 ${d.isCarryOver ? 'bg-amber-50 border border-amber-200' : 'bg-gray-50'}`}>
-                      <div>
-                        <span className={`text-sm font-medium ${d.isCarryOver ? 'text-amber-800' : 'text-gray-800'}`}>{d.tipo_nome}</span>
-                        <span className="ml-2 text-xs text-gray-500">{d.dias} dia(s)</span>
-                        {d.data_inicio && (
-                          <span className="ml-2 text-xs text-blue-500">
-                            {d.data_inicio === d.data_fim || !d.data_fim
-                              ? new Date(d.data_inicio + 'T12:00:00').toLocaleDateString('pt-BR')
-                              : `${new Date(d.data_inicio + 'T12:00:00').toLocaleDateString('pt-BR')} – ${new Date((d.data_fim ?? d.data_inicio) + 'T12:00:00').toLocaleDateString('pt-BR')}`
-                            }
+                  {modalItem.descontos.map((d, di) => {
+                    const isAcrescimo = d.dias < 0
+                    return (
+                      <div key={di} className={`flex items-center justify-between rounded-lg px-3 py-2 ${
+                        isAcrescimo ? 'bg-green-50 border border-green-200' :
+                        d.isCarryOver ? 'bg-amber-50 border border-amber-200' : 'bg-gray-50'
+                      }`}>
+                        <div>
+                          <span className={`text-sm font-medium ${isAcrescimo ? 'text-green-800' : d.isCarryOver ? 'text-amber-800' : 'text-gray-800'}`}>
+                            {d.tipo_nome}
                           </span>
+                          <span className={`ml-2 text-xs ${isAcrescimo ? 'text-green-600 font-semibold' : 'text-gray-500'}`}>
+                            {isAcrescimo ? `+${Math.abs(d.dias)}` : d.dias} dia(s)
+                          </span>
+                          {d.data_inicio && (
+                            <span className="ml-2 text-xs text-blue-500">
+                              {d.data_inicio === d.data_fim || !d.data_fim
+                                ? new Date(d.data_inicio + 'T12:00:00').toLocaleDateString('pt-BR')
+                                : `${new Date(d.data_inicio + 'T12:00:00').toLocaleDateString('pt-BR')} – ${new Date((d.data_fim ?? d.data_inicio) + 'T12:00:00').toLocaleDateString('pt-BR')}`
+                              }
+                            </span>
+                          )}
+                          {d.dias_proximo_mes > 0 && (
+                            <span className="ml-2 text-xs text-orange-500">+{d.dias_proximo_mes}d no próx. mês</span>
+                          )}
+                          {d.isCarryOver && <span className="ml-2 text-xs bg-amber-100 text-amber-700 px-1 rounded">carry-over</span>}
+                          {isAcrescimo && <span className="ml-2 text-xs bg-green-100 text-green-700 px-1 rounded">acréscimo</span>}
+                        </div>
+                        {!d.isCarryOver && !isAcrescimo && (
+                          <button onClick={() => removerDesconto(modalIdx, di)} className="text-red-500 hover:text-red-700">
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          </button>
                         )}
-                        {d.dias_proximo_mes > 0 && (
-                          <span className="ml-2 text-xs text-orange-500">+{d.dias_proximo_mes}d no próx. mês</span>
-                        )}
-                        {d.isCarryOver && <span className="ml-2 text-xs bg-amber-100 text-amber-700 px-1 rounded">carry-over</span>}
                       </div>
-                      {!d.isCarryOver && (
-                        <button onClick={() => removerDesconto(modalIdx, di)} className="text-red-500 hover:text-red-700">
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                          </svg>
-                        </button>
-                      )}
-                    </div>
-                  ))}
+                    )
+                  })}
                   <div className="text-right text-sm font-semibold text-gray-700 pt-1">
-                    Total: {modalItem.descontos.filter(d => !d.isCarryOver).reduce((s, d) => s + d.dias, 0)} dia(s) descontados
+                    Total: {modalItem.descontos.filter(d => !d.isCarryOver && d.dias > 0).reduce((s, d) => s + d.dias, 0)} dia(s) descontados
                   </div>
                 </div>
               ) : (
