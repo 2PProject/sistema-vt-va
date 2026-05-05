@@ -574,7 +574,7 @@ export default function DescontosPage() {
     let salvos = 0
     let ignorados = 0
 
-    for (const funcId of checkedFuncs) {
+    for (const funcId of Array.from(checkedFuncs)) {
       const item = todosFuncionarios.find(f => f.func.id === funcId)
       if (!item) continue
       const { func, empresa, unidadeId } = item
