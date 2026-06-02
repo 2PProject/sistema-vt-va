@@ -114,30 +114,60 @@ export function contarDiasSemana(mes: number, ano: number): Record<number, numbe
 }
 
 /**
- * Calcula os dias úteis efetivos de um funcionário para o mês,
- * descontando: domingos (já excluídos), folga semanal e feriados.
- * Apenas feriados que caem em dias efetivamente trabalhados pelo funcionário
- * são contados (feriados em domingo ou no dia de folga são ignorados).
- * Descontos individuais (faltas) são aplicados depois, na soma final.
+ * Calcula os dias úteis efetivos de um funcionário para o mês.
+ * Se dataAdmissao cair dentro do próprio mês, conta apenas a partir dela.
+ * Desconta: domingos, folga semanal e feriados que caem em dias úteis.
  */
 export function calcularDiasUteisAuto(
   mes: number,
   ano: number,
   folgaSemanal: string | null | undefined,
-  feriadosDatas: string[]
+  feriadosDatas: string[],
+  dataAdmissao?: string | null
 ): number {
-  const counts = contarDiasSemana(mes, ano)
-  // Total de dias úteis (seg–sáb): todos os funcionários podem trabalhar sábado
-  let total = counts[1] + counts[2] + counts[3] + counts[4] + counts[5] + counts[6]
-  // Subtrai a folga semanal do funcionário
   const dow = folgaSemanal ? (FOLGA_TO_DOW[folgaSemanal] ?? -1) : -1
-  if (dow >= 1 && dow <= 6) total -= counts[dow]
-  // Subtrai apenas feriados que caem em dias úteis do funcionário
+
+  // Determina a data de início: admissão se for neste mês, senão dia 1
+  const primeiroDia = new Date(ano, mes - 1, 1)
+  primeiroDia.setHours(12, 0, 0, 0)
+  let startDate = primeiroDia
+  if (dataAdmissao) {
+    const adm = new Date(dataAdmissao + 'T12:00:00')
+    if (adm.getFullYear() === ano && adm.getMonth() + 1 === mes && adm > primeiroDia) {
+      startDate = adm
+    }
+  }
+
+  // Se começa no dia 1: uso o algoritmo eficiente por contagem de dias da semana
+  if (startDate.getDate() === 1) {
+    const counts = contarDiasSemana(mes, ano)
+    let total = counts[1] + counts[2] + counts[3] + counts[4] + counts[5] + counts[6]
+    if (dow >= 1 && dow <= 6) total -= counts[dow]
+    for (const dateStr of feriadosDatas) {
+      const d = new Date(dateStr + 'T12:00:00')
+      const fd = d.getDay()
+      if (fd === 0 || fd === dow) continue
+      total -= 1
+    }
+    return Math.max(0, total)
+  }
+
+  // Contagem dia a dia a partir da admissão até o fim do mês
+  const ultimoDia = new Date(ano, mes, 0)
+  ultimoDia.setHours(12, 0, 0, 0)
+  let total = 0
+  const cur = new Date(startDate)
+  while (cur <= ultimoDia) {
+    const cd = cur.getDay()
+    if (cd !== 0 && cd !== dow) total++
+    cur.setDate(cur.getDate() + 1)
+  }
+  // Subtrai feriados a partir da data de admissão
   for (const dateStr of feriadosDatas) {
-    const d = new Date(dateStr + 'T12:00:00') // meio-dia evita problemas de fuso
-    const feriadoDow = d.getDay() // 0=Dom … 6=Sáb
-    if (feriadoDow === 0) continue // domingo já excluído da contagem
-    if (feriadoDow === dow) continue // dia de folga do funcionário já subtraído
+    const d = new Date(dateStr + 'T12:00:00')
+    if (d < startDate) continue
+    const fd = d.getDay()
+    if (fd === 0 || fd === dow) continue
     total -= 1
   }
   return Math.max(0, total)
@@ -146,5 +176,28 @@ export function calcularDiasUteisAuto(
 /** Retorna quantos sábados existem no mês */
 export function calcularSabadosDoMes(mes: number, ano: number): number {
   return contarDiasSemana(mes, ano)[6]
+}
+
+/**
+ * Retorna sábados no mês a partir da data de admissão (proporcional).
+ * Se dataAdmissao não for neste mês, retorna o total do mês.
+ */
+export function calcularSabadosDesde(mes: number, ano: number, dataAdmissao?: string | null): number {
+  if (!dataAdmissao) return calcularSabadosDoMes(mes, ano)
+  const adm = new Date(dataAdmissao + 'T12:00:00')
+  const primeiroDia = new Date(ano, mes - 1, 1)
+  primeiroDia.setHours(12, 0, 0, 0)
+  if (adm.getFullYear() !== ano || adm.getMonth() + 1 !== mes || adm <= primeiroDia) {
+    return calcularSabadosDoMes(mes, ano)
+  }
+  const ultimoDia = new Date(ano, mes, 0)
+  ultimoDia.setHours(12, 0, 0, 0)
+  let count = 0
+  const cur = new Date(adm)
+  while (cur <= ultimoDia) {
+    if (cur.getDay() === 6) count++
+    cur.setDate(cur.getDate() + 1)
+  }
+  return count
 }
 

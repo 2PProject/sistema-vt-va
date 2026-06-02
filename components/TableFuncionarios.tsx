@@ -37,6 +37,7 @@ export default function TableFuncionarios({
             <th className="table-header">CTPS / Série</th>
             <th className="table-header">Cargo / Função</th>
             <th className="table-header">Empresa</th>
+            <th className="table-header">Admissão</th>
             <th className="table-header">Folga</th>
             <th className="table-header">Status</th>
             <th className="table-header text-right">Ações</th>
@@ -52,6 +53,12 @@ export default function TableFuncionarios({
               <td className="table-cell text-gray-600 text-sm">{f.funcao}</td>
               <td className="table-cell text-gray-500 text-sm">
                 {f.unidades?.empresas?.razao_social ?? '—'}
+              </td>
+              <td className="table-cell text-gray-500 text-sm font-mono text-xs">
+                {f.data_admissao
+                  ? (() => { const [a,m,d] = f.data_admissao!.split('-'); return `${d}/${m}/${a}` })()
+                  : <span className="text-gray-300">—</span>
+                }
               </td>
               <td className="table-cell text-gray-500 text-sm">{f.folga_semanal}</td>
               <td className="table-cell">

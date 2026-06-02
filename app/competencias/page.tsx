@@ -17,6 +17,7 @@ import {
   calcularVTVA,
   calcularDiasUteisAuto,
   calcularSabadosDoMes,
+  calcularSabadosDesde,
   formatarMoeda,
   MESES,
 } from '../../utils/calculoVT'
@@ -168,13 +169,14 @@ export default function CompetenciasPage() {
       const compIds = (allComps ?? []).map(c => c.id)
       const vaByComp = new Map((allComps ?? []).map(c => [c.id, (c as Competencia).valor_va ?? 0]))
 
-      if (compIds.length === 0) { setItens([]); setLoading(false); return }
-
-      // 3. Todos os CFs com funcionários
-      const { data: allCFs } = await supabase
-        .from('competencia_funcionario').select('*, funcionarios(*)')
-        .in('competencia_id', compIds)
-      const cfList = (allCFs ?? []) as Array<CompetenciaFuncionario & { funcionarios: Funcionario }>
+      // 3. Todos os CFs com funcionários (pode ser vazio se competências ainda não foram criadas)
+      let cfList: Array<CompetenciaFuncionario & { funcionarios: Funcionario }> = []
+      if (compIds.length > 0) {
+        const { data: allCFs } = await supabase
+          .from('competencia_funcionario').select('*, funcionarios(*)')
+          .in('competencia_id', compIds)
+        cfList = (allCFs ?? []) as Array<CompetenciaFuncionario & { funcionarios: Funcionario }>
+      }
       const cfIds = cfList.map(cf => cf.id)
 
       // 4. Todos os descontos
@@ -269,24 +271,24 @@ export default function CompetenciasPage() {
         }
       })
 
-      // Adicionar funcionários sem CF ainda
+      // Adicionar funcionários sem CF ainda (inclusive quem não tem competência na unidade)
       for (const f of allFuncsList) {
         const comp = compByUnidade.get(f.unidade_id)
-        if (!comp) continue
-        if (cfByFuncComp.has(comp.id + '|' + f.id)) continue
+        // Pula se já foi adicionado via cfList
+        if (comp && cfByFuncComp.has(comp.id + '|' + f.id)) continue
         const empId = empresaByUnidade.get(f.unidade_id)
         const emp = empId ? empresas.find(e => e.id === empId) : undefined
         const loadedVtSabado = f.valor_vt_sabado ?? 0
         const ehExcecao = loadedVtSabado > 0
         items.push({
-          id: '', competencia_id: comp.id, funcionario_id: f.id,
-          dias_sabado: ehExcecao ? sabadosDoMes : 0,
+          id: '', competencia_id: comp?.id ?? '', funcionario_id: f.id,
+          dias_sabado: ehExcecao ? calcularSabadosDesde(mes, ano, f.data_admissao) : 0,
           descontos: [],
           valor_vt: f.valor_vt ?? 0,
           valor_vt_sabado: loadedVtSabado,
           funcionario: f,
           empresaNome: emp?.razao_social ?? '',
-          valorVAItem: comp.valor_va ?? emp?.valor_va ?? 0,
+          valorVAItem: comp?.valor_va ?? emp?.valor_va ?? 0,
         })
       }
 
@@ -409,7 +411,7 @@ export default function CompetenciasPage() {
           const carries = carryByFunc.get(f.id) ?? []
           return {
             id: '', competencia_id: '', funcionario_id: f.id,
-            dias_sabado: (f.valor_vt_sabado ?? 0) > 0 ? sabadosDoMes : 0,
+            dias_sabado: (f.valor_vt_sabado ?? 0) > 0 ? calcularSabadosDesde(mes, ano, f.data_admissao) : 0,
             descontos: carries,
             valor_vt: f.valor_vt ?? 0,
             valor_vt_sabado: f.valor_vt_sabado ?? 0,
@@ -507,7 +509,7 @@ export default function CompetenciasPage() {
     const valorVtSabadoSalvar = ehExcecao ? item.valor_vt_sabado : 0
     const descontosReais = item.descontos.filter(d => !d.isCarryOver)
     const totalDescontos = descontosReais.reduce((s, d) => s + d.dias, 0)
-    const diasUteisAuto = calcularDiasUteisAuto(mes, ano, item.funcionario.folga_semanal, feriadosDatas)
+    const diasUteisAuto = calcularDiasUteisAuto(mes, ano, item.funcionario.folga_semanal, feriadosDatas, item.funcionario.data_admissao)
     const resultado = calcularVTVA({
       diasUteis: diasUteisAuto, diasFeriado: 0, diasSabado: diasSabadoSalvar,
       diasDesconto: totalDescontos, valorVT: item.valor_vt,
@@ -637,8 +639,8 @@ export default function CompetenciasPage() {
         if (existingCF) return
 
         const ehExcecao = (f.valor_vt_sabado ?? 0) > 0
-        const diasAuto = calcularDiasUteisAuto(mes, ano, f.folga_semanal, feriados)
-        const diasSabado = ehExcecao ? sabadosDoMes : 0
+        const diasAuto = calcularDiasUteisAuto(mes, ano, f.folga_semanal, feriados, f.data_admissao)
+        const diasSabado = ehExcecao ? calcularSabadosDesde(mes, ano, f.data_admissao) : 0
         const valorVtSabado = ehExcecao ? (f.valor_vt_sabado ?? 0) : 0
         const resultado = calcularVTVA({
           diasUteis: diasAuto, diasFeriado: 0, diasSabado,
@@ -707,11 +709,11 @@ export default function CompetenciasPage() {
           .eq('competencia_id', compId).eq('funcionario_id', f.id).maybeSingle()
 
         const ehExcecao = existingCF ? (existingCF.valor_vt_sabado ?? 0) > 0 : (f.valor_vt_sabado ?? 0) > 0
-        const diasSabado = ehExcecao ? (existingCF?.dias_sabado ?? sabadosDoMes) : 0
+        const diasSabado = ehExcecao ? (existingCF?.dias_sabado ?? calcularSabadosDesde(mes, ano, f.data_admissao)) : 0
         const valorVtSabado = ehExcecao ? (existingCF?.valor_vt_sabado ?? f.valor_vt_sabado ?? 0) : 0
         const valorVt = existingCF?.valor_vt ?? f.valor_vt ?? 0
         const diasDesconto = existingCF?.dias_desconto ?? 0
-        const diasAuto = calcularDiasUteisAuto(mes, ano, f.folga_semanal, feriados)
+        const diasAuto = calcularDiasUteisAuto(mes, ano, f.folga_semanal, feriados, f.data_admissao)
         const resultado = calcularVTVA({
           diasUteis: diasAuto, diasFeriado: 0, diasSabado,
           diasDesconto, valorVT: valorVt, valorVTSabado: valorVtSabado, valorVA: compValorVA,
@@ -741,7 +743,7 @@ export default function CompetenciasPage() {
     const ehExcecao = (item.valor_vt_sabado ?? 0) > 0
     const vaEfetivo = modoTodas ? (item.valorVAItem ?? 0) : valorVA
     const totalDesc = item.descontos.filter(d => !d.isCarryOver).reduce((s, d) => s + d.dias, 0)
-    const diasAuto = calcularDiasUteisAuto(mes, ano, item.funcionario.folga_semanal, feriadosDatas)
+    const diasAuto = calcularDiasUteisAuto(mes, ano, item.funcionario.folga_semanal, feriadosDatas, item.funcionario.data_admissao)
     const r = calcularVTVA({
       diasUteis: diasAuto, diasFeriado: 0,
       diasSabado: ehExcecao ? item.dias_sabado : 0,
@@ -1055,20 +1057,37 @@ export default function CompetenciasPage() {
                     </thead>
                     <tbody className="divide-y divide-gray-100">
                       {itens.map((item, idx) => {
+                        const semComp = !item.competencia_id
                         const ehExcecao = (item.valor_vt_sabado ?? 0) > 0
                         const diasSabadoEfetivo = ehExcecao ? item.dias_sabado : 0
                         const valorVtSabadoEfetivo = ehExcecao ? item.valor_vt_sabado : 0
                         const vaEfetivo = modoTodas ? (item.valorVAItem ?? 0) : valorVA
-                        const totalDesc = item.descontos.filter(d => !d.isCarryOver).reduce((s, d) => s + d.dias, 0)
                         const totalDescComCarry = item.descontos.reduce((s, d) => s + d.dias, 0)
-                        const diasAuto = calcularDiasUteisAuto(mes, ano, item.funcionario.folga_semanal, feriadosDatas)
+                        const numDescontos = item.descontos.filter(d => !d.isCarryOver && d.dias > 0).length
+                        const numAcrescimos = item.descontos.filter(d => !d.isCarryOver && d.dias < 0).length
+                        const temCarryOver = item.descontos.some(d => d.isCarryOver)
+                        const diasAuto = calcularDiasUteisAuto(mes, ano, item.funcionario.folga_semanal, feriadosDatas, item.funcionario.data_admissao)
                         const r = calcularVTVA({
                           diasUteis: diasAuto, diasFeriado: 0,
                           diasSabado: diasSabadoEfetivo, diasDesconto: totalDescComCarry,
                           valorVT: item.valor_vt, valorVTSabado: valorVtSabadoEfetivo, valorVA: vaEfetivo,
                         })
+                        const btnColor = numDescontos > 0 && numAcrescimos > 0
+                          ? 'bg-orange-50 text-orange-700 hover:bg-orange-100'
+                          : numDescontos > 0 || temCarryOver
+                            ? 'bg-red-50 text-red-700 hover:bg-red-100'
+                            : numAcrescimos > 0
+                              ? 'bg-green-50 text-green-700 hover:bg-green-100'
+                              : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                        const btnLabel = numDescontos > 0 && numAcrescimos > 0
+                          ? `${numDescontos}desc/${numAcrescimos}acr`
+                          : numDescontos > 0
+                            ? `${numDescontos} desc.`
+                            : numAcrescimos > 0
+                              ? `+${numAcrescimos} feriado`
+                              : temCarryOver ? 'carry' : 'Adicionar'
                         return (
-                          <tr key={`${item.competencia_id}-${item.funcionario_id}`} className="hover:bg-gray-50">
+                          <tr key={`${item.competencia_id}-${item.funcionario_id}`} className={`hover:bg-gray-50 ${semComp ? 'bg-amber-50/60' : ''}`}>
                             {modoTodas && (
                               <td className="table-cell text-xs text-gray-500">{item.empresaNome}</td>
                             )}
@@ -1108,25 +1127,29 @@ export default function CompetenciasPage() {
                             <td className="table-cell text-center">
                               <button
                                 onClick={() => abrirModal(idx)}
-                                className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium transition-colors ${
-                                  totalDesc > 0 || item.descontos.some(d => d.isCarryOver)
-                                    ? 'bg-red-50 text-red-700 hover:bg-red-100'
-                                    : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-                                }`}
+                                className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium transition-colors ${btnColor}`}
                               >
                                 <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                                 </svg>
-                                {totalDescComCarry > 0 ? `${totalDescComCarry}d` : 'Adicionar'}
+                                {btnLabel}
                               </button>
                             </td>
                             <td className="table-cell text-right bg-blue-50">
-                              <span className="font-bold text-blue-700 text-sm">{r.diasEfetivos}d</span>
+                              {semComp
+                                ? <span className="text-xs text-amber-600 font-medium">Inicializar</span>
+                                : <span className="font-bold text-blue-700 text-sm">{r.diasEfetivos}d</span>
+                              }
                             </td>
-                            <td className="table-cell text-right text-xs text-gray-500">{formatarMoeda(r.totalVA)}</td>
-                            <td className="table-cell text-right text-xs text-gray-500">{formatarMoeda(r.totalVT)}</td>
-                            <td className="table-cell text-right text-xs text-gray-500">{formatarMoeda(r.totalVTSabado)}</td>
-                            <td className="table-cell text-right font-semibold text-blue-700">{formatarMoeda(r.valorTotal)}</td>
+                            <td className="table-cell text-right text-xs text-gray-500">{semComp ? '—' : formatarMoeda(r.totalVA)}</td>
+                            <td className="table-cell text-right text-xs text-gray-500">{semComp ? '—' : formatarMoeda(r.totalVT)}</td>
+                            <td className="table-cell text-right text-xs text-gray-500">{semComp ? '—' : formatarMoeda(r.totalVTSabado)}</td>
+                            <td className="table-cell text-right font-semibold text-blue-700">
+                              {semComp
+                                ? <span className="text-xs text-amber-500">sem competência</span>
+                                : formatarMoeda(r.valorTotal)
+                              }
+                            </td>
                           </tr>
                         )
                       })}

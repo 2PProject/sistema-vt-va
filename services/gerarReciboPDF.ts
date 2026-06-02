@@ -23,6 +23,7 @@ export type DadosRecibo = {
   valorVTSabado: number
   valorVA: number
   resultado: ResultadoCalculo
+  dataAdmissao?: string | null  // 'YYYY-MM-DD' — recibo proporcional quando admissão é no mês
   descontos?: DescontoRecibo[]
   acrescimos?: DescontoRecibo[]
 }
@@ -236,11 +237,24 @@ function desenharVia(doc: any, dados: DadosRecibo, mesNome: string, referencia: 
   doc.text(`${via} — ${referencia}`, 105, y, { align: 'center' })
 }
 
+function montarReferencia(dados: DadosRecibo): string {
+  const mesNome = MESES[dados.mes - 1]
+  if (dados.dataAdmissao) {
+    const adm = new Date(dados.dataAdmissao + 'T12:00:00')
+    if (adm.getFullYear() === dados.ano && adm.getMonth() + 1 === dados.mes) {
+      const [, m, d] = dados.dataAdmissao.split('-')
+      const ultimoDia = new Date(dados.ano, dados.mes, 0).getDate()
+      return `${d}/${m}/${dados.ano} a ${String(ultimoDia).padStart(2,'0')}/${m}/${dados.ano}`
+    }
+  }
+  return `${mesNome}/${dados.ano}`
+}
+
 export async function gerarReciboPDF(dados: DadosRecibo): Promise<void> {
   const { default: jsPDF } = await import('jspdf')
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
   const mesNome = MESES[dados.mes - 1]
-  const referencia = `${mesNome}/${dados.ano}`
+  const referencia = montarReferencia(dados)
 
   desenharVia(doc, dados, mesNome, referencia, 10, '1ª VIA — EMPRESA')
   doc.setLineDashPattern([3, 3], 0)
@@ -262,7 +276,7 @@ export async function gerarMultiplosPDFs(dadosList: DadosRecibo[]): Promise<void
   dadosList.forEach((dados, i) => {
     if (i > 0) doc.addPage()
     const mesNome = MESES[dados.mes - 1]
-    const referencia = `${mesNome}/${dados.ano}`
+    const referencia = montarReferencia(dados)
     desenharVia(doc, dados, mesNome, referencia, 10, '1ª VIA — EMPRESA')
     doc.setLineDashPattern([3, 3], 0)
     doc.setDrawColor(150, 150, 150)

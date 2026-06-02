@@ -32,6 +32,7 @@ export default function FormFuncionario({
   const [ativo, setAtivo] = useState(true)
   const [valorVT, setValorVT] = useState(0)
   const [valorVTSabado, setValorVTSabado] = useState(0)
+  const [dataAdmissao, setDataAdmissao] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -45,6 +46,7 @@ export default function FormFuncionario({
       setAtivo(funcionario.ativo)
       setValorVT(funcionario.valor_vt ?? 0)
       setValorVTSabado(funcionario.valor_vt_sabado ?? 0)
+      setDataAdmissao(funcionario.data_admissao ?? '')
       setEmpresaId(empresaIdInicial ?? '')
     } else {
       setNome('')
@@ -56,6 +58,7 @@ export default function FormFuncionario({
       setAtivo(true)
       setValorVT(0)
       setValorVTSabado(0)
+      setDataAdmissao('')
     }
   }, [funcionario, empresaIdInicial])
 
@@ -80,6 +83,7 @@ export default function FormFuncionario({
           ativo,
           valor_vt: valorVT,
           valor_vt_sabado: valorVTSabado,
+          data_admissao: dataAdmissao || null,
         },
         empresaId
       )
@@ -241,6 +245,20 @@ export default function FormFuncionario({
               placeholder="0,00"
             />
           </div>
+        </div>
+
+        {/* Data de admissão */}
+        <div>
+          <label className="label-field">Data de Admissão</label>
+          <input
+            type="date"
+            value={dataAdmissao}
+            onChange={(e) => setDataAdmissao(e.target.value)}
+            className="input-field"
+          />
+          <p className="text-xs text-gray-400 mt-1">
+            Usada para calcular dias proporcionais no mês de contratação.
+          </p>
         </div>
 
         {/* Ativo */}

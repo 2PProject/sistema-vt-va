@@ -33,6 +33,7 @@ export type Funcionario = {
   ativo: boolean
   valor_vt: number
   valor_vt_sabado: number
+  data_admissao?: string | null  // 'YYYY-MM-DD'
   unidades?: Unidade & { empresas?: Empresa }
 }
 
