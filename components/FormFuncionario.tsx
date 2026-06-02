@@ -58,7 +58,7 @@ export default function FormFuncionario({
       setAtivo(true)
       setValorVT(0)
       setValorVTSabado(0)
-      setDataAdmissao('')
+      setDataAdmissao(new Date().toISOString().split('T')[0]) // hoje como padrão
     }
   }, [funcionario, empresaIdInicial])
 
