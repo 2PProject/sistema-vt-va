@@ -46,17 +46,31 @@ export default function FuncionariosPage() {
     data: Omit<Funcionario, 'id' | 'unidades'>,
     empresaId: string
   ) {
-    // Resolve unidade_id a partir da empresa selecionada
     const unidadeId = await getOrCreateDefaultUnidade(empresaId)
     if (!unidadeId) throw new Error('Não foi possível resolver a unidade.')
 
     const payload = { ...data, unidade_id: unidadeId }
 
-    if (editando) {
-      await supabase.from('funcionarios').update(payload).eq('id', editando.id)
-    } else {
-      await supabase.from('funcionarios').insert(payload)
+    const tryInsertOrUpdate = async (p: typeof payload) => {
+      if (editando) {
+        const { error } = await supabase.from('funcionarios').update(p).eq('id', editando.id)
+        return error
+      } else {
+        const { error } = await supabase.from('funcionarios').insert(p)
+        return error
+      }
     }
+
+    let error = await tryInsertOrUpdate(payload)
+
+    // Se falhou por coluna inexistente (migration não executada), tenta sem data_admissao
+    if (error && error.message?.includes('data_admissao')) {
+      const { data_admissao: _, ...payloadSemAdmissao } = payload as typeof payload & { data_admissao?: unknown }
+      void _
+      error = await tryInsertOrUpdate(payloadSemAdmissao as typeof payload)
+    }
+
+    if (error) throw new Error(error.message)
     await carregar()
     fecharForm()
   }
