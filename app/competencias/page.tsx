@@ -253,7 +253,7 @@ export default function CompetenciasPage() {
       // Itens de CFs existentes
       const items: CFLocal[] = cfList.map(cf => {
         const f = cf.funcionarios
-        const loadedVtSabado = cf.valor_vt_sabado ?? f.valor_vt_sabado ?? 0
+        const loadedVtSabado = cf.valor_vt_sabado || f.valor_vt_sabado || 0
         const ehExcecao = loadedVtSabado > 0
         const comp = (allComps ?? []).find(c => c.id === cf.competencia_id)
         const unidadeId = comp?.unidade_id
@@ -263,7 +263,7 @@ export default function CompetenciasPage() {
           id: cf.id, competencia_id: cf.competencia_id, funcionario_id: cf.funcionario_id,
           dias_sabado: ehExcecao ? (cf.dias_sabado ?? sabadosDoMes) : 0,
           descontos: descontosMap.get(cf.id) ?? [],
-          valor_vt: cf.valor_vt ?? f.valor_vt ?? 0,
+          valor_vt: cf.valor_vt || f.valor_vt || 0,
           valor_vt_sabado: loadedVtSabado,
           funcionario: f,
           empresaNome: emp?.razao_social ?? '',
@@ -389,7 +389,7 @@ export default function CompetenciasPage() {
       setItens(
         funcs.map((f: Funcionario) => {
           const cf = cfMap.get(f.id)
-          const loadedVtSabado = cf?.valor_vt_sabado ?? f.valor_vt_sabado ?? 0
+          const loadedVtSabado = cf?.valor_vt_sabado || f.valor_vt_sabado || 0
           const ehExcecao = loadedVtSabado > 0
           const cfDescontos = cf ? (descontosMap.get(cf.id) ?? []) : []
           const carries = carryByFunc.get(f.id) ?? []
@@ -397,7 +397,7 @@ export default function CompetenciasPage() {
             id: cf?.id ?? '', competencia_id: comp.id, funcionario_id: f.id,
             dias_sabado: ehExcecao ? (cf?.dias_sabado ?? sabadosDoMes) : 0,
             descontos: [...cfDescontos, ...carries],
-            valor_vt: cf?.valor_vt ?? f.valor_vt ?? 0,
+            valor_vt: cf?.valor_vt || f.valor_vt || 0,
             valor_vt_sabado: loadedVtSabado,
             funcionario: f,
             empresaNome: emp?.razao_social ?? '',
@@ -710,8 +710,8 @@ export default function CompetenciasPage() {
 
         const ehExcecao = existingCF ? (existingCF.valor_vt_sabado ?? 0) > 0 : (f.valor_vt_sabado ?? 0) > 0
         const diasSabado = ehExcecao ? (existingCF?.dias_sabado ?? calcularSabadosDesde(mes, ano, f.data_admissao)) : 0
-        const valorVtSabado = ehExcecao ? (existingCF?.valor_vt_sabado ?? f.valor_vt_sabado ?? 0) : 0
-        const valorVt = existingCF?.valor_vt ?? f.valor_vt ?? 0
+        const valorVtSabado = ehExcecao ? (existingCF?.valor_vt_sabado || f.valor_vt_sabado || 0) : 0
+        const valorVt = existingCF?.valor_vt || f.valor_vt || 0
         const diasDesconto = existingCF?.dias_desconto ?? 0
         const diasAuto = calcularDiasUteisAuto(mes, ano, f.folga_semanal, feriados, f.data_admissao)
         const resultado = calcularVTVA({
