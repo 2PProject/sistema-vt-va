@@ -115,21 +115,24 @@ export function contarDiasSemana(mes: number, ano: number): Record<number, numbe
 
 /**
  * Calcula os dias úteis efetivos de um funcionário para o mês.
- * Se dataAdmissao cair dentro do próprio mês, conta apenas a partir dela.
- * Desconta: domingos, folga semanal e feriados que caem em dias úteis.
+ * Considera data_admissao (início proporcional) e data_fim_aviso (fim do aviso prévio).
  */
 export function calcularDiasUteisAuto(
   mes: number,
   ano: number,
   folgaSemanal: string | null | undefined,
   feriadosDatas: string[],
-  dataAdmissao?: string | null
+  dataAdmissao?: string | null,
+  dataFimAviso?: string | null
 ): number {
   const dow = folgaSemanal ? (FOLGA_TO_DOW[folgaSemanal] ?? -1) : -1
 
-  // Determina a data de início: admissão se for neste mês, senão dia 1
   const primeiroDia = new Date(ano, mes - 1, 1)
   primeiroDia.setHours(12, 0, 0, 0)
+  const ultimoDiaMes = new Date(ano, mes, 0)
+  ultimoDiaMes.setHours(12, 0, 0, 0)
+
+  // Data de início: admissão neste mês → começa na data de admissão
   let startDate = primeiroDia
   if (dataAdmissao) {
     const adm = new Date(dataAdmissao + 'T12:00:00')
@@ -138,8 +141,17 @@ export function calcularDiasUteisAuto(
     }
   }
 
-  // Se começa no dia 1: uso o algoritmo eficiente por contagem de dias da semana
-  if (startDate.getDate() === 1) {
+  // Data de fim: aviso prévio terminando neste mês → encerra na data_fim_aviso
+  let endDate = ultimoDiaMes
+  if (dataFimAviso) {
+    const fim = new Date(dataFimAviso + 'T12:00:00')
+    if (fim.getFullYear() === ano && fim.getMonth() + 1 === mes && fim < ultimoDiaMes) {
+      endDate = fim
+    }
+  }
+
+  // Caminho rápido: mês completo sem cortes
+  if (startDate.getDate() === 1 && endDate.getTime() === ultimoDiaMes.getTime()) {
     const counts = contarDiasSemana(mes, ano)
     let total = counts[1] + counts[2] + counts[3] + counts[4] + counts[5] + counts[6]
     if (dow >= 1 && dow <= 6) total -= counts[dow]
@@ -152,20 +164,17 @@ export function calcularDiasUteisAuto(
     return Math.max(0, total)
   }
 
-  // Contagem dia a dia a partir da admissão até o fim do mês
-  const ultimoDia = new Date(ano, mes, 0)
-  ultimoDia.setHours(12, 0, 0, 0)
+  // Contagem dia a dia
   let total = 0
   const cur = new Date(startDate)
-  while (cur <= ultimoDia) {
+  while (cur <= endDate) {
     const cd = cur.getDay()
     if (cd !== 0 && cd !== dow) total++
     cur.setDate(cur.getDate() + 1)
   }
-  // Subtrai feriados a partir da data de admissão
   for (const dateStr of feriadosDatas) {
     const d = new Date(dateStr + 'T12:00:00')
-    if (d < startDate) continue
+    if (d < startDate || d > endDate) continue
     const fd = d.getDay()
     if (fd === 0 || fd === dow) continue
     total -= 1
@@ -179,22 +188,37 @@ export function calcularSabadosDoMes(mes: number, ano: number): number {
 }
 
 /**
- * Retorna sábados no mês a partir da data de admissão (proporcional).
- * Se dataAdmissao não for neste mês, retorna o total do mês.
+ * Retorna sábados no mês respeitando data_admissao e data_fim_aviso.
  */
-export function calcularSabadosDesde(mes: number, ano: number, dataAdmissao?: string | null): number {
-  if (!dataAdmissao) return calcularSabadosDoMes(mes, ano)
-  const adm = new Date(dataAdmissao + 'T12:00:00')
+export function calcularSabadosDesde(mes: number, ano: number, dataAdmissao?: string | null, dataFimAviso?: string | null): number {
   const primeiroDia = new Date(ano, mes - 1, 1)
   primeiroDia.setHours(12, 0, 0, 0)
-  if (adm.getFullYear() !== ano || adm.getMonth() + 1 !== mes || adm <= primeiroDia) {
+  const ultimoDiaMes = new Date(ano, mes, 0)
+  ultimoDiaMes.setHours(12, 0, 0, 0)
+
+  let startDate = primeiroDia
+  if (dataAdmissao) {
+    const adm = new Date(dataAdmissao + 'T12:00:00')
+    if (adm.getFullYear() === ano && adm.getMonth() + 1 === mes && adm > primeiroDia) {
+      startDate = adm
+    }
+  }
+
+  let endDate = ultimoDiaMes
+  if (dataFimAviso) {
+    const fim = new Date(dataFimAviso + 'T12:00:00')
+    if (fim.getFullYear() === ano && fim.getMonth() + 1 === mes && fim < ultimoDiaMes) {
+      endDate = fim
+    }
+  }
+
+  if (startDate.getDate() === 1 && endDate.getTime() === ultimoDiaMes.getTime()) {
     return calcularSabadosDoMes(mes, ano)
   }
-  const ultimoDia = new Date(ano, mes, 0)
-  ultimoDia.setHours(12, 0, 0, 0)
+
   let count = 0
-  const cur = new Date(adm)
-  while (cur <= ultimoDia) {
+  const cur = new Date(startDate)
+  while (cur <= endDate) {
     if (cur.getDay() === 6) count++
     cur.setDate(cur.getDate() + 1)
   }
@@ -206,5 +230,23 @@ export function admitidoNoMesOuAntes(dataAdmissao: string | null | undefined, me
   if (!dataAdmissao) return true
   const [admAno, admMes] = dataAdmissao.split('-').map(Number)
   return admAno * 100 + admMes <= ano * 100 + mes
+}
+
+/**
+ * Retorna true se o funcionário trabalhou no mês — admitido até o fim do mês
+ * e aviso prévio (se houver) não terminou antes do início do mês.
+ */
+export function trabalhaNoMes(
+  mes: number,
+  ano: number,
+  dataAdmissao: string | null | undefined,
+  dataFimAviso: string | null | undefined
+): boolean {
+  if (!admitidoNoMesOuAntes(dataAdmissao, mes, ano)) return false
+  if (dataFimAviso) {
+    const [fimAno, fimMes] = dataFimAviso.split('-').map(Number)
+    if (fimAno * 100 + fimMes < ano * 100 + mes) return false
+  }
+  return true
 }
 

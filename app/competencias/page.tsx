@@ -18,7 +18,7 @@ import {
   calcularDiasUteisAuto,
   calcularSabadosDoMes,
   calcularSabadosDesde,
-  admitidoNoMesOuAntes,
+  trabalhaNoMes,
   formatarMoeda,
   MESES,
 } from '../../utils/calculoVT'
@@ -247,13 +247,13 @@ export default function CompetenciasPage() {
         .from('funcionarios').select('*')
         .in('unidade_id', unidadeIds).eq('ativo', true).order('nome')
       const allFuncsList = ((allFuncs ?? []) as Funcionario[])
-        .filter(f => admitidoNoMesOuAntes(f.data_admissao, mes, ano))
+        .filter(f => trabalhaNoMes(mes, ano, f.data_admissao, f.data_fim_aviso))
 
       const compByUnidade = new Map((allComps ?? []).map(c => [c.unidade_id, c as Competencia]))
       const cfByFuncComp = new Map(cfList.map(cf => [cf.competencia_id + '|' + cf.funcionario_id, cf]))
 
       // Itens de CFs existentes (apenas de funcionários já admitidos no mês)
-      const items: CFLocal[] = cfList.filter(cf => admitidoNoMesOuAntes(cf.funcionarios?.data_admissao, mes, ano)).map(cf => {
+      const items: CFLocal[] = cfList.filter(cf => trabalhaNoMes(mes, ano, cf.funcionarios?.data_admissao, cf.funcionarios?.data_fim_aviso)).map(cf => {
         const f = cf.funcionarios
         const loadedVtSabado = cf.valor_vt_sabado || f.valor_vt_sabado || 0
         const ehExcecao = loadedVtSabado > 0
@@ -284,7 +284,7 @@ export default function CompetenciasPage() {
         const ehExcecao = loadedVtSabado > 0
         items.push({
           id: '', competencia_id: comp?.id ?? '', funcionario_id: f.id,
-          dias_sabado: ehExcecao ? calcularSabadosDesde(mes, ano, f.data_admissao) : 0,
+          dias_sabado: ehExcecao ? calcularSabadosDesde(mes, ano, f.data_admissao, f.data_fim_aviso) : 0,
           descontos: [],
           valor_vt: f.valor_vt ?? 0,
           valor_vt_sabado: loadedVtSabado,
@@ -331,7 +331,7 @@ export default function CompetenciasPage() {
     const { data: funcsRaw } = await supabase
       .from('funcionarios').select('*')
       .eq('unidade_id', unidadeId).eq('ativo', true).order('nome')
-    const funcs = ((funcsRaw ?? []) as Funcionario[]).filter(f => admitidoNoMesOuAntes(f.data_admissao, mes, ano))
+    const funcs = ((funcsRaw ?? []) as Funcionario[]).filter(f => trabalhaNoMes(mes, ano, f.data_admissao, f.data_fim_aviso))
 
     // Carry-over do mês anterior
     const prevMes = mes === 1 ? 12 : mes - 1
@@ -414,7 +414,7 @@ export default function CompetenciasPage() {
           const carries = carryByFunc.get(f.id) ?? []
           return {
             id: '', competencia_id: '', funcionario_id: f.id,
-            dias_sabado: (f.valor_vt_sabado ?? 0) > 0 ? calcularSabadosDesde(mes, ano, f.data_admissao) : 0,
+            dias_sabado: (f.valor_vt_sabado ?? 0) > 0 ? calcularSabadosDesde(mes, ano, f.data_admissao, f.data_fim_aviso) : 0,
             descontos: carries,
             valor_vt: f.valor_vt ?? 0,
             valor_vt_sabado: f.valor_vt_sabado ?? 0,
@@ -512,7 +512,7 @@ export default function CompetenciasPage() {
     const valorVtSabadoSalvar = ehExcecao ? item.valor_vt_sabado : 0
     const descontosReais = item.descontos.filter(d => !d.isCarryOver)
     const totalDescontos = descontosReais.reduce((s, d) => s + d.dias, 0)
-    const diasUteisAuto = calcularDiasUteisAuto(mes, ano, item.funcionario.folga_semanal, feriadosDatas, item.funcionario.data_admissao)
+    const diasUteisAuto = calcularDiasUteisAuto(mes, ano, item.funcionario.folga_semanal, feriadosDatas, item.funcionario.data_admissao, item.funcionario.data_fim_aviso)
     const resultado = calcularVTVA({
       diasUteis: diasUteisAuto, diasFeriado: 0, diasSabado: diasSabadoSalvar,
       diasDesconto: totalDescontos, valorVT: item.valor_vt,
@@ -642,8 +642,8 @@ export default function CompetenciasPage() {
         if (existingCF) return
 
         const ehExcecao = (f.valor_vt_sabado ?? 0) > 0
-        const diasAuto = calcularDiasUteisAuto(mes, ano, f.folga_semanal, feriados, f.data_admissao)
-        const diasSabado = ehExcecao ? calcularSabadosDesde(mes, ano, f.data_admissao) : 0
+        const diasAuto = calcularDiasUteisAuto(mes, ano, f.folga_semanal, feriados, f.data_admissao, f.data_fim_aviso)
+        const diasSabado = ehExcecao ? calcularSabadosDesde(mes, ano, f.data_admissao, f.data_fim_aviso) : 0
         const valorVtSabado = ehExcecao ? (f.valor_vt_sabado ?? 0) : 0
         const resultado = calcularVTVA({
           diasUteis: diasAuto, diasFeriado: 0, diasSabado,
@@ -705,7 +705,7 @@ export default function CompetenciasPage() {
       const { data: funcsRaw2 } = await supabase
         .from('funcionarios').select('*')
         .eq('unidade_id', unidadeId).eq('ativo', true)
-      const funcs2 = ((funcsRaw2 ?? []) as Funcionario[]).filter(f => admitidoNoMesOuAntes(f.data_admissao, mes, ano))
+      const funcs2 = ((funcsRaw2 ?? []) as Funcionario[]).filter(f => trabalhaNoMes(mes, ano, f.data_admissao, f.data_fim_aviso))
 
       await Promise.all(funcs2.map(async (f) => {
         const { data: existingCF } = await supabase
@@ -713,11 +713,11 @@ export default function CompetenciasPage() {
           .eq('competencia_id', compId).eq('funcionario_id', f.id).maybeSingle()
 
         const ehExcecao = existingCF ? (existingCF.valor_vt_sabado ?? 0) > 0 : (f.valor_vt_sabado ?? 0) > 0
-        const diasSabado = ehExcecao ? (existingCF?.dias_sabado ?? calcularSabadosDesde(mes, ano, f.data_admissao)) : 0
+        const diasSabado = ehExcecao ? (existingCF?.dias_sabado ?? calcularSabadosDesde(mes, ano, f.data_admissao, f.data_fim_aviso)) : 0
         const valorVtSabado = ehExcecao ? (existingCF?.valor_vt_sabado || f.valor_vt_sabado || 0) : 0
         const valorVt = existingCF?.valor_vt || f.valor_vt || 0
         const diasDesconto = existingCF?.dias_desconto ?? 0
-        const diasAuto = calcularDiasUteisAuto(mes, ano, f.folga_semanal, feriados, f.data_admissao)
+        const diasAuto = calcularDiasUteisAuto(mes, ano, f.folga_semanal, feriados, f.data_admissao, f.data_fim_aviso)
         const resultado = calcularVTVA({
           diasUteis: diasAuto, diasFeriado: 0, diasSabado,
           diasDesconto, valorVT: valorVt, valorVTSabado: valorVtSabado, valorVA: compValorVA,
@@ -747,7 +747,7 @@ export default function CompetenciasPage() {
     const ehExcecao = (item.valor_vt_sabado ?? 0) > 0
     const vaEfetivo = modoTodas ? (item.valorVAItem ?? 0) : valorVA
     const totalDesc = item.descontos.filter(d => !d.isCarryOver).reduce((s, d) => s + d.dias, 0)
-    const diasAuto = calcularDiasUteisAuto(mes, ano, item.funcionario.folga_semanal, feriadosDatas, item.funcionario.data_admissao)
+    const diasAuto = calcularDiasUteisAuto(mes, ano, item.funcionario.folga_semanal, feriadosDatas, item.funcionario.data_admissao, item.funcionario.data_fim_aviso)
     const r = calcularVTVA({
       diasUteis: diasAuto, diasFeriado: 0,
       diasSabado: ehExcecao ? item.dias_sabado : 0,
@@ -1070,7 +1070,7 @@ export default function CompetenciasPage() {
                         const numDescontos = item.descontos.filter(d => !d.isCarryOver && d.dias > 0).length
                         const numAcrescimos = item.descontos.filter(d => !d.isCarryOver && d.dias < 0).length
                         const temCarryOver = item.descontos.some(d => d.isCarryOver)
-                        const diasAuto = calcularDiasUteisAuto(mes, ano, item.funcionario.folga_semanal, feriadosDatas, item.funcionario.data_admissao)
+                        const diasAuto = calcularDiasUteisAuto(mes, ano, item.funcionario.folga_semanal, feriadosDatas, item.funcionario.data_admissao, item.funcionario.data_fim_aviso)
                         const r = calcularVTVA({
                           diasUteis: diasAuto, diasFeriado: 0,
                           diasSabado: diasSabadoEfetivo, diasDesconto: totalDescComCarry,

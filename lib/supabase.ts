@@ -33,7 +33,10 @@ export type Funcionario = {
   ativo: boolean
   valor_vt: number
   valor_vt_sabado: number
-  data_admissao?: string | null  // 'YYYY-MM-DD'
+  data_admissao?: string | null    // 'YYYY-MM-DD'
+  em_aviso_previo?: boolean        // está cumprindo aviso prévio
+  data_inicio_aviso?: string | null // 'YYYY-MM-DD' — início do aviso
+  data_fim_aviso?: string | null    // 'YYYY-MM-DD' — último dia de trabalho
   unidades?: Unidade & { empresas?: Empresa }
 }
 

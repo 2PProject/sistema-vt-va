@@ -17,7 +17,7 @@ import {
   calcularDiasUteisAuto,
   calcularSabadosDoMes,
   calcularSabadosDesde,
-  admitidoNoMesOuAntes,
+  trabalhaNoMes,
   formatarMoeda,
   MESES,
 } from '../../utils/calculoVT'
@@ -280,7 +280,7 @@ export default function DescontosPage() {
     let valorVA = empresa.valor_va ?? 0
     let valorVT = func.valor_vt ?? 0
     let valorVTSabado = func.valor_vt_sabado ?? 0
-    let diasSabado = (valorVTSabado > 0) ? calcularSabadosDesde(mes, ano, func.data_admissao) : 0
+    let diasSabado = (valorVTSabado > 0) ? calcularSabadosDesde(mes, ano, func.data_admissao, func.data_fim_aviso) : 0
 
     if (comp) {
       competenciaId = (comp as Competencia).id
@@ -456,7 +456,7 @@ export default function DescontosPage() {
     const totalDescontos = descontosReais.reduce((s, d) => s + d.dias, 0)
     const { valorVT, valorVTSabado, diasSabado, feriados, valorVA } = cfCarregado
     const ehExcecao = valorVTSabado > 0
-    const diasAuto = calcularDiasUteisAuto(mes, ano, func.folga_semanal, feriados, func.data_admissao)
+    const diasAuto = calcularDiasUteisAuto(mes, ano, func.folga_semanal, feriados, func.data_admissao, func.data_fim_aviso)
     const resultado = calcularVTVA({
       diasUteis: diasAuto, diasFeriado: 0,
       diasSabado: ehExcecao ? diasSabado : 0,
@@ -515,7 +515,7 @@ export default function DescontosPage() {
     const { valorVT, valorVTSabado, diasSabado, feriados, valorVA } = cfCarregado
     const ehExcecao = valorVTSabado > 0
     const totalDesc = descontos.filter(d => !d.isCarryOver).reduce((s, d) => s + d.dias, 0)
-    const diasAuto = calcularDiasUteisAuto(mes, ano, func.folga_semanal, feriados, func.data_admissao)
+    const diasAuto = calcularDiasUteisAuto(mes, ano, func.folga_semanal, feriados, func.data_admissao, func.data_fim_aviso)
     return calcularVTVA({
       diasUteis: diasAuto, diasFeriado: 0,
       diasSabado: ehExcecao ? diasSabado : 0,
@@ -554,7 +554,7 @@ export default function DescontosPage() {
 
   function toggleTodos() {
     const lista = todosFuncionarios
-      .filter(f => admitidoNoMesOuAntes(f.func.data_admissao, mes, ano))
+      .filter(f => trabalhaNoMes(mes, ano, f.func.data_admissao, f.func.data_fim_aviso))
       .filter(f => !filtroEmpresaId || f.empresa.id === filtroEmpresaId)
     if (checkedFuncs.size === lista.length) setCheckedFuncs(new Set())
     else setCheckedFuncs(new Set(lista.map(f => f.func.id)))
@@ -602,7 +602,7 @@ export default function DescontosPage() {
       const valorVTSabadoBase = (cf as CompetenciaFuncionario | null)?.valor_vt_sabado ?? func.valor_vt_sabado ?? 0
       const ehExcecao = valorVTSabadoBase > 0
       const valorVTSabado = ehExcecao ? valorVTSabadoBase : 0
-      const diasSabado = ehExcecao ? ((cf as CompetenciaFuncionario | null)?.dias_sabado ?? calcularSabadosDesde(mes, ano, func.data_admissao)) : 0
+      const diasSabado = ehExcecao ? ((cf as CompetenciaFuncionario | null)?.dias_sabado ?? calcularSabadosDesde(mes, ano, func.data_admissao, func.data_fim_aviso)) : 0
       const valorVA = (comp as Competencia | null)?.valor_va ?? empresa.valor_va ?? 0
 
       // Check for duplicate acréscimo
@@ -624,7 +624,7 @@ export default function DescontosPage() {
       }
       const novoTotal = totalDescAtual - 1 // -1 = acréscimo de 1 dia
 
-      const diasAuto = calcularDiasUteisAuto(mes, ano, func.folga_semanal, feriadosDatas, func.data_admissao)
+      const diasAuto = calcularDiasUteisAuto(mes, ano, func.folga_semanal, feriadosDatas, func.data_admissao, func.data_fim_aviso)
       const resultado = calcularVTVA({
         diasUteis: diasAuto, diasFeriado: 0,
         diasSabado: ehExcecao ? diasSabado : 0,
@@ -687,14 +687,14 @@ export default function DescontosPage() {
   // ─── Lista filtrada ──────────────────────────────────────────────────────────
 
   const listaFiltrada = todosFuncionarios
-    .filter(f => admitidoNoMesOuAntes(f.func.data_admissao, mes, ano))
+    .filter(f => trabalhaNoMes(mes, ano, f.func.data_admissao, f.func.data_fim_aviso))
     .filter(f => !filtroEmpresaId || f.empresa.id === filtroEmpresaId)
 
   // ─── JSX — View Bulk Feriado ─────────────────────────────────────────────────
 
   if (view === 'bulk-feriado') {
     const listaParaBulk = todosFuncionarios
-      .filter(f => admitidoNoMesOuAntes(f.func.data_admissao, mes, ano))
+      .filter(f => trabalhaNoMes(mes, ano, f.func.data_admissao, f.func.data_fim_aviso))
       .filter(f => !filtroEmpresaId || f.empresa.id === filtroEmpresaId)
     const todosChecked = listaParaBulk.length > 0 && checkedFuncs.size === listaParaBulk.length
 

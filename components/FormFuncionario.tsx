@@ -33,6 +33,9 @@ export default function FormFuncionario({
   const [valorVT, setValorVT] = useState(0)
   const [valorVTSabado, setValorVTSabado] = useState(0)
   const [dataAdmissao, setDataAdmissao] = useState('')
+  const [emAvisoPrevio, setEmAvisoPrevio] = useState(false)
+  const [dataInicioAviso, setDataInicioAviso] = useState('')
+  const [dataFimAviso, setDataFimAviso] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -47,6 +50,9 @@ export default function FormFuncionario({
       setValorVT(funcionario.valor_vt ?? 0)
       setValorVTSabado(funcionario.valor_vt_sabado ?? 0)
       setDataAdmissao(funcionario.data_admissao ?? '')
+      setEmAvisoPrevio(funcionario.em_aviso_previo ?? false)
+      setDataInicioAviso(funcionario.data_inicio_aviso ?? '')
+      setDataFimAviso(funcionario.data_fim_aviso ?? '')
       setEmpresaId(empresaIdInicial ?? '')
     } else {
       setNome('')
@@ -58,7 +64,10 @@ export default function FormFuncionario({
       setAtivo(true)
       setValorVT(0)
       setValorVTSabado(0)
-      setDataAdmissao(new Date().toISOString().split('T')[0]) // hoje como padrão
+      setDataAdmissao(new Date().toISOString().split('T')[0])
+      setEmAvisoPrevio(false)
+      setDataInicioAviso('')
+      setDataFimAviso('')
     }
   }, [funcionario, empresaIdInicial])
 
@@ -68,10 +77,13 @@ export default function FormFuncionario({
       setError('Selecione uma empresa.')
       return
     }
+    if (emAvisoPrevio && !dataFimAviso) {
+      setError('Informe a data do último dia de trabalho no aviso prévio.')
+      return
+    }
     setError('')
     setLoading(true)
     try {
-      // unidade_id será resolvida pelo onSave (via getOrCreateDefaultUnidade)
       await onSave(
         {
           nome,
@@ -79,11 +91,14 @@ export default function FormFuncionario({
           serie,
           funcao,
           folga_semanal: folgaSemanal,
-          unidade_id: '', // será preenchido no handler da página
+          unidade_id: '',
           ativo,
           valor_vt: valorVT,
           valor_vt_sabado: valorVTSabado,
           data_admissao: dataAdmissao || null,
+          em_aviso_previo: emAvisoPrevio,
+          data_inicio_aviso: emAvisoPrevio ? (dataInicioAviso || null) : null,
+          data_fim_aviso: emAvisoPrevio ? (dataFimAviso || null) : null,
         },
         empresaId
       )
@@ -273,6 +288,53 @@ export default function FormFuncionario({
           <label htmlFor="ativo" className="text-sm font-medium text-gray-700">
             Funcionário ativo
           </label>
+        </div>
+
+        {/* Aviso Prévio */}
+        <div className="border border-amber-200 bg-amber-50 rounded-lg p-4 space-y-3">
+          <div className="flex items-center gap-3">
+            <input
+              type="checkbox"
+              id="emAvisoPrevio"
+              checked={emAvisoPrevio}
+              onChange={(e) => {
+                setEmAvisoPrevio(e.target.checked)
+                if (!e.target.checked) { setDataInicioAviso(''); setDataFimAviso('') }
+              }}
+              className="w-4 h-4 text-amber-600 rounded border-amber-300 focus:ring-amber-500"
+            />
+            <label htmlFor="emAvisoPrevio" className="text-sm font-medium text-amber-800">
+              Em aviso prévio
+            </label>
+          </div>
+          {emAvisoPrevio && (
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="label-field">Início do aviso</label>
+                <input
+                  type="date"
+                  value={dataInicioAviso}
+                  onChange={(e) => setDataInicioAviso(e.target.value)}
+                  className="input-field"
+                />
+              </div>
+              <div>
+                <label className="label-field">Último dia de trabalho <span className="text-red-500">*</span></label>
+                <input
+                  type="date"
+                  value={dataFimAviso}
+                  onChange={(e) => setDataFimAviso(e.target.value)}
+                  required={emAvisoPrevio}
+                  className="input-field"
+                />
+              </div>
+            </div>
+          )}
+          {emAvisoPrevio && (
+            <p className="text-xs text-amber-700">
+              VT/VA calculado proporcionalmente até o último dia de trabalho.
+            </p>
+          )}
         </div>
       </div>
 

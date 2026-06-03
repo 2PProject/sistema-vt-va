@@ -63,11 +63,12 @@ export default function FuncionariosPage() {
 
     let error = await tryInsertOrUpdate(payload)
 
-    // Se falhou por coluna inexistente (migration não executada), tenta sem data_admissao
-    if (error && error.message?.includes('data_admissao')) {
-      const { data_admissao: _, ...payloadSemAdmissao } = payload as typeof payload & { data_admissao?: unknown }
-      void _
-      error = await tryInsertOrUpdate(payloadSemAdmissao as typeof payload)
+    // Fallback: remove colunas que ainda não existem no banco
+    if (error && (error.message?.includes('data_admissao') || error.message?.includes('aviso'))) {
+      const { data_admissao: _a, em_aviso_previo: _b, data_inicio_aviso: _c, data_fim_aviso: _d, ...payloadMin } =
+        payload as typeof payload & { data_admissao?: unknown; em_aviso_previo?: unknown; data_inicio_aviso?: unknown; data_fim_aviso?: unknown }
+      void _a; void _b; void _c; void _d
+      error = await tryInsertOrUpdate(payloadMin as typeof payload)
     }
 
     if (error) throw new Error(error.message)

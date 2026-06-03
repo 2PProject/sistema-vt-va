@@ -23,7 +23,8 @@ export type DadosRecibo = {
   valorVTSabado: number
   valorVA: number
   resultado: ResultadoCalculo
-  dataAdmissao?: string | null  // 'YYYY-MM-DD' — recibo proporcional quando admissão é no mês
+  dataAdmissao?: string | null   // 'YYYY-MM-DD' — recibo proporcional quando admissão é no mês
+  dataFimAviso?: string | null   // 'YYYY-MM-DD' — último dia de trabalho em aviso prévio
   descontos?: DescontoRecibo[]
   acrescimos?: DescontoRecibo[]
 }
@@ -239,15 +240,31 @@ function desenharVia(doc: any, dados: DadosRecibo, mesNome: string, referencia: 
 
 function montarReferencia(dados: DadosRecibo): string {
   const mesNome = MESES[dados.mes - 1]
+  const mesStr = String(dados.mes).padStart(2, '0')
+
+  // Determina início do período
+  let inicioDia = '01'
   if (dados.dataAdmissao) {
     const adm = new Date(dados.dataAdmissao + 'T12:00:00')
     if (adm.getFullYear() === dados.ano && adm.getMonth() + 1 === dados.mes) {
-      const [, m, d] = dados.dataAdmissao.split('-')
-      const ultimoDia = new Date(dados.ano, dados.mes, 0).getDate()
-      return `${d}/${m}/${dados.ano} a ${String(ultimoDia).padStart(2,'0')}/${m}/${dados.ano}`
+      inicioDia = String(adm.getDate()).padStart(2, '0')
     }
   }
-  return `${mesNome}/${dados.ano}`
+
+  // Determina fim do período
+  const ultimoDiaNum = new Date(dados.ano, dados.mes, 0).getDate()
+  let fimDia = String(ultimoDiaNum).padStart(2, '0')
+  if (dados.dataFimAviso) {
+    const fim = new Date(dados.dataFimAviso + 'T12:00:00')
+    if (fim.getFullYear() === dados.ano && fim.getMonth() + 1 === dados.mes) {
+      fimDia = String(fim.getDate()).padStart(2, '0')
+    }
+  }
+
+  if (inicioDia === '01' && fimDia === String(ultimoDiaNum).padStart(2, '0')) {
+    return `${mesNome}/${dados.ano}`
+  }
+  return `${inicioDia}/${mesStr}/${dados.ano} a ${fimDia}/${mesStr}/${dados.ano}`
 }
 
 export async function gerarReciboPDF(dados: DadosRecibo): Promise<void> {

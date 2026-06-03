@@ -63,7 +63,13 @@ export default function TableFuncionarios({
               <td className="table-cell text-gray-500 text-sm">{f.folga_semanal}</td>
               <td className="table-cell">
                 {f.ativo ? (
-                  <span className="badge-green">Ativo</span>
+                  f.em_aviso_previo ? (
+                    <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
+                      Aviso Prévio
+                    </span>
+                  ) : (
+                    <span className="badge-green">Ativo</span>
+                  )
                 ) : (
                   <span className="badge-red">Inativo</span>
                 )}
