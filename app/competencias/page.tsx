@@ -561,10 +561,36 @@ export default function CompetenciasPage() {
     setSucesso(false)
 
     if (modoTodas) {
-      // Em modoTodas: itens já têm competencia_id, salva em paralelo
+      // Itens com competencia_id: salva normalmente
+      // Itens âmbar (sem competencia_id) com descontos: cria competência antes
+      const ambarComConteudo = itens.filter(
+        item => !item.competencia_id && item.descontos.some(d => !d.isCarryOver)
+      )
+
+      // Agrupa por unidade para criar uma competência por unidade (evita conflito de chave única)
+      const unidadesAmbar = Array.from(new Set(ambarComConteudo.map(i => i.funcionario.unidade_id)))
+      const novasCompIds = new Map<string, string>() // unidade_id → competencia_id
+
+      for (const unidadeId of unidadesAmbar) {
+        // Tenta buscar competência existente primeiro (pode ter sido criada pela página de descontos)
+        let { data: comp } = await supabase
+          .from('competencias').select('id')
+          .eq('unidade_id', unidadeId).eq('mes', mes).eq('ano', ano).maybeSingle()
+        if (!comp) {
+          const itemRef = ambarComConteudo.find(i => i.funcionario.unidade_id === unidadeId)
+          const { data: nova } = await supabase
+            .from('competencias')
+            .insert({ unidade_id: unidadeId, mes, ano, dias_uteis: 0, feriados_mes: feriadosDatas.length, valor_va: itemRef?.valorVAItem ?? 0 })
+            .select('id').single()
+          comp = nova
+        }
+        if (comp) novasCompIds.set(unidadeId, comp.id)
+      }
+
       await Promise.all(itens.map(item => {
-        if (!item.competencia_id) return Promise.resolve()
-        return salvarItemCF(item, item.valorVAItem)
+        const compId = item.competencia_id || novasCompIds.get(item.funcionario.unidade_id) || ''
+        if (!compId) return Promise.resolve()
+        return salvarItemCF({ ...item, competencia_id: compId }, item.valorVAItem)
       }))
     } else {
       const unidadeId = await getOrCreateDefaultUnidade(empresaId)
@@ -773,8 +799,9 @@ export default function CompetenciasPage() {
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6">
               <div className="flex items-center justify-between mb-4">
                 <div>
-                  <h2 className="text-base font-bold text-gray-800">Descontos</h2>
+                  <h2 className="text-base font-bold text-gray-800">Descontos — {MESES[mes - 1]}/{ano}</h2>
                   <p className="text-xs text-gray-500">{modalItem.funcionario.nome}</p>
+                  <p className="text-xs text-blue-600 mt-0.5">Deduções aplicadas ao VT de {MESES[mes - 1]}/{ano}</p>
                 </div>
                 <button onClick={() => setModalIdx(null)} className="text-gray-400 hover:text-gray-600">
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -836,10 +863,20 @@ export default function CompetenciasPage() {
               {tiposDesconto.length > 0 ? (
                 <div className="border-t border-gray-100 pt-4">
                   <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Adicionar desconto</p>
-                  <p className="text-xs text-gray-400 mb-2">
-                    Datas podem ser do mês anterior (para descontos retroativos de VT pago antecipadamente).
-                    Se o período ultrapassar o fim deste mês, os dias excedentes serão aplicados automaticamente no próximo.
-                  </p>
+                  {novaDataInicio && (() => {
+                    const [dAno, dMes] = novaDataInicio.split('-').map(Number)
+                    const foraDoMes = dAno !== ano || dMes !== mes
+                    return foraDoMes ? (
+                      <div className="bg-amber-50 border border-amber-200 text-amber-800 text-xs px-3 py-2 rounded-lg mb-2">
+                        ⚠ Data fora de {MESES[mes - 1]}/{ano}. O desconto de <strong>{novoDias} dia(s)</strong> será deduzido do VT de <strong>{MESES[mes - 1]}/{ano}</strong>.
+                      </div>
+                    ) : null
+                  })()}
+                  {!novaDataInicio && (
+                    <p className="text-xs text-gray-400 mb-2">
+                      Informe o período da ausência. Se ultrapassar o fim deste mês, os dias excedentes vão para o próximo.
+                    </p>
+                  )}
                   <div className="flex gap-2 mb-2">
                     <select
                       value={novoTipoId}

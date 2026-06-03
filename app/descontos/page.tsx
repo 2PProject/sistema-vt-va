@@ -998,8 +998,12 @@ export default function DescontosPage() {
                 <p className="font-semibold text-gray-900 text-lg">{selecionado.func.nome}</p>
                 <p className="text-sm text-gray-500">{selecionado.func.funcao} — {selecionado.empresa.razao_social}</p>
               </div>
-              <div className="flex items-center gap-2 bg-blue-50 px-4 py-2 rounded-lg">
-                <span className="text-sm font-medium text-blue-700">{MESES[mes - 1]} / {ano}</span>
+              <div className="flex flex-col items-end gap-1">
+                <div className="flex items-center gap-2 bg-blue-50 px-4 py-2 rounded-lg">
+                  <span className="text-xs text-blue-500">Competência</span>
+                  <span className="text-sm font-bold text-blue-700">{MESES[mes - 1]} / {ano}</span>
+                </div>
+                <p className="text-xs text-gray-400">Descontos deduzidos do VT de {MESES[mes - 1]}/{ano}</p>
               </div>
             </div>
           </div>
@@ -1125,7 +1129,22 @@ export default function DescontosPage() {
             {/* Coluna direita: formulário */}
             <div className="md:col-span-3 space-y-4">
               <div className="card">
-                <h3 className="text-sm font-semibold text-gray-700 mb-4">Adicionar Desconto</h3>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-sm font-semibold text-gray-700">Adicionar Desconto</h3>
+                  <span className="text-xs font-semibold bg-blue-100 text-blue-700 px-2 py-1 rounded-full">
+                    Deduz de {MESES[mes - 1]}/{ano}
+                  </span>
+                </div>
+
+                {/* Aviso quando data está fora do mês de competência */}
+                {novaDataInicio && (() => {
+                  const [dAno, dMes] = novaDataInicio.split('-').map(Number)
+                  return (dAno !== ano || dMes !== mes) ? (
+                    <div className="bg-amber-50 border border-amber-200 text-amber-800 text-xs px-3 py-2 rounded-lg mb-3">
+                      ⚠ A data informada é de <strong>{MESES[dMes - 1]}/{dAno}</strong>. O desconto de <strong>{novoDias} dia(s)</strong> será deduzido do VT de <strong>{MESES[mes - 1]}/{ano}</strong>.
+                    </div>
+                  ) : null
+                })()}
 
                 {tiposDesconto.length === 0 ? (
                   <p className="text-xs text-amber-600">Cadastre tipos de desconto em <strong>Tipos de Desconto</strong> primeiro.</p>
