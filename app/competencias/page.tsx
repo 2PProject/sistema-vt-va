@@ -18,6 +18,7 @@ import {
   calcularDiasUteisAuto,
   calcularSabadosDoMes,
   calcularSabadosDesde,
+  admitidoNoMesOuAntes,
   formatarMoeda,
   MESES,
 } from '../../utils/calculoVT'
@@ -245,13 +246,14 @@ export default function CompetenciasPage() {
       const { data: allFuncs } = await supabase
         .from('funcionarios').select('*')
         .in('unidade_id', unidadeIds).eq('ativo', true).order('nome')
-      const allFuncsList = (allFuncs ?? []) as Funcionario[]
+      const allFuncsList = ((allFuncs ?? []) as Funcionario[])
+        .filter(f => admitidoNoMesOuAntes(f.data_admissao, mes, ano))
 
       const compByUnidade = new Map((allComps ?? []).map(c => [c.unidade_id, c as Competencia]))
       const cfByFuncComp = new Map(cfList.map(cf => [cf.competencia_id + '|' + cf.funcionario_id, cf]))
 
-      // Itens de CFs existentes
-      const items: CFLocal[] = cfList.map(cf => {
+      // Itens de CFs existentes (apenas de funcionários já admitidos no mês)
+      const items: CFLocal[] = cfList.filter(cf => admitidoNoMesOuAntes(cf.funcionarios?.data_admissao, mes, ano)).map(cf => {
         const f = cf.funcionarios
         const loadedVtSabado = cf.valor_vt_sabado || f.valor_vt_sabado || 0
         const ehExcecao = loadedVtSabado > 0
@@ -326,9 +328,10 @@ export default function CompetenciasPage() {
       setCompetencia(null)
     }
 
-    const { data: funcs } = await supabase
+    const { data: funcsRaw } = await supabase
       .from('funcionarios').select('*')
       .eq('unidade_id', unidadeId).eq('ativo', true).order('nome')
+    const funcs = ((funcsRaw ?? []) as Funcionario[]).filter(f => admitidoNoMesOuAntes(f.data_admissao, mes, ano))
 
     // Carry-over do mês anterior
     const prevMes = mes === 1 ? 12 : mes - 1
@@ -699,11 +702,12 @@ export default function CompetenciasPage() {
         compValorVA = emp.valor_va ?? 0
       }
 
-      const { data: funcs } = await supabase
+      const { data: funcsRaw2 } = await supabase
         .from('funcionarios').select('*')
         .eq('unidade_id', unidadeId).eq('ativo', true)
+      const funcs2 = ((funcsRaw2 ?? []) as Funcionario[]).filter(f => admitidoNoMesOuAntes(f.data_admissao, mes, ano))
 
-      await Promise.all(((funcs ?? []) as Funcionario[]).map(async (f) => {
+      await Promise.all(funcs2.map(async (f) => {
         const { data: existingCF } = await supabase
           .from('competencia_funcionario').select('id, dias_desconto, dias_sabado, valor_vt, valor_vt_sabado')
           .eq('competencia_id', compId).eq('funcionario_id', f.id).maybeSingle()

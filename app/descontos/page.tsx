@@ -17,6 +17,7 @@ import {
   calcularDiasUteisAuto,
   calcularSabadosDoMes,
   calcularSabadosDesde,
+  admitidoNoMesOuAntes,
   formatarMoeda,
   MESES,
 } from '../../utils/calculoVT'
@@ -552,9 +553,9 @@ export default function DescontosPage() {
   }
 
   function toggleTodos() {
-    const lista = filtroEmpresaId
-      ? todosFuncionarios.filter(f => f.empresa.id === filtroEmpresaId)
-      : todosFuncionarios
+    const lista = todosFuncionarios
+      .filter(f => admitidoNoMesOuAntes(f.func.data_admissao, mes, ano))
+      .filter(f => !filtroEmpresaId || f.empresa.id === filtroEmpresaId)
     if (checkedFuncs.size === lista.length) setCheckedFuncs(new Set())
     else setCheckedFuncs(new Set(lista.map(f => f.func.id)))
   }
@@ -685,16 +686,16 @@ export default function DescontosPage() {
 
   // ─── Lista filtrada ──────────────────────────────────────────────────────────
 
-  const listaFiltrada = filtroEmpresaId
-    ? todosFuncionarios.filter(f => f.empresa.id === filtroEmpresaId)
-    : todosFuncionarios
+  const listaFiltrada = todosFuncionarios
+    .filter(f => admitidoNoMesOuAntes(f.func.data_admissao, mes, ano))
+    .filter(f => !filtroEmpresaId || f.empresa.id === filtroEmpresaId)
 
   // ─── JSX — View Bulk Feriado ─────────────────────────────────────────────────
 
   if (view === 'bulk-feriado') {
-    const listaParaBulk = filtroEmpresaId
-      ? todosFuncionarios.filter(f => f.empresa.id === filtroEmpresaId)
-      : todosFuncionarios
+    const listaParaBulk = todosFuncionarios
+      .filter(f => admitidoNoMesOuAntes(f.func.data_admissao, mes, ano))
+      .filter(f => !filtroEmpresaId || f.empresa.id === filtroEmpresaId)
     const todosChecked = listaParaBulk.length > 0 && checkedFuncs.size === listaParaBulk.length
 
     return (

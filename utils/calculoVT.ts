@@ -201,3 +201,10 @@ export function calcularSabadosDesde(mes: number, ano: number, dataAdmissao?: st
   return count
 }
 
+/** Retorna true se o funcionário já estava admitido no mês/ano informado. */
+export function admitidoNoMesOuAntes(dataAdmissao: string | null | undefined, mes: number, ano: number): boolean {
+  if (!dataAdmissao) return true
+  const [admAno, admMes] = dataAdmissao.split('-').map(Number)
+  return admAno * 100 + admMes <= ano * 100 + mes
+}
+

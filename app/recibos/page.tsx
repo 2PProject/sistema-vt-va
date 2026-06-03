@@ -11,7 +11,7 @@ import {
   getOrCreateDefaultUnidade,
   garantirFeriadosAno,
 } from '../../lib/supabase'
-import { calcularVTVA, calcularDiasUteisAuto, formatarMoeda, MESES } from '../../utils/calculoVT'
+import { calcularVTVA, calcularDiasUteisAuto, admitidoNoMesOuAntes, formatarMoeda, MESES } from '../../utils/calculoVT'
 
 type CFComFunc = CompetenciaFuncionario & { funcionarios: Funcionario }
 
@@ -80,7 +80,9 @@ export default function RecibosPage() {
         .select('*, funcionarios(*)')
         .eq('competencia_id', comp.id)
 
-      const cfList = (cfs as CFComFunc[]) ?? []
+      const cfList = ((cfs as CFComFunc[]) ?? []).filter(cf =>
+        admitidoNoMesOuAntes(cf.funcionarios?.data_admissao, mes, ano)
+      )
 
       // Carrega descontos de todos os CFs de uma vez
       const cfIds = cfList.map(cf => cf.id)
