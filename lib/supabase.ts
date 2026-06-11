@@ -166,3 +166,68 @@ export async function getOrCreateDefaultUnidade(empresaId: string): Promise<stri
 
   return (nova as { id: string } | null)?.id ?? null
 }
+
+// ── Salão NF – tipos ─────────────────────────────────────────────────────────
+
+export type SalaoProfissional = {
+  id: string
+  nome: string
+  cpf?: string | null
+  email?: string | null
+  telefone?: string | null
+  ativo?: boolean
+  criado_em?: string
+}
+
+export type SalaoProfissionalEmpresa = {
+  id: string
+  profissional_id: string
+  empresa_id: string
+  ativo?: boolean
+  profissionais?: SalaoProfissional
+  empresas?: Empresa
+}
+
+export type SalaoNFStatus = 'pendente' | 'nf_recebida' | 'fora_do_prazo'
+
+export type SalaoNFRegistro = {
+  id: string
+  profissional_id: string
+  empresa_id: string
+  mes_referencia: string  // 'YYYY-MM'
+  valor_comissao: number
+  status: SalaoNFStatus
+  criado_em?: string
+  atualizado_em?: string
+  profissionais?: SalaoProfissional
+  empresas?: Empresa
+}
+
+export type SalaoNFConfirmacao = {
+  id: string
+  registro_id: string
+  numero_nf: string
+  data_nf: string
+  valor_nf: number
+  confirmado_por?: string | null
+  confirmado_em?: string
+}
+
+export type SalaoNFHistorico = {
+  id: string
+  registro_id: string
+  acao: string
+  descricao?: string | null
+  dados_anteriores?: Record<string, unknown> | null
+  dados_novos?: Record<string, unknown> | null
+  usuario?: string | null
+  criado_em?: string
+}
+
+export type SalaoConfigEmpresa = {
+  id: string
+  empresa_id: string
+  dia_prazo: number
+  tolerancia_valor: number
+  empresas?: Empresa
+}

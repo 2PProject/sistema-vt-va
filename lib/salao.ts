@@ -1,0 +1,369 @@
+import { supabase, SalaoProfissional, SalaoProfissionalEmpresa, SalaoNFRegistro, SalaoNFConfirmacao, SalaoNFHistorico, SalaoConfigEmpresa, Empresa } from './supabase'
+
+// ── Profissionais ────────────────────────────────────────────────────────────
+
+export async function listarProfissionais(): Promise<SalaoProfissional[]> {
+  const { data } = await supabase.from('salao_profissionais').select('*').order('nome')
+  return data ?? []
+}
+
+export async function criarProfissional(p: Omit<SalaoProfissional, 'id' | 'criado_em'>): Promise<SalaoProfissional | null> {
+  const { data } = await supabase.from('salao_profissionais').insert(p).select().single()
+  return data
+}
+
+export async function atualizarProfissional(id: string, p: Partial<SalaoProfissional>): Promise<void> {
+  await supabase.from('salao_profissionais').update(p).eq('id', id)
+}
+
+export async function listarProfissionalEmpresas(profissionalId: string): Promise<(SalaoProfissionalEmpresa & { empresas?: Empresa })[]> {
+  const { data } = await supabase
+    .from('salao_profissional_empresa')
+    .select('*, empresas(id, razao_social, cnpj)')
+    .eq('profissional_id', profissionalId)
+  return data ?? []
+}
+
+export async function vincularProfissionalEmpresa(profissionalId: string, empresaId: string): Promise<void> {
+  await supabase.from('salao_profissional_empresa').upsert(
+    { profissional_id: profissionalId, empresa_id: empresaId, ativo: true },
+    { onConflict: 'profissional_id,empresa_id' }
+  )
+}
+
+// ── NF Registros ────────────────────────────────────────────────────────────
+
+export type RegistroComDetalhes = SalaoNFRegistro & {
+  profissionais?: SalaoProfissional
+  empresas?: Empresa
+  confirmacao?: SalaoNFConfirmacao | null
+}
+
+export async function listarRegistros(params: {
+  empresaId?: string
+  mesReferencia?: string
+  status?: string
+}): Promise<RegistroComDetalhes[]> {
+  let q = supabase
+    .from('salao_nf_registros')
+    .select('*, profissionais:salao_profissionais(id, nome, cpf), empresas(id, razao_social)')
+    .order('mes_referencia', { ascending: false })
+    .order('criado_em', { ascending: false })
+
+  if (params.empresaId) q = q.eq('empresa_id', params.empresaId)
+  if (params.mesReferencia) q = q.eq('mes_referencia', params.mesReferencia)
+  if (params.status) q = q.eq('status', params.status)
+
+  const { data: registros } = await q
+  if (!registros || registros.length === 0) return []
+
+  // Load confirmations
+  const ids = registros.map((r: SalaoNFRegistro) => r.id)
+  const { data: confs } = await supabase
+    .from('salao_nf_confirmacoes')
+    .select('*')
+    .in('registro_id', ids)
+
+  const confMap = new Map<string, SalaoNFConfirmacao>()
+  ;(confs ?? []).forEach((c: SalaoNFConfirmacao) => confMap.set(c.registro_id, c))
+
+  return registros.map((r: SalaoNFRegistro) => ({
+    ...r,
+    confirmacao: confMap.get(r.id) ?? null,
+  }))
+}
+
+export async function criarRegistro(r: Omit<SalaoNFRegistro, 'id' | 'criado_em' | 'atualizado_em'>): Promise<SalaoNFRegistro | null> {
+  const { data } = await supabase.from('salao_nf_registros').insert(r).select().single()
+  return data
+}
+
+export async function confirmarNF(params: {
+  registroId: string
+  numeroNF: string
+  dataNF: string
+  valorNF: number
+  tolerancia: number
+  valorComissao: number
+  usuario?: string
+}): Promise<{ ok: boolean; erro?: string }> {
+  const { registroId, numeroNF, dataNF, valorNF, tolerancia, valorComissao, usuario } = params
+
+  if (Math.abs(valorNF - valorComissao) > tolerancia) {
+    return { ok: false, erro: `Valor da NF (${valorNF.toFixed(2)}) difere da comissão (${valorComissao.toFixed(2)}) além da tolerância (±${tolerancia.toFixed(2)}).` }
+  }
+
+  // Buscar registro atual para histórico
+  const { data: reg } = await supabase.from('salao_nf_registros').select('*').eq('id', registroId).single()
+  if (!reg) return { ok: false, erro: 'Registro não encontrado.' }
+
+  // Upsert confirmação
+  await supabase.from('salao_nf_confirmacoes').upsert({
+    registro_id: registroId,
+    numero_nf: numeroNF,
+    data_nf: dataNF,
+    valor_nf: valorNF,
+    confirmado_por: usuario ?? null,
+    confirmado_em: new Date().toISOString(),
+  }, { onConflict: 'registro_id' })
+
+  // Update status
+  await supabase.from('salao_nf_registros').update({ status: 'nf_recebida', atualizado_em: new Date().toISOString() }).eq('id', registroId)
+
+  // Log history
+  await registrarHistorico({
+    registroId,
+    acao: 'NF Confirmada',
+    descricao: `NF ${numeroNF} em ${dataNF}, valor R$ ${valorNF.toFixed(2)}`,
+    dadosAnteriores: { status: reg.status },
+    dadosNovos: { status: 'nf_recebida', numero_nf: numeroNF, valor_nf: valorNF },
+    usuario,
+  })
+
+  return { ok: true }
+}
+
+export async function substituirNF(params: {
+  registroId: string
+  numeroNF: string
+  dataNF: string
+  valorNF: number
+  motivo: string
+  tolerancia: number
+  valorComissao: number
+  usuario?: string
+}): Promise<{ ok: boolean; erro?: string }> {
+  const { registroId, numeroNF, dataNF, valorNF, motivo, tolerancia, valorComissao, usuario } = params
+
+  if (Math.abs(valorNF - valorComissao) > tolerancia) {
+    return { ok: false, erro: `Valor da NF (${valorNF.toFixed(2)}) difere da comissão (${valorComissao.toFixed(2)}) além da tolerância (±${tolerancia.toFixed(2)}).` }
+  }
+
+  // Buscar confirmação atual para histórico
+  const { data: confAtual } = await supabase.from('salao_nf_confirmacoes').select('*').eq('registro_id', registroId).single()
+
+  // Update confirmação
+  await supabase.from('salao_nf_confirmacoes').upsert({
+    registro_id: registroId,
+    numero_nf: numeroNF,
+    data_nf: dataNF,
+    valor_nf: valorNF,
+    confirmado_por: usuario ?? null,
+    confirmado_em: new Date().toISOString(),
+  }, { onConflict: 'registro_id' })
+
+  // Log history
+  await registrarHistorico({
+    registroId,
+    acao: 'NF Substituída',
+    descricao: motivo,
+    dadosAnteriores: confAtual ? { numero_nf: confAtual.numero_nf, valor_nf: confAtual.valor_nf } : null,
+    dadosNovos: { numero_nf: numeroNF, valor_nf: valorNF },
+    usuario,
+  })
+
+  return { ok: true }
+}
+
+export async function marcarForaPrazo(registroId: string, usuario?: string): Promise<void> {
+  const { data: reg } = await supabase.from('salao_nf_registros').select('*').eq('id', registroId).single()
+
+  await supabase.from('salao_nf_registros').update({ status: 'fora_do_prazo', atualizado_em: new Date().toISOString() }).eq('id', registroId)
+
+  await registrarHistorico({
+    registroId,
+    acao: 'Fora do Prazo',
+    descricao: 'Status alterado automaticamente para Fora do Prazo',
+    dadosAnteriores: { status: reg?.status },
+    dadosNovos: { status: 'fora_do_prazo' },
+    usuario,
+  })
+}
+
+// Checks and transitions overdue records for a given month
+export async function verificarPrazos(mesReferencia: string, usuario?: string): Promise<number> {
+  const hoje = new Date()
+
+  // Get configs and find overdue
+  const { data: configs } = await supabase
+    .from('salao_config_empresa')
+    .select('*, empresas(id)')
+
+  const { data: pendentes } = await supabase
+    .from('salao_nf_registros')
+    .select('id, empresa_id, mes_referencia, status')
+    .eq('mes_referencia', mesReferencia)
+    .eq('status', 'pendente')
+
+  if (!pendentes || pendentes.length === 0) return 0
+
+  const configMap = new Map<string, SalaoConfigEmpresa>()
+  ;(configs ?? []).forEach((c: SalaoConfigEmpresa) => configMap.set(c.empresa_id, c))
+
+  const [ano, mes] = mesReferencia.split('-').map(Number)
+  let count = 0
+
+  for (const reg of pendentes) {
+    const config = configMap.get(reg.empresa_id)
+    const diaPrazo = config?.dia_prazo ?? 10
+    // Deadline = dia_prazo of NEXT month
+    const prazo = new Date(mes === 12 ? ano + 1 : ano, mes === 12 ? 0 : mes, diaPrazo)
+    if (hoje > prazo) {
+      await marcarForaPrazo(reg.id, usuario)
+      count++
+    }
+  }
+
+  return count
+}
+
+// ── Histórico ────────────────────────────────────────────────────────────────
+
+export async function buscarHistorico(registroId: string): Promise<SalaoNFHistorico[]> {
+  const { data } = await supabase
+    .from('salao_nf_historico')
+    .select('*')
+    .eq('registro_id', registroId)
+    .order('criado_em', { ascending: false })
+  return data ?? []
+}
+
+async function registrarHistorico(params: {
+  registroId: string
+  acao: string
+  descricao?: string
+  dadosAnteriores?: Record<string, unknown> | null
+  dadosNovos?: Record<string, unknown> | null
+  usuario?: string
+}): Promise<void> {
+  await supabase.from('salao_nf_historico').insert({
+    registro_id: params.registroId,
+    acao: params.acao,
+    descricao: params.descricao ?? null,
+    dados_anteriores: params.dadosAnteriores ?? null,
+    dados_novos: params.dadosNovos ?? null,
+    usuario: params.usuario ?? null,
+    criado_em: new Date().toISOString(),
+  })
+}
+
+// ── Config ────────────────────────────────────────────────────────────────────
+
+export async function listarConfigs(): Promise<(SalaoConfigEmpresa & { empresas?: Empresa })[]> {
+  const { data } = await supabase
+    .from('salao_config_empresa')
+    .select('*, empresas(id, razao_social)')
+    .order('empresa_id')
+  return data ?? []
+}
+
+export async function salvarConfig(config: Omit<SalaoConfigEmpresa, 'id'>): Promise<void> {
+  await supabase.from('salao_config_empresa').upsert(config, { onConflict: 'empresa_id' })
+}
+
+// ── Excel Import ────────────────────────────────────────────────────────────
+
+export type LinhaImportacao = {
+  profissionalNome: string
+  mesReferencia: string  // 'YYYY-MM'
+  valorComissao: number
+  empresaNome: string
+}
+
+export async function importarExcel(arquivo: File): Promise<{ linhas: LinhaImportacao[]; erros: string[] }> {
+  const XLSX = await import('xlsx')
+  const buffer = await arquivo.arrayBuffer()
+  const wb = XLSX.read(buffer, { type: 'array' })
+  const linhas: LinhaImportacao[] = []
+  const erros: string[] = []
+
+  for (const sheetName of wb.SheetNames) {
+    const ws = wb.Sheets[sheetName]
+    const rows: Record<string, unknown>[] = XLSX.utils.sheet_to_json(ws, { defval: '' })
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i]
+      const nome = String(row['Nome'] ?? row['nome'] ?? '').trim()
+      const mesRef = String(row['Mês referência'] ?? row['mes_referencia'] ?? row['Mes referencia'] ?? '').trim()
+      const valorRaw = row['Valor comissão'] ?? row['valor_comissao'] ?? row['Valor comissao'] ?? 0
+      const valor = typeof valorRaw === 'number' ? valorRaw : parseFloat(String(valorRaw).replace(',', '.'))
+
+      if (!nome) { erros.push(`Aba "${sheetName}" linha ${i+2}: Nome vazio`); continue }
+      if (!mesRef) { erros.push(`Aba "${sheetName}" linha ${i+2}: Mês referência vazio`); continue }
+      if (isNaN(valor) || valor <= 0) { erros.push(`Aba "${sheetName}" linha ${i+2}: Valor inválido`); continue }
+
+      // Parse mes referencia (accepts 'MM/YYYY' or 'YYYY-MM')
+      let mesNorm = mesRef
+      if (/^\d{2}\/\d{4}$/.test(mesRef)) {
+        const [m, a] = mesRef.split('/')
+        mesNorm = `${a}-${m}`
+      }
+
+      linhas.push({ profissionalNome: nome, mesReferencia: mesNorm, valorComissao: valor, empresaNome: sheetName })
+    }
+  }
+
+  return { linhas, erros }
+}
+
+export async function processarImportacao(linhas: LinhaImportacao[]): Promise<{ criados: number; erros: string[] }> {
+  const erros: string[] = []
+  let criados = 0
+
+  // Cache companies and professionals
+  const { data: empresas } = await supabase.from('empresas').select('id, razao_social')
+  const empresaMap = new Map<string, string>() // nome -> id
+  ;(empresas ?? []).forEach((e: any) => empresaMap.set(e.razao_social.toLowerCase(), e.id))
+
+  const { data: profs } = await supabase.from('salao_profissionais').select('id, nome')
+  const profMap = new Map<string, string>() // nome -> id
+  ;(profs ?? []).forEach((p: any) => profMap.set(p.nome.toLowerCase(), p.id))
+
+  for (const linha of linhas) {
+    // Find or create empresa
+    let empresaId = empresaMap.get(linha.empresaNome.toLowerCase())
+    if (!empresaId) {
+      erros.push(`Empresa "${linha.empresaNome}" não encontrada. Cadastre-a primeiro.`)
+      continue
+    }
+
+    // Find or create profissional
+    let profId = profMap.get(linha.profissionalNome.toLowerCase())
+    if (!profId) {
+      const { data: novoPro } = await supabase.from('salao_profissionais')
+        .insert({ nome: linha.profissionalNome, ativo: true })
+        .select('id').single()
+      if (!novoPro) { erros.push(`Erro ao criar profissional "${linha.profissionalNome}"`); continue }
+      profId = novoPro.id
+      profMap.set(linha.profissionalNome.toLowerCase(), profId!)
+    }
+
+    // Vincular profissional à empresa
+    await vincularProfissionalEmpresa(profId!, empresaId)
+
+    // Check if record already exists
+    const { data: existente } = await supabase
+      .from('salao_nf_registros')
+      .select('id')
+      .eq('profissional_id', profId)
+      .eq('empresa_id', empresaId)
+      .eq('mes_referencia', linha.mesReferencia)
+      .maybeSingle()
+
+    if (existente) {
+      erros.push(`Registro já existe para "${linha.profissionalNome}" em ${linha.mesReferencia} (${linha.empresaNome})`)
+      continue
+    }
+
+    await criarRegistro({
+      profissional_id: profId!,
+      empresa_id: empresaId,
+      mes_referencia: linha.mesReferencia,
+      valor_comissao: linha.valorComissao,
+      status: 'pendente',
+    })
+    criados++
+  }
+
+  return { criados, erros }
+}
