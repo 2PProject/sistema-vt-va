@@ -306,6 +306,74 @@ export async function importarExcel(arquivo: File): Promise<{ linhas: LinhaImpor
   return { linhas, erros }
 }
 
+// ── Importação de Profissionais via Planilha ────────────────────────────────
+
+export type LinhaProfissionalImportacao = {
+  nome: string
+  cnpj: string
+}
+
+export async function importarProfissionaisExcel(arquivo: File): Promise<{ linhas: LinhaProfissionalImportacao[]; erros: string[] }> {
+  const XLSX = await import('xlsx')
+  const buffer = await arquivo.arrayBuffer()
+  const wb = XLSX.read(buffer, { type: 'array' })
+  const linhas: LinhaProfissionalImportacao[] = []
+  const erros: string[] = []
+
+  const sheetName = wb.SheetNames[0]
+  if (!sheetName) {
+    erros.push('Planilha vazia ou sem abas.')
+    return { linhas, erros }
+  }
+
+  const ws = wb.Sheets[sheetName]
+  const rows: Record<string, unknown>[] = XLSX.utils.sheet_to_json(ws, { defval: '' })
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i]
+    const nome = String(row['Nome'] ?? row['nome'] ?? '').trim()
+    const cnpj = String(row['CNPJ'] ?? row['cnpj'] ?? '').trim()
+
+    if (!nome) { erros.push(`Linha ${i + 2}: Nome vazio`); continue }
+
+    linhas.push({ nome, cnpj })
+  }
+
+  return { linhas, erros }
+}
+
+export async function processarImportacaoProfissionais(
+  linhas: LinhaProfissionalImportacao[]
+): Promise<{ criados: number; atualizados: number; erros: string[] }> {
+  const erros: string[] = []
+  let criados = 0
+  let atualizados = 0
+
+  const { data: existentes } = await supabase.from('salao_profissionais').select('id, nome, cnpj')
+  const nomesMap = new Map<string, string>()
+  const cnpjMap = new Map<string, string>()
+  ;(existentes ?? []).forEach((p: any) => {
+    nomesMap.set(p.nome.toLowerCase(), p.id)
+    if (p.cnpj) cnpjMap.set((p.cnpj as string).replace(/\D/g, ''), p.id)
+  })
+
+  for (const linha of linhas) {
+    const cnpjLimpo = linha.cnpj.replace(/\D/g, '')
+    const existenteId = cnpjLimpo ? cnpjMap.get(cnpjLimpo) : nomesMap.get(linha.nome.toLowerCase())
+
+    if (existenteId) {
+      await supabase.from('salao_profissionais').update({ nome: linha.nome, cnpj: linha.cnpj || null }).eq('id', existenteId)
+      atualizados++
+    } else {
+      const { error } = await supabase.from('salao_profissionais').insert({ nome: linha.nome, cnpj: linha.cnpj || null, ativo: true })
+      if (error) { erros.push(`Erro ao criar "${linha.nome}": ${error.message}`); continue }
+      criados++
+    }
+  }
+
+  return { criados, atualizados, erros }
+}
+
 export async function processarImportacao(linhas: LinhaImportacao[]): Promise<{ criados: number; erros: string[] }> {
   const erros: string[] = []
   let criados = 0

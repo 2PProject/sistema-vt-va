@@ -138,6 +138,8 @@ CREATE TABLE IF NOT EXISTS salao_config_empresa (
 -- ============================================================
 -- Adicionar colunas se já existem as tabelas (migração incremental)
 -- ============================================================
+ALTER TABLE salao_profissionais ADD COLUMN IF NOT EXISTS cnpj TEXT;
+
 ALTER TABLE funcionarios ADD COLUMN IF NOT EXISTS data_admissao DATE;
 ALTER TABLE funcionarios ADD COLUMN IF NOT EXISTS em_aviso_previo BOOLEAN DEFAULT FALSE;
 ALTER TABLE funcionarios ADD COLUMN IF NOT EXISTS data_inicio_aviso DATE;

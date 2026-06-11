@@ -172,6 +172,7 @@ export async function getOrCreateDefaultUnidade(empresaId: string): Promise<stri
 export type SalaoProfissional = {
   id: string
   nome: string
+  cnpj?: string | null
   cpf?: string | null
   email?: string | null
   telefone?: string | null

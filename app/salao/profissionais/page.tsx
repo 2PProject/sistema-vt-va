@@ -3,14 +3,14 @@
 import { useEffect, useState } from 'react'
 import LayoutAdmin from '../../../components/LayoutAdmin'
 import { supabase, SalaoProfissional, Empresa } from '../../../lib/supabase'
-import { listarProfissionais, criarProfissional, atualizarProfissional, listarProfissionalEmpresas, vincularProfissionalEmpresa } from '../../../lib/salao'
+import { listarProfissionais, criarProfissional, atualizarProfissional, listarProfissionalEmpresas, vincularProfissionalEmpresa, importarProfissionaisExcel, processarImportacaoProfissionais, LinhaProfissionalImportacao } from '../../../lib/salao'
 
-const EMPTY = { nome: '', cpf: '', email: '', telefone: '', ativo: true }
+const EMPTY = { nome: '', cnpj: '', cpf: '', email: '', telefone: '', ativo: true }
 
 export default function SalaoProfissionaisPage() {
   const [lista, setLista] = useState<SalaoProfissional[]>([])
   const [empresas, setEmpresas] = useState<Empresa[]>([])
-  const [form, setForm] = useState({ ...EMPTY })
+  const [form, setForm] = useState<{ nome: string; cnpj: string; cpf: string; email: string; telefone: string; ativo: boolean }>({ ...EMPTY })
   const [editId, setEditId] = useState<string | null>(null)
   const [modal, setModal] = useState(false)
   const [vinculoModal, setVinculoModal] = useState(false)
@@ -20,6 +20,11 @@ export default function SalaoProfissionaisPage() {
   const [erro, setErro] = useState('')
   const [loading, setLoading] = useState(false)
   const [busca, setBusca] = useState('')
+  const [importModal, setImportModal] = useState(false)
+  const [importLinhas, setImportLinhas] = useState<LinhaProfissionalImportacao[]>([])
+  const [importErros, setImportErros] = useState<string[]>([])
+  const [importLoading, setImportLoading] = useState(false)
+  const [importResultado, setImportResultado] = useState<{ criados: number; atualizados: number; erros: string[] } | null>(null)
 
   useEffect(() => { carregar() }, [])
 
@@ -40,7 +45,7 @@ export default function SalaoProfissionaisPage() {
   }
 
   function abrirEditar(p: SalaoProfissional) {
-    setForm({ nome: p.nome, cpf: p.cpf ?? '', email: p.email ?? '', telefone: p.telefone ?? '', ativo: p.ativo ?? true })
+    setForm({ nome: p.nome, cnpj: p.cnpj ?? '', cpf: p.cpf ?? '', email: p.email ?? '', telefone: p.telefone ?? '', ativo: p.ativo ?? true })
     setEditId(p.id)
     setErro('')
     setModal(true)
@@ -50,7 +55,7 @@ export default function SalaoProfissionaisPage() {
     if (!form.nome.trim()) { setErro('Nome é obrigatório.'); return }
     setLoading(true)
     setErro('')
-    const payload = { nome: form.nome, cpf: form.cpf || null, email: form.email || null, telefone: form.telefone || null, ativo: form.ativo }
+    const payload = { nome: form.nome, cnpj: form.cnpj || null, cpf: form.cpf || null, email: form.email || null, telefone: form.telefone || null, ativo: form.ativo }
     if (editId) {
       await atualizarProfissional(editId, payload)
     } else {
@@ -82,13 +87,47 @@ export default function SalaoProfissionaisPage() {
     setVinculosProf(links)
   }
 
+  async function handleImportFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setImportLoading(true)
+    setImportResultado(null)
+    const { linhas, erros } = await importarProfissionaisExcel(file)
+    setImportLinhas(linhas)
+    setImportErros(erros)
+    setImportLoading(false)
+    e.target.value = ''
+  }
+
+  async function confirmarImportacao() {
+    if (importLinhas.length === 0) return
+    setImportLoading(true)
+    const resultado = await processarImportacaoProfissionais(importLinhas)
+    setImportResultado(resultado)
+    setImportLinhas([])
+    setImportLoading(false)
+    carregar()
+  }
+
+  function fecharImportModal() {
+    setImportModal(false)
+    setImportLinhas([])
+    setImportErros([])
+    setImportResultado(null)
+  }
+
   const filtrado = lista.filter(p =>
     p.nome.toLowerCase().includes(busca.toLowerCase()) ||
     (p.cpf ?? '').includes(busca)
   )
 
   return (
-    <LayoutAdmin title="Profissionais – Salão" actions={<button className="btn-primary" onClick={abrirNovo}>+ Novo Profissional</button>}>
+    <LayoutAdmin title="Profissionais – Salão" actions={
+      <div className="flex gap-2">
+        <button className="btn-secondary" onClick={() => { setImportModal(true); setImportResultado(null); setImportLinhas([]); setImportErros([]) }}>↑ Importar Planilha</button>
+        <button className="btn-primary" onClick={abrirNovo}>+ Novo Profissional</button>
+      </div>
+    }>
       <div>
 
       <div className="card" style={{ marginBottom: 16 }}>
@@ -101,6 +140,7 @@ export default function SalaoProfissionaisPage() {
             <thead>
               <tr>
                 <th className="table-header">Nome</th>
+                <th className="table-header">CNPJ</th>
                 <th className="table-header">CPF</th>
                 <th className="table-header">Email</th>
                 <th className="table-header">Telefone</th>
@@ -110,11 +150,12 @@ export default function SalaoProfissionaisPage() {
             </thead>
             <tbody>
               {filtrado.length === 0 && (
-                <tr><td className="table-cell" colSpan={6} style={{ textAlign: 'center', color: '#94a3b8' }}>Nenhum profissional cadastrado.</td></tr>
+                <tr><td className="table-cell" colSpan={7} style={{ textAlign: 'center', color: '#94a3b8' }}>Nenhum profissional cadastrado.</td></tr>
               )}
               {filtrado.map(p => (
                 <tr key={p.id}>
                   <td className="table-cell" style={{ fontWeight: 600 }}>{p.nome}</td>
+                  <td className="table-cell">{p.cnpj || <span style={{ color: '#94a3b8' }}>—</span>}</td>
                   <td className="table-cell">{p.cpf || <span style={{ color: '#94a3b8' }}>—</span>}</td>
                   <td className="table-cell">{p.email || <span style={{ color: '#94a3b8' }}>—</span>}</td>
                   <td className="table-cell">{p.telefone || <span style={{ color: '#94a3b8' }}>—</span>}</td>
@@ -146,6 +187,10 @@ export default function SalaoProfissionaisPage() {
                 <input className="input-field" value={form.nome} onChange={e => setForm(f => ({ ...f, nome: e.target.value }))} />
               </div>
               <div className="form-group">
+                <label className="label-field">CNPJ</label>
+                <input className="input-field" value={form.cnpj} onChange={e => setForm(f => ({ ...f, cnpj: e.target.value }))} placeholder="00.000.000/0000-00" />
+              </div>
+              <div className="form-group">
                 <label className="label-field">CPF</label>
                 <input className="input-field" value={form.cpf} onChange={e => setForm(f => ({ ...f, cpf: e.target.value }))} placeholder="000.000.000-00" />
               </div>
@@ -168,6 +213,89 @@ export default function SalaoProfissionaisPage() {
               <button className="btn-secondary" onClick={() => setModal(false)}>Cancelar</button>
               <button className="btn-primary" onClick={salvar} disabled={loading}>{loading ? 'Salvando...' : 'Salvar'}</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Importar Planilha */}
+      {importModal && (
+        <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) fecharImportModal() }}>
+          <div className="modal" style={{ maxWidth: 640 }}>
+            <div className="modal-title">Importar Profissionais – Planilha</div>
+
+            {!importResultado ? (
+              <>
+                <div className="alert alert-info" style={{ marginBottom: 12 }}>
+                  Planilha com colunas: <strong>Nome</strong> e <strong>CNPJ</strong> (primeira aba). CNPJ opcional.
+                  Profissionais já existentes (mesmo CNPJ) serão atualizados.
+                </div>
+
+                <div className="form-group" style={{ marginBottom: 12 }}>
+                  <label className="label-field">Selecionar arquivo (.xlsx, .xls, .csv)</label>
+                  <input type="file" accept=".xlsx,.xls,.csv" onChange={handleImportFile}
+                    className="input-field" style={{ padding: '6px 8px' }} disabled={importLoading} />
+                </div>
+
+                {importErros.length > 0 && (
+                  <div className="alert alert-warn" style={{ marginBottom: 12 }}>
+                    <div style={{ fontWeight: 600, marginBottom: 4 }}>Avisos ({importErros.length})</div>
+                    {importErros.map((e, i) => <div key={i}>{e}</div>)}
+                  </div>
+                )}
+
+                {importLinhas.length > 0 && (
+                  <>
+                    <div style={{ fontSize: 13, color: '#64748b', marginBottom: 6 }}>
+                      {importLinhas.length} registro(s) encontrado(s). Revise antes de importar:
+                    </div>
+                    <div style={{ maxHeight: 280, overflowY: 'auto', border: '1px solid #e2e8f0', borderRadius: 8, marginBottom: 12 }}>
+                      <table style={{ width: '100%', fontSize: 12 }}>
+                        <thead>
+                          <tr style={{ background: '#f8fafc' }}>
+                            <th className="table-header">#</th>
+                            <th className="table-header">Nome</th>
+                            <th className="table-header">CNPJ</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {importLinhas.map((l, i) => (
+                            <tr key={i}>
+                              <td className="table-cell" style={{ color: '#94a3b8' }}>{i + 1}</td>
+                              <td className="table-cell">{l.nome}</td>
+                              <td className="table-cell">{l.cnpj || <span style={{ color: '#94a3b8' }}>—</span>}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                )}
+
+                <div className="modal-footer">
+                  <button className="btn-secondary" onClick={fecharImportModal}>Cancelar</button>
+                  <button className="btn-primary" onClick={confirmarImportacao}
+                    disabled={importLoading || importLinhas.length === 0}>
+                    {importLoading ? 'Importando...' : `Importar ${importLinhas.length} profissional(is)`}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                {importResultado.erros.length > 0 && (
+                  <div className="alert alert-warn" style={{ marginBottom: 12 }}>
+                    <div style={{ fontWeight: 600, marginBottom: 4 }}>Erros ({importResultado.erros.length})</div>
+                    {importResultado.erros.map((e, i) => <div key={i}>{e}</div>)}
+                  </div>
+                )}
+                <div className="alert alert-success">
+                  <strong>{importResultado.criados}</strong> profissional(is) criado(s) •{' '}
+                  <strong>{importResultado.atualizados}</strong> atualizado(s)
+                </div>
+                <div className="modal-footer">
+                  <button className="btn-primary" onClick={fecharImportModal}>Fechar</button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
