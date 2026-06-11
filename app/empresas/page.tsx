@@ -12,6 +12,7 @@ export default function EmpresasPage() {
   const [showForm, setShowForm] = useState(false)
   const [editando, setEditando] = useState<Empresa | null>(null)
   const [busca, setBusca] = useState('')
+  const [erroGeral, setErroGeral] = useState('')
 
   useEffect(() => {
     carregar()
@@ -19,19 +20,34 @@ export default function EmpresasPage() {
 
   async function carregar() {
     setLoading(true)
-    const { data } = await supabase
+    setErroGeral('')
+    const { data, error } = await supabase
       .from('empresas')
       .select('*')
       .order('razao_social')
+    if (error) {
+      setErroGeral(`Erro ao carregar empresas: ${error.message}`)
+    }
     setEmpresas(data ?? [])
     setLoading(false)
   }
 
   async function salvar(data: Omit<Empresa, 'id'>) {
+    // Remove apelido do payload se a coluna ainda não existir no banco
+    // (evita erro 400 do Supabase em bancos sem a migração aplicada)
+    const payload: Record<string, unknown> = {
+      razao_social: data.razao_social,
+      cnpj: data.cnpj,
+      valor_va: data.valor_va,
+    }
+    if (data.apelido !== undefined) payload.apelido = data.apelido
+
     if (editando) {
-      await supabase.from('empresas').update(data).eq('id', editando.id)
+      const { error } = await supabase.from('empresas').update(payload).eq('id', editando.id)
+      if (error) { setErroGeral(`Erro ao salvar: ${error.message}`); return }
     } else {
-      await supabase.from('empresas').insert(data)
+      const { error } = await supabase.from('empresas').insert(payload)
+      if (error) { setErroGeral(`Erro ao salvar: ${error.message}`); return }
     }
     await carregar()
     fecharForm()
@@ -60,7 +76,7 @@ export default function EmpresasPage() {
   const empresasFiltradas = empresas.filter(
     (e) =>
       e.razao_social.toLowerCase().includes(busca.toLowerCase()) ||
-      e.cnpj.includes(busca)
+      (e.cnpj ?? '').includes(busca)
   )
 
   return (
@@ -76,6 +92,13 @@ export default function EmpresasPage() {
       }
     >
       <div className="space-y-6">
+        {erroGeral && (
+          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm flex justify-between">
+            {erroGeral}
+            <button onClick={() => setErroGeral('')} className="font-bold ml-4">×</button>
+          </div>
+        )}
+
         {/* Modal de formulário */}
         {showForm && (
           <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">

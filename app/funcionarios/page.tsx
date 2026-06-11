@@ -114,9 +114,9 @@ export default function FuncionariosPage() {
   // Filtragem: empresa vem via unidades.empresa_id
   const funcionariosFiltrados = funcionarios.filter((f) => {
     const matchBusca =
-      f.nome.toLowerCase().includes(busca.toLowerCase()) ||
-      f.funcao.toLowerCase().includes(busca.toLowerCase()) ||
-      f.ctps.includes(busca)
+      (f.nome ?? '').toLowerCase().includes(busca.toLowerCase()) ||
+      (f.funcao ?? '').toLowerCase().includes(busca.toLowerCase()) ||
+      (f.ctps ?? '').includes(busca)
     const matchEmpresa = filtroEmpresa
       ? f.unidades?.empresa_id === filtroEmpresa
       : true

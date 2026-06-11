@@ -280,7 +280,7 @@ export async function importarExcel(arquivo: File, mesReferencia: string): Promi
   const erros: string[] = []
 
   // Carregar empresas e indexar por apelido (case-insensitive)
-  const { data: empresas } = await supabase.from('empresas').select('id, razao_social, apelido')
+  const { data: empresas } = await supabase.from('empresas').select('*')
   const apelidoMap = new Map<string, { id: string; razao_social: string }>()
   ;(empresas ?? []).forEach((e: any) => {
     if (e.apelido) apelidoMap.set(String(e.apelido).toLowerCase().trim(), { id: e.id, razao_social: e.razao_social })
@@ -362,7 +362,7 @@ export async function processarImportacaoProfissionais(
   let criados = 0
   let atualizados = 0
 
-  const { data: existentes } = await supabase.from('salao_profissionais').select('id, nome, cnpj')
+  const { data: existentes } = await supabase.from('salao_profissionais').select('*')
   const nomesMap = new Map<string, string>()
   const cnpjMap = new Map<string, string>()
   ;(existentes ?? []).forEach((p: any) => {
