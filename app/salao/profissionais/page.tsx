@@ -117,7 +117,7 @@ export default function SalaoProfissionaisPage() {
   }
 
   const filtrado = lista.filter(p =>
-    p.nome.toLowerCase().includes(busca.toLowerCase()) ||
+    (p.nome ?? '').toLowerCase().includes(busca.toLowerCase()) ||
     (p.cpf ?? '').includes(busca)
   )
 

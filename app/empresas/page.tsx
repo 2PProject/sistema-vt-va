@@ -75,7 +75,7 @@ export default function EmpresasPage() {
 
   const empresasFiltradas = empresas.filter(
     (e) =>
-      e.razao_social.toLowerCase().includes(busca.toLowerCase()) ||
+      (e.razao_social ?? '').toLowerCase().includes(busca.toLowerCase()) ||
       (e.cnpj ?? '').includes(busca)
   )
 

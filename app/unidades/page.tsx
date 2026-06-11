@@ -67,8 +67,8 @@ export default function UnidadesPage() {
   const unidadesFiltradas = unidades.filter((u) => {
     const matchEmpresa = filtroEmpresa ? u.empresa_id === filtroEmpresa : true
     const matchBusca =
-      u.nome.toLowerCase().includes(busca.toLowerCase()) ||
-      u.codigo.toLowerCase().includes(busca.toLowerCase())
+      (u.nome ?? '').toLowerCase().includes(busca.toLowerCase()) ||
+      (u.codigo ?? '').toLowerCase().includes(busca.toLowerCase())
     return matchEmpresa && matchBusca
   })
 
