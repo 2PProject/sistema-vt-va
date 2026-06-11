@@ -389,8 +389,8 @@ export async function processarImportacaoProfissionais(
         .single()
       if (error || !novo) { erros.push(`Erro ao criar "${linha.nome}": ${error?.message}`); continue }
       profId = novo.id
-      nomesMap.set(linha.nome.toLowerCase(), profId)
-      if (cnpjLimpo) cnpjMap.set(cnpjLimpo, profId)
+      nomesMap.set(linha.nome.toLowerCase(), novo.id)
+      if (cnpjLimpo) cnpjMap.set(cnpjLimpo, novo.id)
       criados++
     }
 
