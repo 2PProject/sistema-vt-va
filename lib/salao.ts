@@ -302,8 +302,14 @@ export async function importarExcel(arquivo: File, mesReferencia: string): Promi
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i]
       const nome = String(row['Nome'] ?? row['nome'] ?? row['Nome completo'] ?? row['nome completo'] ?? row['NOME'] ?? '').trim()
-      const valorRaw = row['Valor'] ?? row['valor'] ?? row['Valor comissão'] ?? row['valor_comissao'] ?? row['Valor comissao'] ?? 0
-      const valor = typeof valorRaw === 'number' ? valorRaw : parseFloat(String(valorRaw).replace(',', '.'))
+      const valorRaw = row['Valor'] ?? row['valor'] ?? row['Crédito'] ?? row['Credito'] ?? row['crédito'] ?? row['credito'] ?? row['Valor comissão'] ?? row['valor_comissao'] ?? row['Valor comissao'] ?? 0
+      const valor = typeof valorRaw === 'number' ? valorRaw : parseFloat(
+        String(valorRaw)
+          .replace(/R\$\s*/i, '')   // remove "R$"
+          .replace(/\./g, '')        // remove pontos de milhar
+          .replace(',', '.')         // vírgula → ponto decimal
+          .trim()
+      )
 
       if (!nome) { erros.push(`Aba "${sheetName}" linha ${i + 2}: Nome vazio`); continue }
       if (isNaN(valor) || valor <= 0) { erros.push(`Aba "${sheetName}" linha ${i + 2}: Valor inválido`); continue }
