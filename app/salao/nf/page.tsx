@@ -58,6 +58,7 @@ export default function SalaoNFPage() {
 
   // Import
   const [importFile, setImportFile] = useState<File | null>(null)
+  const [importMes, setImportMes] = useState(mesAtual())
   const [importPreview, setImportPreview] = useState<any[]>([])
   const [importErros, setImportErros] = useState<string[]>([])
   const [importLoad, setImportLoad] = useState(false)
@@ -178,10 +179,13 @@ export default function SalaoNFPage() {
     if (!file) return
     setImportFile(file)
     setImportLoad(true)
-    const { linhas, erros } = await importarExcel(file)
+    setImportPreview([])
+    setImportErros([])
+    const { linhas, erros } = await importarExcel(file, importMes)
     setImportPreview(linhas)
     setImportErros(erros)
     setImportLoad(false)
+    e.target.value = ''
   }
 
   async function executarImportacao() {
@@ -431,60 +435,88 @@ export default function SalaoNFPage() {
 
       {/* Modal Importar Excel */}
       {modalImport && (
-        <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) setModalImport(false) }}>
-          <div className="modal" style={{ maxWidth: 620 }}>
-            <div className="modal-title">Importar Excel</div>
+        <div className="modal-overlay" onClick={e => { if (e.target === e.currentTarget) { setModalImport(false); setImportPreview([]); setImportErros([]) } }}>
+          <div className="modal" style={{ maxWidth: 640 }}>
+            <div className="modal-title">Importar Excel – Comissões</div>
             <div className="alert alert-info" style={{ marginBottom: 14, fontSize: 12 }}>
-              O arquivo Excel deve ter <strong>uma aba por empresa</strong> (nome da aba = nome da empresa).<br />
-              Colunas obrigatórias: <strong>Nome</strong>, <strong>Mês referência</strong> (MM/AAAA ou AAAA-MM), <strong>Valor comissão</strong>.
+              <strong>Formato da planilha:</strong> uma aba por empresa — o <strong>nome da aba</strong> deve ser o <strong>apelido</strong> cadastrado na empresa.<br />
+              Colunas: <strong>Nome</strong> (profissional) e <strong>Valor</strong> (comissão). O mês de referência é selecionado abaixo.
             </div>
-            <div className="form-group" style={{ marginBottom: 16 }}>
-              <label className="label-field">Selecionar arquivo .xlsx</label>
-              <input type="file" accept=".xlsx,.xls" className="input-field" onChange={handleFileChange} style={{ padding: '6px' }} />
+
+            <div className="form-grid" style={{ marginBottom: 16 }}>
+              <div className="form-group">
+                <label className="label-field">Competência (Mês / Ano) *</label>
+                <input
+                  type="month"
+                  className="input-field"
+                  value={importMes}
+                  onChange={e => { setImportMes(e.target.value); setImportPreview([]); setImportErros([]) }}
+                />
+              </div>
+              <div className="form-group">
+                <label className="label-field">Arquivo .xlsx / .xls</label>
+                <input
+                  type="file"
+                  accept=".xlsx,.xls"
+                  className="input-field"
+                  onChange={handleFileChange}
+                  style={{ padding: '6px' }}
+                  disabled={!importMes}
+                />
+              </div>
             </div>
-            {importLoad && <div className="loading">Processando arquivo...</div>}
+
+            {importLoad && <div className="loading">Lendo arquivo...</div>}
+
             {importErros.length > 0 && (
               <div className="alert alert-warn" style={{ marginBottom: 12, fontSize: 12 }}>
-                <strong>Alertas / Erros:</strong>
+                <strong>Avisos / Erros ({importErros.length}):</strong>
                 <ul style={{ marginTop: 6, paddingLeft: 18 }}>
                   {importErros.map((e, i) => <li key={i}>{e}</li>)}
                 </ul>
               </div>
             )}
+
             {importPreview.length > 0 && !importLoad && (
               <div>
                 <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
-                  Pré-visualização: {importPreview.length} registro(s)
+                  {importPreview.length} registro(s) encontrado(s) — competência:{' '}
+                  <span style={{ color: '#1d4ed8' }}>
+                    {(() => { const [a, m] = importMes.split('-').map(Number); return `${MESES[m-1]}/${a}` })()}
+                  </span>
                 </div>
-                <div style={{ maxHeight: 240, overflowY: 'auto' }}>
+                <div style={{ maxHeight: 260, overflowY: 'auto', border: '1px solid #e2e8f0', borderRadius: 8 }}>
                   <table style={{ width: '100%', fontSize: 12 }}>
                     <thead>
-                      <tr>
+                      <tr style={{ background: '#f8fafc' }}>
                         <th className="table-header" style={{ fontSize: 11 }}>Profissional</th>
                         <th className="table-header" style={{ fontSize: 11 }}>Empresa</th>
-                        <th className="table-header" style={{ fontSize: 11 }}>Mês</th>
+                        <th className="table-header" style={{ fontSize: 11 }}>Aba</th>
                         <th className="table-header" style={{ fontSize: 11 }}>Comissão</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {importPreview.slice(0, 20).map((l, i) => (
+                      {importPreview.slice(0, 30).map((l, i) => (
                         <tr key={i}>
                           <td className="table-cell">{l.profissionalNome}</td>
                           <td className="table-cell">{l.empresaNome}</td>
-                          <td className="table-cell">{l.mesReferencia}</td>
+                          <td className="table-cell">
+                            <span className="inline-block bg-blue-100 text-blue-800 font-mono text-xs px-1.5 py-0.5 rounded">{l.empresaApelido}</span>
+                          </td>
                           <td className="table-cell">R$ {l.valorComissao.toFixed(2)}</td>
                         </tr>
                       ))}
-                      {importPreview.length > 20 && (
-                        <tr><td colSpan={4} style={{ padding: '6px 12px', color: '#94a3b8', fontSize: 11 }}>... e mais {importPreview.length - 20} linhas</td></tr>
+                      {importPreview.length > 30 && (
+                        <tr><td colSpan={4} style={{ padding: '6px 12px', color: '#94a3b8', fontSize: 11 }}>... e mais {importPreview.length - 30} linhas</td></tr>
                       )}
                     </tbody>
                   </table>
                 </div>
               </div>
             )}
+
             <div className="modal-footer">
-              <button className="btn-secondary" onClick={() => setModalImport(false)}>Cancelar</button>
+              <button className="btn-secondary" onClick={() => { setModalImport(false); setImportPreview([]); setImportErros([]) }}>Cancelar</button>
               <button className="btn-primary" onClick={executarImportacao} disabled={importLoad || importPreview.length === 0}>
                 {importLoad ? 'Importando...' : `Importar ${importPreview.length} registro(s)`}
               </button>

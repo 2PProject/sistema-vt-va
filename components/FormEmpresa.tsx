@@ -13,6 +13,7 @@ export default function FormEmpresa({ empresa, onSave, onCancel }: FormEmpresaPr
   const [razaoSocial, setRazaoSocial] = useState('')
   const [cnpj, setCnpj] = useState('')
   const [valorVA, setValorVA] = useState(0)
+  const [apelido, setApelido] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -21,10 +22,12 @@ export default function FormEmpresa({ empresa, onSave, onCancel }: FormEmpresaPr
       setRazaoSocial(empresa.razao_social)
       setCnpj(empresa.cnpj)
       setValorVA(empresa.valor_va ?? 0)
+      setApelido(empresa.apelido ?? '')
     } else {
       setRazaoSocial('')
       setCnpj('')
       setValorVA(0)
+      setApelido('')
     }
   }, [empresa])
 
@@ -33,7 +36,7 @@ export default function FormEmpresa({ empresa, onSave, onCancel }: FormEmpresaPr
     setError('')
     setLoading(true)
     try {
-      await onSave({ razao_social: razaoSocial, cnpj, valor_va: valorVA })
+      await onSave({ razao_social: razaoSocial, cnpj, valor_va: valorVA, apelido: apelido.trim() || null })
     } catch (err) {
       setError('Erro ao salvar. Tente novamente.')
       console.error(err)
@@ -59,6 +62,18 @@ export default function FormEmpresa({ empresa, onSave, onCancel }: FormEmpresaPr
           required
           className="input-field"
           placeholder="Nome completo da empresa"
+        />
+      </div>
+
+      <div>
+        <label className="label-field">Apelido / Código <span style={{ fontWeight: 400, color: '#94a3b8' }}>(usado como nome da aba nas planilhas)</span></label>
+        <input
+          type="text"
+          value={apelido}
+          onChange={(e) => setApelido(e.target.value)}
+          className="input-field"
+          placeholder="Ex: 11, 23, LOJA1..."
+          maxLength={20}
         />
       </div>
 

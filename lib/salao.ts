@@ -265,41 +265,54 @@ export async function salvarConfig(config: Omit<SalaoConfigEmpresa, 'id'>): Prom
 
 export type LinhaImportacao = {
   profissionalNome: string
-  mesReferencia: string  // 'YYYY-MM'
+  mesReferencia: string   // 'YYYY-MM' — vem do seletor na UI
   valorComissao: number
-  empresaNome: string
+  empresaApelido: string  // nome da aba na planilha
+  empresaId: string       // id resolvido da empresa
+  empresaNome: string     // razao_social resolvida (para preview)
 }
 
-export async function importarExcel(arquivo: File): Promise<{ linhas: LinhaImportacao[]; erros: string[] }> {
+export async function importarExcel(arquivo: File, mesReferencia: string): Promise<{ linhas: LinhaImportacao[]; erros: string[] }> {
   const XLSX = await import('xlsx')
   const buffer = await arquivo.arrayBuffer()
   const wb = XLSX.read(buffer, { type: 'array' })
   const linhas: LinhaImportacao[] = []
   const erros: string[] = []
 
+  // Carregar empresas e indexar por apelido (case-insensitive)
+  const { data: empresas } = await supabase.from('empresas').select('id, razao_social, apelido')
+  const apelidoMap = new Map<string, { id: string; razao_social: string }>()
+  ;(empresas ?? []).forEach((e: any) => {
+    if (e.apelido) apelidoMap.set(String(e.apelido).toLowerCase().trim(), { id: e.id, razao_social: e.razao_social })
+  })
+
   for (const sheetName of wb.SheetNames) {
+    const empresa = apelidoMap.get(sheetName.toLowerCase().trim())
+    if (!empresa) {
+      erros.push(`Aba "${sheetName}": nenhuma empresa com apelido "${sheetName}" encontrada. Cadastre o apelido na empresa.`)
+      continue
+    }
+
     const ws = wb.Sheets[sheetName]
     const rows: Record<string, unknown>[] = XLSX.utils.sheet_to_json(ws, { defval: '' })
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i]
       const nome = String(row['Nome'] ?? row['nome'] ?? '').trim()
-      const mesRef = String(row['Mês referência'] ?? row['mes_referencia'] ?? row['Mes referencia'] ?? '').trim()
-      const valorRaw = row['Valor comissão'] ?? row['valor_comissao'] ?? row['Valor comissao'] ?? 0
+      const valorRaw = row['Valor'] ?? row['valor'] ?? row['Valor comissão'] ?? row['valor_comissao'] ?? row['Valor comissao'] ?? 0
       const valor = typeof valorRaw === 'number' ? valorRaw : parseFloat(String(valorRaw).replace(',', '.'))
 
-      if (!nome) { erros.push(`Aba "${sheetName}" linha ${i+2}: Nome vazio`); continue }
-      if (!mesRef) { erros.push(`Aba "${sheetName}" linha ${i+2}: Mês referência vazio`); continue }
-      if (isNaN(valor) || valor <= 0) { erros.push(`Aba "${sheetName}" linha ${i+2}: Valor inválido`); continue }
+      if (!nome) { erros.push(`Aba "${sheetName}" linha ${i + 2}: Nome vazio`); continue }
+      if (isNaN(valor) || valor <= 0) { erros.push(`Aba "${sheetName}" linha ${i + 2}: Valor inválido`); continue }
 
-      // Parse mes referencia (accepts 'MM/YYYY' or 'YYYY-MM')
-      let mesNorm = mesRef
-      if (/^\d{2}\/\d{4}$/.test(mesRef)) {
-        const [m, a] = mesRef.split('/')
-        mesNorm = `${a}-${m}`
-      }
-
-      linhas.push({ profissionalNome: nome, mesReferencia: mesNorm, valorComissao: valor, empresaNome: sheetName })
+      linhas.push({
+        profissionalNome: nome,
+        mesReferencia,
+        valorComissao: valor,
+        empresaApelido: sheetName,
+        empresaId: empresa.id,
+        empresaNome: empresa.razao_social,
+      })
     }
   }
 
@@ -378,23 +391,12 @@ export async function processarImportacao(linhas: LinhaImportacao[]): Promise<{ 
   const erros: string[] = []
   let criados = 0
 
-  // Cache companies and professionals
-  const { data: empresas } = await supabase.from('empresas').select('id, razao_social')
-  const empresaMap = new Map<string, string>() // nome -> id
-  ;(empresas ?? []).forEach((e: any) => empresaMap.set(e.razao_social.toLowerCase(), e.id))
-
+  // Cache professionals by name
   const { data: profs } = await supabase.from('salao_profissionais').select('id, nome')
-  const profMap = new Map<string, string>() // nome -> id
+  const profMap = new Map<string, string>()
   ;(profs ?? []).forEach((p: any) => profMap.set(p.nome.toLowerCase(), p.id))
 
   for (const linha of linhas) {
-    // Find or create empresa
-    let empresaId = empresaMap.get(linha.empresaNome.toLowerCase())
-    if (!empresaId) {
-      erros.push(`Empresa "${linha.empresaNome}" não encontrada. Cadastre-a primeiro.`)
-      continue
-    }
-
     // Find or create profissional
     let profId = profMap.get(linha.profissionalNome.toLowerCase())
     if (!profId) {
@@ -407,14 +409,14 @@ export async function processarImportacao(linhas: LinhaImportacao[]): Promise<{ 
     }
 
     // Vincular profissional à empresa
-    await vincularProfissionalEmpresa(profId!, empresaId)
+    await vincularProfissionalEmpresa(profId!, linha.empresaId)
 
     // Check if record already exists
     const { data: existente } = await supabase
       .from('salao_nf_registros')
       .select('id')
       .eq('profissional_id', profId)
-      .eq('empresa_id', empresaId)
+      .eq('empresa_id', linha.empresaId)
       .eq('mes_referencia', linha.mesReferencia)
       .maybeSingle()
 
@@ -425,7 +427,7 @@ export async function processarImportacao(linhas: LinhaImportacao[]): Promise<{ 
 
     await criarRegistro({
       profissional_id: profId!,
-      empresa_id: empresaId,
+      empresa_id: linha.empresaId,
       mes_referencia: linha.mesReferencia,
       valor_comissao: linha.valorComissao,
       status: 'pendente',

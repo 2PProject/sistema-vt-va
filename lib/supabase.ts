@@ -7,6 +7,7 @@ export type Empresa = {
   razao_social: string
   cnpj: string
   valor_va: number
+  apelido?: string | null
 }
 
 export type Unidade = {
