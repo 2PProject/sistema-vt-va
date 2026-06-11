@@ -294,7 +294,10 @@ export async function importarExcel(arquivo: File, mesReferencia: string): Promi
     }
 
     const ws = wb.Sheets[sheetName]
-    const rows: Record<string, unknown>[] = XLSX.utils.sheet_to_json(ws, { defval: '' })
+    const rowsRaw: Record<string, unknown>[] = XLSX.utils.sheet_to_json(ws, { defval: '' })
+    const rows = rowsRaw.map(row =>
+      Object.fromEntries(Object.entries(row).map(([k, v]) => [k.trim(), v]))
+    )
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i]
@@ -342,8 +345,13 @@ export async function importarProfissionaisExcel(arquivo: File): Promise<{ linha
   const ws = wb.Sheets[sheetName]
   const rows: Record<string, unknown>[] = XLSX.utils.sheet_to_json(ws, { defval: '' })
 
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i]
+  // Normaliza nomes de colunas removendo espaços extras
+  const rowsNorm = rows.map(row =>
+    Object.fromEntries(Object.entries(row).map(([k, v]) => [k.trim(), v]))
+  )
+
+  for (let i = 0; i < rowsNorm.length; i++) {
+    const row = rowsNorm[i]
     const nome = String(row['Nome'] ?? row['nome'] ?? '').trim()
     const cnpj = String(row['CNPJ'] ?? row['cnpj'] ?? '').trim()
 
