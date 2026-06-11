@@ -301,7 +301,7 @@ export async function importarExcel(arquivo: File, mesReferencia: string): Promi
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i]
-      const nome = String(row['Nome'] ?? row['nome'] ?? '').trim()
+      const nome = String(row['Nome'] ?? row['nome'] ?? row['Nome completo'] ?? row['nome completo'] ?? row['NOME'] ?? '').trim()
       const valorRaw = row['Valor'] ?? row['valor'] ?? row['Valor comissão'] ?? row['valor_comissao'] ?? row['Valor comissao'] ?? 0
       const valor = typeof valorRaw === 'number' ? valorRaw : parseFloat(String(valorRaw).replace(',', '.'))
 
@@ -352,7 +352,7 @@ export async function importarProfissionaisExcel(arquivo: File): Promise<{ linha
 
   for (let i = 0; i < rowsNorm.length; i++) {
     const row = rowsNorm[i]
-    const nome = String(row['Nome'] ?? row['nome'] ?? '').trim()
+    const nome = String(row['Nome'] ?? row['nome'] ?? row['Nome completo'] ?? row['nome completo'] ?? row['NOME'] ?? '').trim()
     const cnpj = String(row['CNPJ'] ?? row['cnpj'] ?? '').trim()
 
     if (!nome) { erros.push(`Linha ${i + 2}: Nome vazio`); continue }
