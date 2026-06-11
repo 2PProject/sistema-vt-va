@@ -356,11 +356,13 @@ export async function importarProfissionaisExcel(arquivo: File): Promise<{ linha
 }
 
 export async function processarImportacaoProfissionais(
-  linhas: LinhaProfissionalImportacao[]
-): Promise<{ criados: number; atualizados: number; erros: string[] }> {
+  linhas: LinhaProfissionalImportacao[],
+  empresaId?: string
+): Promise<{ criados: number; atualizados: number; vinculados: number; erros: string[] }> {
   const erros: string[] = []
   let criados = 0
   let atualizados = 0
+  let vinculados = 0
 
   const { data: existentes } = await supabase.from('salao_profissionais').select('*')
   const nomesMap = new Map<string, string>()
@@ -374,17 +376,31 @@ export async function processarImportacaoProfissionais(
     const cnpjLimpo = linha.cnpj.replace(/\D/g, '')
     const existenteId = cnpjLimpo ? cnpjMap.get(cnpjLimpo) : nomesMap.get(linha.nome.toLowerCase())
 
+    let profId = existenteId
+
     if (existenteId) {
       await supabase.from('salao_profissionais').update({ nome: linha.nome, cnpj: linha.cnpj || null }).eq('id', existenteId)
       atualizados++
     } else {
-      const { error } = await supabase.from('salao_profissionais').insert({ nome: linha.nome, cnpj: linha.cnpj || null, ativo: true })
-      if (error) { erros.push(`Erro ao criar "${linha.nome}": ${error.message}`); continue }
+      const { data: novo, error } = await supabase
+        .from('salao_profissionais')
+        .insert({ nome: linha.nome, cnpj: linha.cnpj || null, ativo: true })
+        .select('id')
+        .single()
+      if (error || !novo) { erros.push(`Erro ao criar "${linha.nome}": ${error?.message}`); continue }
+      profId = novo.id
+      nomesMap.set(linha.nome.toLowerCase(), profId)
+      if (cnpjLimpo) cnpjMap.set(cnpjLimpo, profId)
       criados++
+    }
+
+    if (empresaId && profId) {
+      await vincularProfissionalEmpresa(profId, empresaId)
+      vinculados++
     }
   }
 
-  return { criados, atualizados, erros }
+  return { criados, atualizados, vinculados, erros }
 }
 
 export async function processarImportacao(linhas: LinhaImportacao[]): Promise<{ criados: number; erros: string[] }> {

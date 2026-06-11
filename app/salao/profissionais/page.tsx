@@ -24,7 +24,8 @@ export default function SalaoProfissionaisPage() {
   const [importLinhas, setImportLinhas] = useState<LinhaProfissionalImportacao[]>([])
   const [importErros, setImportErros] = useState<string[]>([])
   const [importLoading, setImportLoading] = useState(false)
-  const [importResultado, setImportResultado] = useState<{ criados: number; atualizados: number; erros: string[] } | null>(null)
+  const [importEmpresaId, setImportEmpresaId] = useState('')
+  const [importResultado, setImportResultado] = useState<{ criados: number; atualizados: number; vinculados: number; erros: string[] } | null>(null)
 
   useEffect(() => { carregar() }, [])
 
@@ -102,7 +103,7 @@ export default function SalaoProfissionaisPage() {
   async function confirmarImportacao() {
     if (importLinhas.length === 0) return
     setImportLoading(true)
-    const resultado = await processarImportacaoProfissionais(importLinhas)
+    const resultado = await processarImportacaoProfissionais(importLinhas, importEmpresaId || undefined)
     setImportResultado(resultado)
     setImportLinhas([])
     setImportLoading(false)
@@ -114,6 +115,7 @@ export default function SalaoProfissionaisPage() {
     setImportLinhas([])
     setImportErros([])
     setImportResultado(null)
+    setImportEmpresaId('')
   }
 
   const filtrado = lista.filter(p =>
@@ -227,7 +229,22 @@ export default function SalaoProfissionaisPage() {
               <>
                 <div className="alert alert-info" style={{ marginBottom: 12 }}>
                   Planilha com colunas: <strong>Nome</strong> e <strong>CNPJ</strong> (primeira aba). CNPJ opcional.
-                  Profissionais já existentes (mesmo CNPJ) serão atualizados.
+                  Profissionais já existentes (mesmo CNPJ ou nome) serão atualizados, não duplicados.
+                </div>
+
+                <div className="form-group" style={{ marginBottom: 12 }}>
+                  <label className="label-field">Vincular à empresa (opcional)</label>
+                  <select className="input-field" value={importEmpresaId} onChange={e => setImportEmpresaId(e.target.value)}>
+                    <option value="">— Não vincular agora —</option>
+                    {empresas.map(e => (
+                      <option key={e.id} value={e.id}>{e.razao_social}</option>
+                    ))}
+                  </select>
+                  {importEmpresaId && (
+                    <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>
+                      Todos os profissionais importados serão vinculados a esta empresa.
+                    </div>
+                  )}
                 </div>
 
                 <div className="form-group" style={{ marginBottom: 12 }}>
@@ -248,7 +265,7 @@ export default function SalaoProfissionaisPage() {
                     <div style={{ fontSize: 13, color: '#64748b', marginBottom: 6 }}>
                       {importLinhas.length} registro(s) encontrado(s). Revise antes de importar:
                     </div>
-                    <div style={{ maxHeight: 280, overflowY: 'auto', border: '1px solid #e2e8f0', borderRadius: 8, marginBottom: 12 }}>
+                    <div style={{ maxHeight: 240, overflowY: 'auto', border: '1px solid #e2e8f0', borderRadius: 8, marginBottom: 12 }}>
                       <table style={{ width: '100%', fontSize: 12 }}>
                         <thead>
                           <tr style={{ background: '#f8fafc' }}>
@@ -288,8 +305,11 @@ export default function SalaoProfissionaisPage() {
                   </div>
                 )}
                 <div className="alert alert-success">
-                  <strong>{importResultado.criados}</strong> profissional(is) criado(s) •{' '}
+                  <strong>{importResultado.criados}</strong> criado(s) •{' '}
                   <strong>{importResultado.atualizados}</strong> atualizado(s)
+                  {importResultado.vinculados > 0 && (
+                    <> • <strong>{importResultado.vinculados}</strong> vinculado(s) à empresa</>
+                  )}
                 </div>
                 <div className="modal-footer">
                   <button className="btn-primary" onClick={fecharImportModal}>Fechar</button>
