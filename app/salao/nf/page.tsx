@@ -6,7 +6,7 @@ import { supabase, Empresa, SalaoNFStatus } from '../../../lib/supabase'
 import {
   listarRegistros, confirmarNF, substituirNF, buscarHistorico,
   importarExcel, processarImportacao, listarConfigs, verificarPrazos,
-  RegistroComDetalhes
+  marcarForaPrazo, RegistroComDetalhes
 } from '../../../lib/salao'
 
 const STATUS_LABEL: Record<SalaoNFStatus, string> = {
@@ -66,6 +66,38 @@ export default function SalaoNFPage() {
   // Config tolerance map
   const [toleranciaMap, setToleranciaMap] = useState<Map<string, number>>(new Map())
 
+  // Seleção em massa
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [bulkLoad, setBulkLoad] = useState(false)
+
+  function toggleSelect(id: string) {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  }
+
+  function toggleSelectAll() {
+    if (selectedIds.size === registros.length) {
+      setSelectedIds(new Set())
+    } else {
+      setSelectedIds(new Set(registros.map(r => r.id)))
+    }
+  }
+
+  async function bulkMarcarForaPrazo() {
+    if (selectedIds.size === 0) return
+    setBulkLoad(true)
+    const ids = Array.from(selectedIds)
+    await Promise.all(ids.map(id => marcarForaPrazo(id)))
+    setSelectedIds(new Set())
+    setBulkLoad(false)
+    setMsg(`${ids.length} registro(s) marcado(s) como Fora do Prazo.`)
+    setMsgTipo('ok')
+    buscar()
+  }
+
   useEffect(() => { carregarEmpresas() }, [])
   useEffect(() => { buscar() }, [mesRef, empresaFiltro, statusFiltro])
 
@@ -81,6 +113,7 @@ export default function SalaoNFPage() {
 
   async function buscar() {
     setLoading(true)
+    setSelectedIds(new Set())
     const data = await listarRegistros({
       mesReferencia: mesRef || undefined,
       empresaId: empresaFiltro || undefined,
@@ -276,10 +309,43 @@ export default function SalaoNFPage() {
 
       {!loading && (
         <div className="card">
+          {/* Barra de ações em massa */}
+          {selectedIds.size > 0 && (
+            <div className="flex items-center gap-3 mb-4 px-4 py-3 bg-blue-50 border border-blue-200 rounded-lg">
+              <span className="text-sm font-semibold text-blue-800">
+                {selectedIds.size} selecionado(s)
+              </span>
+              <button
+                className="btn-danger"
+                style={{ fontSize: 12, padding: '4px 12px' }}
+                onClick={bulkMarcarForaPrazo}
+                disabled={bulkLoad}
+              >
+                {bulkLoad ? 'Processando...' : 'Marcar Fora do Prazo'}
+              </button>
+              <button
+                className="btn-secondary"
+                style={{ fontSize: 12, padding: '4px 10px' }}
+                onClick={() => setSelectedIds(new Set())}
+              >
+                Limpar seleção
+              </button>
+            </div>
+          )}
+
           <div className="table-wrap">
             <table>
               <thead>
                 <tr>
+                  <th className="table-header" style={{ width: 36 }}>
+                    <input
+                      type="checkbox"
+                      checked={registros.length > 0 && selectedIds.size === registros.length}
+                      ref={el => { if (el) el.indeterminate = selectedIds.size > 0 && selectedIds.size < registros.length }}
+                      onChange={toggleSelectAll}
+                      className="w-4 h-4 cursor-pointer"
+                    />
+                  </th>
                   <th className="table-header">Profissional</th>
                   <th className="table-header">Empresa</th>
                   <th className="table-header">Referência</th>
@@ -291,12 +357,24 @@ export default function SalaoNFPage() {
               </thead>
               <tbody>
                 {registros.length === 0 && (
-                  <tr><td className="table-cell" colSpan={7} style={{ textAlign: 'center', color: '#94a3b8' }}>
+                  <tr><td className="table-cell" colSpan={8} style={{ textAlign: 'center', color: '#94a3b8' }}>
                     Nenhum registro encontrado. Importe uma planilha para começar.
                   </td></tr>
                 )}
                 {registros.map(reg => (
-                  <tr key={reg.id}>
+                  <tr
+                    key={reg.id}
+                    className={selectedIds.has(reg.id) ? 'bg-blue-50' : ''}
+                    style={{ cursor: 'default' }}
+                  >
+                    <td className="table-cell" style={{ width: 36 }}>
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(reg.id)}
+                        onChange={() => toggleSelect(reg.id)}
+                        className="w-4 h-4 cursor-pointer"
+                      />
+                    </td>
                     <td className="table-cell" style={{ fontWeight: 600 }}>{reg.profissionais?.nome}</td>
                     <td className="table-cell">{reg.empresas?.razao_social}</td>
                     <td className="table-cell">

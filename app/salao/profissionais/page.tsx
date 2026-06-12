@@ -20,6 +20,9 @@ export default function SalaoProfissionaisPage() {
   const [erro, setErro] = useState('')
   const [loading, setLoading] = useState(false)
   const [busca, setBusca] = useState('')
+  const [filtroStatus, setFiltroStatus] = useState<'todos' | 'ativo' | 'inativo'>('todos')
+  const [sortField, setSortField] = useState<'nome' | 'cnpj' | 'status'>('nome')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
   const [importModal, setImportModal] = useState(false)
   const [importLinhas, setImportLinhas] = useState<LinhaProfissionalImportacao[]>([])
   const [importErros, setImportErros] = useState<string[]>([])
@@ -118,10 +121,31 @@ export default function SalaoProfissionaisPage() {
     setImportEmpresaId('')
   }
 
-  const filtrado = lista.filter(p =>
-    (p.nome ?? '').toLowerCase().includes(busca.toLowerCase()) ||
-    (p.cpf ?? '').includes(busca)
+  function toggleSort(field: typeof sortField) {
+    if (sortField === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setSortField(field); setSortDir('asc') }
+  }
+
+  const SortIcon = ({ field }: { field: typeof sortField }) => (
+    <span className="ml-1 inline-block opacity-50">
+      {sortField === field ? (sortDir === 'asc' ? '↑' : '↓') : '↕'}
+    </span>
   )
+
+  const filtrado = lista
+    .filter(p => {
+      const matchBusca = (p.nome ?? '').toLowerCase().includes(busca.toLowerCase()) ||
+        (p.cpf ?? '').includes(busca) || (p.cnpj ?? '').includes(busca)
+      const matchStatus = filtroStatus === 'todos' ? true : filtroStatus === 'ativo' ? (p.ativo ?? true) : !(p.ativo ?? true)
+      return matchBusca && matchStatus
+    })
+    .sort((a, b) => {
+      let va = '', vb = ''
+      if (sortField === 'nome') { va = (a.nome ?? '').toLowerCase(); vb = (b.nome ?? '').toLowerCase() }
+      else if (sortField === 'cnpj') { va = (a.cnpj ?? ''); vb = (b.cnpj ?? '') }
+      else if (sortField === 'status') { va = String(a.ativo ?? true); vb = String(b.ativo ?? true) }
+      return sortDir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va)
+    })
 
   return (
     <LayoutAdmin title="Profissionais – Salão" actions={
@@ -133,7 +157,24 @@ export default function SalaoProfissionaisPage() {
       <div>
 
       <div className="card" style={{ marginBottom: 16 }}>
-        <input className="input-field" placeholder="Buscar por nome ou CPF..." value={busca} onChange={e => setBusca(e.target.value)} />
+        <div className="flex flex-wrap gap-3 items-center">
+          <input
+            className="input-field flex-1 min-w-[180px]"
+            placeholder="Buscar por nome, CPF ou CNPJ..."
+            value={busca}
+            onChange={e => setBusca(e.target.value)}
+          />
+          <select
+            className="input-field w-40"
+            value={filtroStatus}
+            onChange={e => setFiltroStatus(e.target.value as typeof filtroStatus)}
+          >
+            <option value="todos">Todos ({lista.length})</option>
+            <option value="ativo">Ativos ({lista.filter(p => p.ativo !== false).length})</option>
+            <option value="inativo">Inativos ({lista.filter(p => p.ativo === false).length})</option>
+          </select>
+          <span className="text-sm text-slate-500 whitespace-nowrap">{filtrado.length} resultado(s)</span>
+        </div>
       </div>
 
       <div className="card">
@@ -141,12 +182,18 @@ export default function SalaoProfissionaisPage() {
           <table>
             <thead>
               <tr>
-                <th className="table-header">Nome</th>
-                <th className="table-header">CNPJ</th>
+                <th className="table-header cursor-pointer select-none" onClick={() => toggleSort('nome')}>
+                  Nome <SortIcon field="nome" />
+                </th>
+                <th className="table-header cursor-pointer select-none" onClick={() => toggleSort('cnpj')}>
+                  CNPJ <SortIcon field="cnpj" />
+                </th>
                 <th className="table-header">CPF</th>
                 <th className="table-header">Email</th>
                 <th className="table-header">Telefone</th>
-                <th className="table-header">Status</th>
+                <th className="table-header cursor-pointer select-none" onClick={() => toggleSort('status')}>
+                  Status <SortIcon field="status" />
+                </th>
                 <th className="table-header" style={{ width: 160 }}>Ações</th>
               </tr>
             </thead>

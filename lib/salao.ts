@@ -386,32 +386,55 @@ export async function processarImportacaoProfissionais(
     if (p.cnpj) cnpjMap.set((p.cnpj as string).replace(/\D/g, ''), p.id)
   })
 
+  // Separate into creates and updates for batch processing
+  const paraAtualizar: { id: string; nome: string; cnpj: string | null }[] = []
+  const paraCriar: { nome: string; cnpj: string | null }[] = []
+  const profIdsParaVincular: string[] = []
+
   for (const linha of linhas) {
     const cnpjLimpo = linha.cnpj.replace(/\D/g, '')
     const existenteId = cnpjLimpo ? cnpjMap.get(cnpjLimpo) : nomesMap.get(linha.nome.toLowerCase())
-
-    let profId = existenteId
-
     if (existenteId) {
-      await supabase.from('salao_profissionais').update({ nome: linha.nome, cnpj: linha.cnpj || null }).eq('id', existenteId)
+      paraAtualizar.push({ id: existenteId, nome: linha.nome, cnpj: linha.cnpj || null })
+      profIdsParaVincular.push(existenteId)
       atualizados++
     } else {
-      const { data: novo, error } = await supabase
-        .from('salao_profissionais')
-        .insert({ nome: linha.nome, cnpj: linha.cnpj || null, ativo: true })
-        .select('id')
-        .single()
-      if (error || !novo) { erros.push(`Erro ao criar "${linha.nome}": ${error?.message}`); continue }
-      profId = novo.id
-      nomesMap.set(linha.nome.toLowerCase(), novo.id)
-      if (cnpjLimpo) cnpjMap.set(cnpjLimpo, novo.id)
-      criados++
+      paraCriar.push({ nome: linha.nome, cnpj: linha.cnpj || null })
     }
+  }
 
-    if (empresaId && profId) {
-      await vincularProfissionalEmpresa(profId, empresaId)
-      vinculados++
+  // Batch updates (individual — different IDs)
+  await Promise.all(
+    paraAtualizar.map(p =>
+      supabase.from('salao_profissionais').update({ nome: p.nome, cnpj: p.cnpj }).eq('id', p.id)
+    )
+  )
+
+  // Batch insert for new professionals
+  if (paraCriar.length > 0) {
+    const { data: novos, error } = await supabase
+      .from('salao_profissionais')
+      .insert(paraCriar.map(p => ({ ...p, ativo: true })))
+      .select('id')
+    if (error) {
+      erros.push(`Erro ao criar profissionais: ${error.message}`)
+    } else {
+      criados = novos?.length ?? 0
+      novos?.forEach(n => profIdsParaVincular.push(n.id))
     }
+  }
+
+  // Batch vincular
+  if (empresaId && profIdsParaVincular.length > 0) {
+    const vinculos = profIdsParaVincular.map(pid => ({
+      profissional_id: pid,
+      empresa_id: empresaId,
+      ativo: true,
+    }))
+    await supabase
+      .from('salao_profissional_empresa')
+      .upsert(vinculos, { onConflict: 'profissional_id,empresa_id' })
+    vinculados = profIdsParaVincular.length
   }
 
   return { criados, atualizados, vinculados, erros }
