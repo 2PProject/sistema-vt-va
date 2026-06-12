@@ -70,6 +70,29 @@ export default function SalaoNFPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [bulkLoad, setBulkLoad] = useState(false)
 
+  // Pesquisa e ordenação client-side
+  const [busca, setBusca] = useState('')
+  const [sortField, setSortField] = useState<'nome' | 'empresa' | 'valor' | 'status' | 'mes'>('mes')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+
+  function toggleSort(field: typeof sortField) {
+    if (sortField === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setSortField(field); setSortDir('asc') }
+  }
+
+  const registrosFiltrados = registros
+    .filter(r => !busca || (r.profissionais?.nome ?? '').toLowerCase().includes(busca.toLowerCase()))
+    .sort((a, b) => {
+      let va: string | number = '', vb: string | number = ''
+      if (sortField === 'nome') { va = a.profissionais?.nome ?? ''; vb = b.profissionais?.nome ?? '' }
+      else if (sortField === 'empresa') { va = a.empresas?.razao_social ?? ''; vb = b.empresas?.razao_social ?? '' }
+      else if (sortField === 'valor') { va = a.valor_comissao; vb = b.valor_comissao }
+      else if (sortField === 'status') { va = a.status; vb = b.status }
+      else { va = a.mes_referencia; vb = b.mes_referencia }
+      if (typeof va === 'number') return sortDir === 'asc' ? (va - (vb as number)) : ((vb as number) - va)
+      return sortDir === 'asc' ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va))
+    })
+
   function toggleSelect(id: string) {
     setSelectedIds(prev => {
       const next = new Set(prev)
@@ -259,19 +282,19 @@ export default function SalaoNFPage() {
 
       {/* Filtros */}
       <div className="card">
-        <div className="form-grid" style={{ alignItems: 'flex-end' }}>
-          <div className="form-group">
+        <div className="flex flex-wrap gap-3" style={{ alignItems: 'flex-end' }}>
+          <div className="form-group" style={{ minWidth: 140 }}>
             <label className="label-field">Mês Referência</label>
             <input type="month" className="input-field" value={mesRef} onChange={e => setMesRef(e.target.value)} />
           </div>
-          <div className="form-group">
+          <div className="form-group" style={{ minWidth: 180 }}>
             <label className="label-field">Empresa</label>
             <select className="input-field" value={empresaFiltro} onChange={e => setEmpresaFiltro(e.target.value)}>
               <option value="">Todas as empresas</option>
               {empresas.map(e => <option key={e.id} value={e.id}>{e.razao_social}</option>)}
             </select>
           </div>
-          <div className="form-group">
+          <div className="form-group" style={{ minWidth: 140 }}>
             <label className="label-field">Status</label>
             <select className="input-field" value={statusFiltro} onChange={e => setStatusFiltro(e.target.value)}>
               <option value="">Todos</option>
@@ -280,6 +303,20 @@ export default function SalaoNFPage() {
               <option value="fora_do_prazo">Fora do Prazo</option>
             </select>
           </div>
+          <div className="form-group flex-1" style={{ minWidth: 180 }}>
+            <label className="label-field">Buscar profissional</label>
+            <input
+              className="input-field"
+              placeholder="Nome do profissional..."
+              value={busca}
+              onChange={e => setBusca(e.target.value)}
+            />
+          </div>
+          {busca && (
+            <div style={{ fontSize: 12, color: '#64748b', paddingBottom: 6 }}>
+              {registrosFiltrados.length} de {registros.length} resultado(s)
+            </div>
+          )}
         </div>
       </div>
 
@@ -340,28 +377,41 @@ export default function SalaoNFPage() {
                   <th className="table-header" style={{ width: 36 }}>
                     <input
                       type="checkbox"
-                      checked={registros.length > 0 && selectedIds.size === registros.length}
-                      ref={el => { if (el) el.indeterminate = selectedIds.size > 0 && selectedIds.size < registros.length }}
-                      onChange={toggleSelectAll}
+                      checked={registrosFiltrados.length > 0 && selectedIds.size === registrosFiltrados.length}
+                      ref={el => { if (el) el.indeterminate = selectedIds.size > 0 && selectedIds.size < registrosFiltrados.length }}
+                      onChange={() => {
+                        if (selectedIds.size === registrosFiltrados.length) setSelectedIds(new Set())
+                        else setSelectedIds(new Set(registrosFiltrados.map(r => r.id)))
+                      }}
                       className="w-4 h-4 cursor-pointer"
                     />
                   </th>
-                  <th className="table-header">Profissional</th>
-                  <th className="table-header">Empresa</th>
-                  <th className="table-header">Referência</th>
-                  <th className="table-header">Comissão</th>
-                  <th className="table-header">Status</th>
+                  <th className="table-header cursor-pointer select-none" onClick={() => toggleSort('nome')}>
+                    Profissional {sortField === 'nome' ? (sortDir === 'asc' ? '↑' : '↓') : <span style={{opacity:0.4}}>↕</span>}
+                  </th>
+                  <th className="table-header cursor-pointer select-none" onClick={() => toggleSort('empresa')}>
+                    Empresa {sortField === 'empresa' ? (sortDir === 'asc' ? '↑' : '↓') : <span style={{opacity:0.4}}>↕</span>}
+                  </th>
+                  <th className="table-header cursor-pointer select-none" onClick={() => toggleSort('mes')}>
+                    Referência {sortField === 'mes' ? (sortDir === 'asc' ? '↑' : '↓') : <span style={{opacity:0.4}}>↕</span>}
+                  </th>
+                  <th className="table-header cursor-pointer select-none" onClick={() => toggleSort('valor')}>
+                    Comissão {sortField === 'valor' ? (sortDir === 'asc' ? '↑' : '↓') : <span style={{opacity:0.4}}>↕</span>}
+                  </th>
+                  <th className="table-header cursor-pointer select-none" onClick={() => toggleSort('status')}>
+                    Status {sortField === 'status' ? (sortDir === 'asc' ? '↑' : '↓') : <span style={{opacity:0.4}}>↕</span>}
+                  </th>
                   <th className="table-header">NF</th>
                   <th className="table-header" style={{ width: 160 }}>Ações</th>
                 </tr>
               </thead>
               <tbody>
-                {registros.length === 0 && (
+                {registrosFiltrados.length === 0 && (
                   <tr><td className="table-cell" colSpan={8} style={{ textAlign: 'center', color: '#94a3b8' }}>
-                    Nenhum registro encontrado. Importe uma planilha para começar.
+                    {registros.length === 0 ? 'Nenhum registro encontrado. Importe uma planilha para começar.' : 'Nenhum resultado para a busca.'}
                   </td></tr>
                 )}
-                {registros.map(reg => (
+                {registrosFiltrados.map(reg => (
                   <tr
                     key={reg.id}
                     className={selectedIds.has(reg.id) ? 'bg-blue-50' : ''}

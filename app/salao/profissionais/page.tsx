@@ -59,6 +59,28 @@ export default function SalaoProfissionaisPage() {
     if (!form.nome.trim()) { setErro('Nome é obrigatório.'); return }
     setLoading(true)
     setErro('')
+
+    // Duplicate check for CPF/CNPJ
+    if (!editId) {
+      if (form.cpf.trim()) {
+        const dup = lista.find(p => p.cpf && p.cpf.replace(/\D/g,'') === form.cpf.replace(/\D/g,''))
+        if (dup) { setErro(`CPF já cadastrado para: ${dup.nome}`); setLoading(false); return }
+      }
+      if (form.cnpj.trim()) {
+        const dup = lista.find(p => p.cnpj && p.cnpj.replace(/\D/g,'') === form.cnpj.replace(/\D/g,''))
+        if (dup) { setErro(`CNPJ já cadastrado para: ${dup.nome}`); setLoading(false); return }
+      }
+    } else {
+      if (form.cpf.trim()) {
+        const dup = lista.find(p => p.id !== editId && p.cpf && p.cpf.replace(/\D/g,'') === form.cpf.replace(/\D/g,''))
+        if (dup) { setErro(`CPF já cadastrado para: ${dup.nome}`); setLoading(false); return }
+      }
+      if (form.cnpj.trim()) {
+        const dup = lista.find(p => p.id !== editId && p.cnpj && p.cnpj.replace(/\D/g,'') === form.cnpj.replace(/\D/g,''))
+        if (dup) { setErro(`CNPJ já cadastrado para: ${dup.nome}`); setLoading(false); return }
+      }
+    }
+
     const payload = { nome: form.nome, cnpj: form.cnpj || null, cpf: form.cpf || null, email: form.email || null, telefone: form.telefone || null, ativo: form.ativo }
     if (editId) {
       await atualizarProfissional(editId, payload)
