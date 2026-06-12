@@ -28,7 +28,7 @@ export default function SalaoProfissionaisPage() {
   const [importErros, setImportErros] = useState<string[]>([])
   const [importLoading, setImportLoading] = useState(false)
   const [importEmpresaId, setImportEmpresaId] = useState('')
-  const [importResultado, setImportResultado] = useState<{ criados: number; atualizados: number; vinculados: number; erros: string[] } | null>(null)
+  const [importResultado, setImportResultado] = useState<{ vinculados: number; naoEncontrados: string[]; erros: string[] } | null>(null)
 
   useEffect(() => { carregar() }, [])
 
@@ -297,8 +297,9 @@ export default function SalaoProfissionaisPage() {
             {!importResultado ? (
               <>
                 <div className="alert alert-info" style={{ marginBottom: 12 }}>
-                  Planilha com colunas: <strong>Nome</strong> e <strong>CNPJ</strong> (primeira aba). CNPJ opcional.
-                  Profissionais já existentes (mesmo CNPJ ou nome) serão atualizados, não duplicados.
+                  Planilha com colunas: <strong>Nome</strong> e <strong>CNPJ</strong> (primeira aba).
+                  A importação <strong>apenas vincula</strong> profissionais já cadastrados no sistema.
+                  Profissionais não encontrados serão listados como inconsistência — nenhum cadastro será criado automaticamente.
                 </div>
 
                 <div className="form-group" style={{ marginBottom: 12 }}>
@@ -367,18 +368,32 @@ export default function SalaoProfissionaisPage() {
               </>
             ) : (
               <>
-                {importResultado.erros.length > 0 && (
-                  <div className="alert alert-warn" style={{ marginBottom: 12 }}>
-                    <div style={{ fontWeight: 600, marginBottom: 4 }}>Erros ({importResultado.erros.length})</div>
-                    {importResultado.erros.map((e, i) => <div key={i}>{e}</div>)}
+                {importResultado.naoEncontrados.length > 0 && (
+                  <div className="alert alert-error" style={{ marginBottom: 12 }}>
+                    <div style={{ fontWeight: 700, marginBottom: 6 }}>
+                      ⚠ {importResultado.naoEncontrados.length} profissional(is) não encontrado(s) no cadastro — nenhum registro foi criado para eles:
+                    </div>
+                    <div style={{ maxHeight: 160, overflowY: 'auto' }}>
+                      {importResultado.naoEncontrados.map((n, i) => (
+                        <div key={i} style={{ fontSize: 12, paddingLeft: 8 }}>• {n}</div>
+                      ))}
+                    </div>
+                    <div style={{ marginTop: 8, fontSize: 12, color: '#991b1b' }}>
+                      Cadastre esses profissionais manualmente antes de importar novamente.
+                    </div>
                   </div>
                 )}
-                <div className="alert alert-success">
-                  <strong>{importResultado.criados}</strong> criado(s) •{' '}
-                  <strong>{importResultado.atualizados}</strong> atualizado(s)
-                  {importResultado.vinculados > 0 && (
-                    <> • <strong>{importResultado.vinculados}</strong> vinculado(s) à empresa</>
-                  )}
+                {importResultado.erros.length > 0 && (
+                  <div className="alert alert-warn" style={{ marginBottom: 12 }}>
+                    <div style={{ fontWeight: 600, marginBottom: 4 }}>Erros técnicos ({importResultado.erros.length})</div>
+                    {importResultado.erros.map((e, i) => <div key={i} style={{ fontSize: 12 }}>{e}</div>)}
+                  </div>
+                )}
+                <div className={`alert ${importResultado.vinculados > 0 ? 'alert-success' : 'alert-info'}`}>
+                  {importResultado.vinculados > 0
+                    ? <><strong>{importResultado.vinculados}</strong> profissional(is) vinculado(s) à empresa com sucesso.</>
+                    : <>Nenhum profissional foi vinculado. Verifique as inconsistências acima.</>
+                  }
                 </div>
                 <div className="modal-footer">
                   <button className="btn-primary" onClick={fecharImportModal}>Fechar</button>

@@ -372,97 +372,78 @@ export async function importarProfissionaisExcel(arquivo: File): Promise<{ linha
 export async function processarImportacaoProfissionais(
   linhas: LinhaProfissionalImportacao[],
   empresaId?: string
-): Promise<{ criados: number; atualizados: number; vinculados: number; erros: string[] }> {
+): Promise<{ vinculados: number; naoEncontrados: string[]; erros: string[] }> {
   const erros: string[] = []
-  let criados = 0
-  let atualizados = 0
+  const naoEncontrados: string[] = []
   let vinculados = 0
 
-  const { data: existentes } = await supabase.from('salao_profissionais').select('*')
+  const { data: existentes } = await supabase.from('salao_profissionais').select('id, nome, cnpj')
   const nomesMap = new Map<string, string>()
   const cnpjMap = new Map<string, string>()
   ;(existentes ?? []).forEach((p: any) => {
-    nomesMap.set(p.nome.toLowerCase(), p.id)
+    nomesMap.set((p.nome as string).toLowerCase().trim(), p.id)
     if (p.cnpj) cnpjMap.set((p.cnpj as string).replace(/\D/g, ''), p.id)
   })
 
-  // Separate into creates and updates for batch processing
-  const paraAtualizar: { id: string; nome: string; cnpj: string | null }[] = []
-  const paraCriar: { nome: string; cnpj: string | null }[] = []
   const profIdsParaVincular: string[] = []
 
   for (const linha of linhas) {
     const cnpjLimpo = linha.cnpj.replace(/\D/g, '')
-    const existenteId = cnpjLimpo ? cnpjMap.get(cnpjLimpo) : nomesMap.get(linha.nome.toLowerCase())
-    if (existenteId) {
-      paraAtualizar.push({ id: existenteId, nome: linha.nome, cnpj: linha.cnpj || null })
+    // Prefer match by CNPJ; fall back to exact name match
+    const existenteId = cnpjLimpo
+      ? cnpjMap.get(cnpjLimpo)
+      : nomesMap.get(linha.nome.toLowerCase().trim())
+
+    if (!existenteId) {
+      naoEncontrados.push(
+        `"${linha.nome}"${linha.cnpj ? ` (CNPJ: ${linha.cnpj})` : ''}`
+      )
+      continue
+    }
+
+    if (!profIdsParaVincular.includes(existenteId)) {
       profIdsParaVincular.push(existenteId)
-      atualizados++
-    } else {
-      paraCriar.push({ nome: linha.nome, cnpj: linha.cnpj || null })
     }
   }
 
-  // Batch updates (individual — different IDs)
-  await Promise.all(
-    paraAtualizar.map(p =>
-      supabase.from('salao_profissionais').update({ nome: p.nome, cnpj: p.cnpj }).eq('id', p.id)
-    )
-  )
-
-  // Batch insert for new professionals
-  if (paraCriar.length > 0) {
-    const { data: novos, error } = await supabase
-      .from('salao_profissionais')
-      .insert(paraCriar.map(p => ({ ...p, ativo: true })))
-      .select('id')
-    if (error) {
-      erros.push(`Erro ao criar profissionais: ${error.message}`)
-    } else {
-      criados = novos?.length ?? 0
-      novos?.forEach(n => profIdsParaVincular.push(n.id))
-    }
-  }
-
-  // Batch vincular
+  // Batch vincular to empresa when provided
   if (empresaId && profIdsParaVincular.length > 0) {
     const vinculos = profIdsParaVincular.map(pid => ({
       profissional_id: pid,
       empresa_id: empresaId,
       ativo: true,
     }))
-    await supabase
+    const { error } = await supabase
       .from('salao_profissional_empresa')
       .upsert(vinculos, { onConflict: 'profissional_id,empresa_id' })
-    vinculados = profIdsParaVincular.length
+    if (error) {
+      erros.push(`Erro ao vincular profissionais: ${error.message}`)
+    } else {
+      vinculados = profIdsParaVincular.length
+    }
   }
 
-  return { criados, atualizados, vinculados, erros }
+  return { vinculados, naoEncontrados, erros }
 }
 
 export async function processarImportacao(linhas: LinhaImportacao[]): Promise<{ criados: number; erros: string[] }> {
   const erros: string[] = []
   let criados = 0
 
-  // Cache professionals by name
+  // Cache professionals by name (no auto-creation — must be pre-registered)
   const { data: profs } = await supabase.from('salao_profissionais').select('id, nome')
   const profMap = new Map<string, string>()
-  ;(profs ?? []).forEach((p: any) => profMap.set(p.nome.toLowerCase(), p.id))
+  ;(profs ?? []).forEach((p: any) => profMap.set((p.nome as string).toLowerCase().trim(), p.id))
 
   for (const linha of linhas) {
-    // Find or create profissional
-    let profId = profMap.get(linha.profissionalNome.toLowerCase())
+    const profId = profMap.get(linha.profissionalNome.toLowerCase().trim())
     if (!profId) {
-      const { data: novoPro } = await supabase.from('salao_profissionais')
-        .insert({ nome: linha.profissionalNome, ativo: true })
-        .select('id').single()
-      if (!novoPro) { erros.push(`Erro ao criar profissional "${linha.profissionalNome}"`); continue }
-      profId = novoPro.id
-      profMap.set(linha.profissionalNome.toLowerCase(), profId!)
+      erros.push(`Profissional "${linha.profissionalNome}" não encontrado no cadastro. Cadastre-o primeiro em Salão → Profissionais.`)
+      continue
     }
 
     // Vincular profissional à empresa
-    await vincularProfissionalEmpresa(profId!, linha.empresaId)
+    await vincularProfissionalEmpresa(profId, linha.empresaId)
 
     // Check if record already exists
     const { data: existente } = await supabase
@@ -479,7 +460,7 @@ export async function processarImportacao(linhas: LinhaImportacao[]): Promise<{ 
     }
 
     await criarRegistro({
-      profissional_id: profId!,
+      profissional_id: profId,
       empresa_id: linha.empresaId,
       mes_referencia: linha.mesReferencia,
       valor_comissao: linha.valorComissao,
