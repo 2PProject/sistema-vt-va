@@ -200,6 +200,7 @@ export type SalaoNFRegistro = {
   mes_referencia: string  // 'YYYY-MM'
   valor_comissao: number
   status: SalaoNFStatus
+  observacao?: string | null
   criado_em?: string
   atualizado_em?: string
   profissionais?: SalaoProfissional

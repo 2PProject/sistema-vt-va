@@ -198,6 +198,21 @@ export async function substituirNF(params: {
   return { ok: true }
 }
 
+export async function salvarObservacao(registroId: string, observacao: string | null, usuario?: string): Promise<void> {
+  await supabase
+    .from('salao_nf_registros')
+    .update({ observacao: observacao ?? null, atualizado_em: new Date().toISOString() })
+    .eq('id', registroId)
+
+  await registrarHistorico({
+    registroId,
+    acao: observacao ? 'Observação Registrada' : 'Observação Removida',
+    descricao: observacao ?? 'Observação removida pelo usuário',
+    dadosNovos: { observacao },
+    usuario,
+  })
+}
+
 export async function marcarForaPrazo(registroId: string, usuario?: string): Promise<void> {
   const { data: reg } = await supabase.from('salao_nf_registros').select('*').eq('id', registroId).single()
 
