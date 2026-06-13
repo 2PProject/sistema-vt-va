@@ -224,12 +224,12 @@ export default function SalaoNFPage() {
 
   async function salvarConfirmacao() {
     if (!regSel) return
-    if (!confNumero.trim() || !confData || !confValor) { setConfErro('Preencha número da NF, data e valor.'); return }
+    if (!confData || !confValor) { setConfErro('Informe a data de emissão e o valor da NF.'); return }
     setConfLoad(true); setConfErro('')
     const tolerancia = toleranciaMap.get(regSel.empresa_id) ?? 0.01
     const res = await confirmarNF({
       registroId: regSel.id,
-      numeroNF: confNumero.trim(),
+      numeroNF: confNumero.trim() || undefined,
       dataNF: confData,
       valorNF: parseFloat(confValor),
       tolerancia,
@@ -272,11 +272,11 @@ export default function SalaoNFPage() {
 
   async function salvarSubstituicao() {
     if (!regSel) return
-    if (!confNumero || !confData || !confValor || !substMotivo) { setConfErro('Preencha todos os campos, incluindo o motivo.'); return }
+    if (!confData || !confValor || !substMotivo) { setConfErro('Informe data, valor e o motivo da substituição.'); return }
     setConfLoad(true); setConfErro('')
     const tolerancia = toleranciaMap.get(regSel.empresa_id) ?? 0.01
     const res = await substituirNF({
-      registroId: regSel.id, numeroNF: confNumero, dataNF: confData,
+      registroId: regSel.id, numeroNF: confNumero.trim() || undefined, dataNF: confData,
       valorNF: parseFloat(confValor), motivo: substMotivo, tolerancia, valorComissao: regSel.valor_comissao,
     })
     setConfLoad(false)
@@ -302,8 +302,7 @@ export default function SalaoNFPage() {
     setBulkLoad(true)
     const resultados: Record<string, { ok: boolean; erro?: string }> = {}
     await Promise.all(bulkRegs.map(async r => {
-      const numero = bulkNFs[r.id]?.trim()
-      if (!numero) { resultados[r.id] = { ok: false, erro: 'Número NF obrigatório' }; return }
+      const numero = bulkNFs[r.id]?.trim() || undefined
       const tolerancia = toleranciaMap.get(r.empresa_id) ?? 0.01
       resultados[r.id] = await confirmarNF({
         registroId: r.id, numeroNF: numero, dataNF: bulkDate,
@@ -570,7 +569,9 @@ export default function SalaoNFPage() {
                         <td className="table-cell" style={{ fontSize: 12 }}>
                           {reg.confirmacao ? (
                             <div>
-                              <div style={{ fontWeight: 600 }}>NF {reg.confirmacao.numero_nf}</div>
+                              <div style={{ fontWeight: 600 }}>
+                                {reg.confirmacao.numero_nf ? `NF ${reg.confirmacao.numero_nf}` : <span style={{ color: '#16a34a' }}>NF emitida</span>}
+                              </div>
                               <div style={{ color: '#64748b' }}>{reg.confirmacao.data_nf?.split('-').reverse().join('/')}</div>
                               <div style={{ color: valorOk ? '#16a34a' : '#dc2626', fontWeight: 500 }}>
                                 R$ {fmtBRL(reg.confirmacao.valor_nf)}
@@ -667,12 +668,15 @@ export default function SalaoNFPage() {
               {confErro && <div className="alert alert-error">{confErro}</div>}
               <div className="form-grid">
                 <div className="form-group">
-                  <label className="label-field">Número da NF *</label>
-                  <input className="input-field" value={confNumero} onChange={e => setConfNumero(e.target.value)} placeholder="Ex: 000123" autoFocus />
+                  <label className="label-field">Data de emissão *</label>
+                  <input type="date" className="input-field" value={confData} onChange={e => setConfData(e.target.value)} autoFocus />
                 </div>
                 <div className="form-group">
-                  <label className="label-field">Data da NF *</label>
-                  <input type="date" className="input-field" value={confData} onChange={e => setConfData(e.target.value)} />
+                  <label className="label-field">
+                    Número da NF
+                    <span style={{ fontWeight: 400, color: '#94a3b8', marginLeft: 8, fontSize: 11 }}>opcional</span>
+                  </label>
+                  <input className="input-field" value={confNumero} onChange={e => setConfNumero(e.target.value)} placeholder="Ex: 000123 (opcional)" />
                 </div>
                 <div className="form-group" style={{ gridColumn: 'span 2' }}>
                   <label className="label-field">
@@ -760,11 +764,11 @@ export default function SalaoNFPage() {
               {!bulkDone ? (
                 <>
                   <div className="alert alert-info" style={{ marginBottom: 12, fontSize: 12 }}>
-                    Valores pré-preenchidos com a comissão de cada registro.
-                    Informe o número da NF para cada profissional e a data de emissão (aplicada a todos).
+                    Valores pré-preenchidos com a comissão de cada registro. Basta informar a
+                    data de emissão (aplicada a todos) e confirmar. O número da NF é opcional.
                   </div>
                   <div className="form-group" style={{ marginBottom: 16 }}>
-                    <label className="label-field">Data da NF — aplicada a todos *</label>
+                    <label className="label-field">Data de emissão — aplicada a todos *</label>
                     <input type="date" className="input-field" style={{ maxWidth: 200 }} value={bulkDate} onChange={e => setBulkDate(e.target.value)} />
                   </div>
                   <div style={{ maxHeight: 340, overflowY: 'auto', border: '1px solid #e2e8f0', borderRadius: 8, marginBottom: 16 }}>
@@ -774,7 +778,7 @@ export default function SalaoNFPage() {
                           <th className="table-header">Profissional</th>
                           <th className="table-header">Empresa</th>
                           <th className="table-header">Comissão</th>
-                          <th className="table-header">Nº NF *</th>
+                          <th className="table-header">Nº NF <span style={{ fontWeight: 400, color: '#94a3b8' }}>(opcional)</span></th>
                           <th className="table-header">Valor NF</th>
                         </tr>
                       </thead>
@@ -867,11 +871,14 @@ export default function SalaoNFPage() {
               {confErro && <div className="alert alert-error">{confErro}</div>}
               <div className="form-grid">
                 <div className="form-group">
-                  <label className="label-field">Novo Número NF *</label>
-                  <input className="input-field" value={confNumero} onChange={e => setConfNumero(e.target.value)} />
+                  <label className="label-field">
+                    Novo Número NF
+                    <span style={{ fontWeight: 400, color: '#94a3b8', marginLeft: 8, fontSize: 11 }}>opcional</span>
+                  </label>
+                  <input className="input-field" value={confNumero} onChange={e => setConfNumero(e.target.value)} placeholder="opcional" />
                 </div>
                 <div className="form-group">
-                  <label className="label-field">Nova Data NF *</label>
+                  <label className="label-field">Nova Data de emissão *</label>
                   <input type="date" className="input-field" value={confData} onChange={e => setConfData(e.target.value)} />
                 </div>
                 <div className="form-group">

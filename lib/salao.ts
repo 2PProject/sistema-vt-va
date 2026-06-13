@@ -113,14 +113,16 @@ export async function criarRegistro(r: Omit<SalaoNFRegistro, 'id' | 'criado_em' 
 
 export async function confirmarNF(params: {
   registroId: string
-  numeroNF: string
+  numeroNF?: string
   dataNF: string
   valorNF: number
   tolerancia: number
   valorComissao: number
   usuario?: string
 }): Promise<{ ok: boolean; erro?: string }> {
-  const { registroId, numeroNF, dataNF, valorNF, tolerancia, valorComissao, usuario } = params
+  const { registroId, dataNF, valorNF, tolerancia, valorComissao, usuario } = params
+  // Número da NF é opcional — o controle valida emissão (data) e valor.
+  const numeroNF = params.numeroNF?.trim() || null
 
   if (Math.abs(valorNF - valorComissao) > tolerancia) {
     return { ok: false, erro: `Valor da NF (${valorNF.toFixed(2)}) difere da comissão (${valorComissao.toFixed(2)}) além da tolerância (±${tolerancia.toFixed(2)}).` }
@@ -147,7 +149,7 @@ export async function confirmarNF(params: {
   await registrarHistorico({
     registroId,
     acao: 'NF Confirmada',
-    descricao: `NF ${numeroNF} em ${dataNF}, valor R$ ${valorNF.toFixed(2)}`,
+    descricao: `${numeroNF ? `NF ${numeroNF} ` : 'NF emitida '}em ${dataNF}, valor R$ ${valorNF.toFixed(2)}`,
     dadosAnteriores: { status: reg.status },
     dadosNovos: { status: 'nf_recebida', numero_nf: numeroNF, valor_nf: valorNF },
     usuario,
@@ -158,7 +160,7 @@ export async function confirmarNF(params: {
 
 export async function substituirNF(params: {
   registroId: string
-  numeroNF: string
+  numeroNF?: string
   dataNF: string
   valorNF: number
   motivo: string
@@ -166,7 +168,8 @@ export async function substituirNF(params: {
   valorComissao: number
   usuario?: string
 }): Promise<{ ok: boolean; erro?: string }> {
-  const { registroId, numeroNF, dataNF, valorNF, motivo, tolerancia, valorComissao, usuario } = params
+  const { registroId, dataNF, valorNF, motivo, tolerancia, valorComissao, usuario } = params
+  const numeroNF = params.numeroNF?.trim() || null
 
   if (Math.abs(valorNF - valorComissao) > tolerancia) {
     return { ok: false, erro: `Valor da NF (${valorNF.toFixed(2)}) difere da comissão (${valorComissao.toFixed(2)}) além da tolerância (±${tolerancia.toFixed(2)}).` }
