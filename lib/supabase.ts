@@ -177,6 +177,7 @@ export type SalaoProfissional = {
   cpf?: string | null
   email?: string | null
   telefone?: string | null
+  especialidade?: string | null
   ativo?: boolean
   criado_em?: string
 }

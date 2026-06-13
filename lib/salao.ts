@@ -7,6 +7,39 @@ export async function listarProfissionais(): Promise<SalaoProfissional[]> {
   return data ?? []
 }
 
+export type EmpresaVinculada = { id: string; razao_social: string; cnpj: string | null; ativo: boolean }
+export type ProfissionalComEmpresas = SalaoProfissional & { empresas_vinculadas: EmpresaVinculada[] }
+
+/**
+ * Carrega todos os profissionais já com suas empresas vinculadas, em apenas
+ * duas queries (profissionais + vínculos). Indexação client-side garante
+ * carregamento rápido mesmo com grande volume de registros.
+ */
+export async function listarProfissionaisComEmpresas(): Promise<ProfissionalComEmpresas[]> {
+  const [profsRes, vincRes] = await Promise.all([
+    supabase.from('salao_profissionais').select('*').order('nome'),
+    supabase.from('salao_profissional_empresa').select('profissional_id, ativo, empresas(id, razao_social, cnpj)'),
+  ])
+
+  const vincMap = new Map<string, EmpresaVinculada[]>()
+  ;(vincRes.data ?? []).forEach((v: any) => {
+    if (!v.empresas) return
+    const arr = vincMap.get(v.profissional_id) ?? []
+    arr.push({
+      id: v.empresas.id,
+      razao_social: v.empresas.razao_social,
+      cnpj: v.empresas.cnpj ?? null,
+      ativo: v.ativo ?? true,
+    })
+    vincMap.set(v.profissional_id, arr)
+  })
+
+  return (profsRes.data ?? []).map((p: SalaoProfissional) => ({
+    ...p,
+    empresas_vinculadas: vincMap.get(p.id) ?? [],
+  }))
+}
+
 export async function criarProfissional(p: Omit<SalaoProfissional, 'id' | 'criado_em'>): Promise<SalaoProfissional | null> {
   const { data } = await supabase.from('salao_profissionais').insert(p).select().single()
   return data
