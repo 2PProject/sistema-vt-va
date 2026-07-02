@@ -17,7 +17,6 @@ export default function FuncionariosPage() {
   const [busca, setBusca] = useState('')
   const [filtroEmpresa, setFiltroEmpresa] = useState<string>('')
   const [filtroStatus, setFiltroStatus] = useState<'todos' | 'ativo' | 'inativo'>('todos')
-  const [erroCarregar, setErroCarregar] = useState('')
 
   useEffect(() => {
     Promise.all([carregar(), carregarEmpresas(), carregarCargos()])
@@ -25,18 +24,16 @@ export default function FuncionariosPage() {
 
   async function carregar() {
     setLoading(true)
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from('funcionarios')
       .select('*, unidades(id, codigo, nome, empresa_id, empresas(id, razao_social, cnpj))')
       .order('nome')
-    if (error) setErroCarregar(`Erro funcionários: ${error.message}`)
     setFuncionarios((data as Funcionario[]) ?? [])
     setLoading(false)
   }
 
   async function carregarEmpresas() {
-    const { data, error } = await supabase.from('empresas').select('*').order('razao_social')
-    if (error) setErroCarregar(prev => prev + ` | Erro empresas: ${error.message}`)
+    const { data } = await supabase.from('empresas').select('*').order('razao_social')
     setEmpresas(data ?? [])
   }
 
@@ -117,9 +114,9 @@ export default function FuncionariosPage() {
   // Filtragem: empresa vem via unidades.empresa_id
   const funcionariosFiltrados = funcionarios.filter((f) => {
     const matchBusca =
-      (f.nome ?? '').toLowerCase().includes(busca.toLowerCase()) ||
-      (f.funcao ?? '').toLowerCase().includes(busca.toLowerCase()) ||
-      (f.ctps ?? '').includes(busca)
+      f.nome.toLowerCase().includes(busca.toLowerCase()) ||
+      f.funcao.toLowerCase().includes(busca.toLowerCase()) ||
+      f.ctps.includes(busca)
     const matchEmpresa = filtroEmpresa
       ? f.unidades?.empresa_id === filtroEmpresa
       : true
@@ -141,13 +138,6 @@ export default function FuncionariosPage() {
       }
     >
       <div className="space-y-6">
-        {erroCarregar && (
-          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm flex justify-between">
-            {erroCarregar}
-            <button onClick={() => setErroCarregar('')} className="font-bold ml-4">×</button>
-          </div>
-        )}
-
         {/* Modal */}
         {showForm && (
           <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">

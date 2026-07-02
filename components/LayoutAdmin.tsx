@@ -40,14 +40,14 @@ export default function LayoutAdmin({ children, title, actions }: LayoutAdminPro
   }
 
   return (
-    <div className="flex min-h-screen bg-slate-50">
+    <div className="flex min-h-screen bg-gray-50">
       <Sidebar />
-      <main className="flex-1 flex flex-col overflow-hidden min-w-0">
-        <header className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between gap-4 shrink-0">
-          <h1 className="text-xl font-bold text-slate-800 truncate">{title}</h1>
-          {actions && <div className="flex items-center gap-2 shrink-0">{actions}</div>}
+      <main className="flex-1 flex flex-col overflow-hidden">
+        <header className="bg-white border-b border-gray-200 px-8 py-5 flex items-center justify-between">
+          <h1 className="text-2xl font-bold text-gray-800">{title}</h1>
+          {actions && <div className="flex items-center gap-3">{actions}</div>}
         </header>
-        <div className="flex-1 p-6 overflow-auto">{children}</div>
+        <div className="flex-1 p-8 overflow-auto">{children}</div>
       </main>
     </div>
   )

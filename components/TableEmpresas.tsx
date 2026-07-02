@@ -26,7 +26,6 @@ export default function TableEmpresas({ empresas, onEdit, onDelete }: TableEmpre
         <thead>
           <tr className="bg-gray-50 border-b border-gray-200">
             <th className="table-header">#</th>
-            <th className="table-header">Apelido</th>
             <th className="table-header">Razão Social</th>
             <th className="table-header">CNPJ</th>
             <th className="table-header text-right">Ações</th>
@@ -36,11 +35,6 @@ export default function TableEmpresas({ empresas, onEdit, onDelete }: TableEmpre
           {empresas.map((empresa, i) => (
             <tr key={empresa.id} className="hover:bg-gray-50 transition-colors">
               <td className="table-cell text-gray-400 w-12">{i + 1}</td>
-              <td className="table-cell w-24">
-                {empresa.apelido
-                  ? <span className="inline-block bg-blue-100 text-blue-800 font-bold text-xs px-2 py-0.5 rounded font-mono">{empresa.apelido}</span>
-                  : <span className="text-gray-300 text-xs">—</span>}
-              </td>
               <td className="table-cell font-medium text-gray-900">{empresa.razao_social}</td>
               <td className="table-cell text-gray-500 font-mono text-xs">{empresa.cnpj}</td>
               <td className="table-cell text-right">
