@@ -32,6 +32,7 @@ export default function FormFuncionario({
   const [ativo, setAtivo] = useState(true)
   const [valorVT, setValorVT] = useState(0)
   const [valorVTSabado, setValorVTSabado] = useState(0)
+  const [valorVA, setValorVA] = useState(0)
   const [dataAdmissao, setDataAdmissao] = useState('')
   const [emAvisoPrevio, setEmAvisoPrevio] = useState(false)
   const [dataInicioAviso, setDataInicioAviso] = useState('')
@@ -49,6 +50,7 @@ export default function FormFuncionario({
       setAtivo(funcionario.ativo)
       setValorVT(funcionario.valor_vt ?? 0)
       setValorVTSabado(funcionario.valor_vt_sabado ?? 0)
+      setValorVA(funcionario.valor_va ?? 0)
       setDataAdmissao(funcionario.data_admissao ?? '')
       setEmAvisoPrevio(funcionario.em_aviso_previo ?? false)
       setDataInicioAviso(funcionario.data_inicio_aviso ?? '')
@@ -64,6 +66,7 @@ export default function FormFuncionario({
       setAtivo(true)
       setValorVT(0)
       setValorVTSabado(0)
+      setValorVA(0)
       setDataAdmissao(new Date().toISOString().split('T')[0])
       setEmAvisoPrevio(false)
       setDataInicioAviso('')
@@ -95,6 +98,7 @@ export default function FormFuncionario({
           ativo,
           valor_vt: valorVT,
           valor_vt_sabado: valorVTSabado,
+          valor_va: valorVA || 0,
           data_admissao: dataAdmissao || null,
           em_aviso_previo: emAvisoPrevio,
           data_inicio_aviso: emAvisoPrevio ? (dataInicioAviso || null) : null,
@@ -260,6 +264,24 @@ export default function FormFuncionario({
               placeholder="0,00"
             />
           </div>
+        </div>
+
+        {/* Valor VA — exceção por funcionário */}
+        <div>
+          <label className="label-field">Valor VA / dia (R$) — exceção</label>
+          <input
+            type="number"
+            value={valorVA}
+            onChange={(e) => setValorVA(Number(e.target.value))}
+            min={0}
+            step={0.01}
+            className="input-field"
+            placeholder="0,00"
+          />
+          <p className="text-xs text-gray-400 mt-1">
+            Opcional. Deixe <strong>0</strong> para usar o VA da empresa/competência.
+            Informe um valor apenas em caso de exceção para este funcionário.
+          </p>
         </div>
 
         {/* Data de admissão */}

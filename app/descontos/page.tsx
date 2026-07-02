@@ -19,6 +19,8 @@ import {
   calcularSabadosDesde,
   trabalhaNoMes,
   formatarMoeda,
+  resolverValorVA,
+  FOLGA_TO_DOW,
   MESES,
 } from '../../utils/calculoVT'
 
@@ -60,11 +62,25 @@ function ultimoDiaDoMes(m: number, y: number): Date {
   return d
 }
 
-function contarDiasNoPeriodo(start: Date, end: Date): number {
+/**
+ * Conta os dias úteis dentro de um período de desconto (férias/faltas).
+ * Um dia só conta se o funcionário efetivamente trabalharia nele — ou seja,
+ * exclui domingos, a folga semanal do funcionário e os feriados do mês.
+ * Isso mantém a contagem consistente com calcularDiasUteisAuto, evitando que
+ * a subtração diasUteis − diasDesconto perca dias (bug: "sobra 1 dia").
+ */
+function contarDiasNoPeriodo(
+  start: Date,
+  end: Date,
+  dow: number,
+  feriadosSet: Set<string>
+): number {
   let count = 0
   const cur = new Date(start)
   while (cur <= end) {
-    if (cur.getDay() !== 0) count++
+    const cd = cur.getDay()
+    const iso = `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, '0')}-${String(cur.getDate()).padStart(2, '0')}`
+    if (cd !== 0 && cd !== dow && !feriadosSet.has(iso)) count++
     cur.setDate(cur.getDate() + 1)
   }
   return Math.max(0, count)
@@ -74,19 +90,23 @@ function calcularDiasComCarryOver(
   inicio: string,
   fim: string,
   mes: number,
-  ano: number
+  ano: number,
+  folgaSemanal?: string | null,
+  feriadosDatas: string[] = []
 ): { diasCorrente: number; diasProximo: number } {
   if (!inicio) return { diasCorrente: 1, diasProximo: 0 }
+  const dow = folgaSemanal ? (FOLGA_TO_DOW[folgaSemanal] ?? -1) : -1
+  const feriadosSet = new Set(feriadosDatas)
   const start = new Date(inicio + 'T12:00:00')
   const end = new Date((fim || inicio) + 'T12:00:00')
   const lastDay = ultimoDiaDoMes(mes, ano)
   const endCorrente = end <= lastDay ? end : lastDay
-  const diasCorrente = contarDiasNoPeriodo(start, endCorrente)
+  const diasCorrente = contarDiasNoPeriodo(start, endCorrente, dow, feriadosSet)
   let diasProximo = 0
   if (end > lastDay) {
     const nextStart = new Date(lastDay)
     nextStart.setDate(nextStart.getDate() + 1)
-    diasProximo = contarDiasNoPeriodo(nextStart, end)
+    diasProximo = contarDiasNoPeriodo(nextStart, end, dow, feriadosSet)
   }
   return { diasCorrente, diasProximo }
 }
@@ -297,6 +317,9 @@ export default function DescontosPage() {
       }
     }
 
+    // VA de exceção por funcionário prevalece sobre o VA da empresa/competência
+    valorVA = resolverValorVA(func.valor_va, valorVA)
+
     const descontosCarregados: DescontoItem[] = []
     if (cfId) {
       const { data: descontosRows } = await supabase
@@ -304,16 +327,26 @@ export default function DescontosPage() {
         .eq('competencia_funcionario_id', cfId)
       for (const d of descontosRows ?? []) {
         const isAcrescimo = (d.dias ?? 0) < 0
+        // Recalcula a partir do período para aplicar a regra corrigida de dias
+        // úteis (exclui folga semanal e feriados). Mantém o valor salvo quando
+        // não há intervalo de datas (ex.: lançamento manual por quantidade).
+        let dias = d.dias
+        let diasProximo = d.dias_proximo_mes ?? 0
+        if (!isAcrescimo && d.data_inicio) {
+          const rec = calcularDiasComCarryOver(d.data_inicio, d.data_fim ?? d.data_inicio, mes, ano, func.folga_semanal, feriados)
+          dias = rec.diasCorrente
+          diasProximo = rec.diasProximo
+        }
         descontosCarregados.push({
           id: d.id,
           tipo_id: d.tipo_desconto_id ?? '__acrescimo__',
           tipo_nome: isAcrescimo
             ? 'Feriado trabalhado'
             : ((d.tipos_desconto as TipoDesconto | null)?.nome ?? ''),
-          dias: d.dias,
+          dias,
           data_inicio: d.data_inicio ?? '',
           data_fim: d.data_fim ?? '',
-          dias_proximo_mes: d.dias_proximo_mes ?? 0,
+          dias_proximo_mes: diasProximo,
           isCarryOver: false,
           isAcrescimo,
         })
@@ -371,7 +404,7 @@ export default function DescontosPage() {
     setNovaDataInicio(val)
     if (val) {
       const fim = novaDataFim || val
-      const { diasCorrente, diasProximo } = calcularDiasComCarryOver(val, fim, mes, ano)
+      const { diasCorrente, diasProximo } = calcularDiasComCarryOver(val, fim, mes, ano, selecionado?.func.folga_semanal, cfCarregado?.feriados ?? [])
       setNovoDias(diasCorrente || 1)
       setNovoDiasProximo(diasProximo)
     }
@@ -381,7 +414,7 @@ export default function DescontosPage() {
     setNovaDataFim(val)
     if (novaDataInicio) {
       const fim = val || novaDataInicio
-      const { diasCorrente, diasProximo } = calcularDiasComCarryOver(novaDataInicio, fim, mes, ano)
+      const { diasCorrente, diasProximo } = calcularDiasComCarryOver(novaDataInicio, fim, mes, ano, selecionado?.func.folga_semanal, cfCarregado?.feriados ?? [])
       setNovoDias(diasCorrente || 1)
       setNovoDiasProximo(diasProximo)
     }

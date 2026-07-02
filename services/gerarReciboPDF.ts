@@ -219,11 +219,9 @@ function desenharVia(doc: any, dados: DadosRecibo, mesNome: string, referencia: 
 
   doc.setFontSize(8)
   doc.setTextColor(80, 80, 80)
-  const hoje = new Date()
-  const diaHoje = String(hoje.getDate()).padStart(2, '0')
-  const mesHojeNome = MESES[hoje.getMonth()]
-  const anoHoje = hoje.getFullYear()
-  doc.text(`Brasília/DF, ${diaHoje} de ${mesHojeNome} de ${anoHoje}.`, 200, y, { align: 'right' })
+  // Dia em branco (preenchido à mão); mês e ano são os da competência
+  const mesCompNome = MESES[dados.mes - 1]
+  doc.text(`Brasília/DF, _____ de ${mesCompNome} de ${dados.ano}.`, 200, y, { align: 'right' })
   y += 10
 
   doc.setDrawColor(0, 0, 0)

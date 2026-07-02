@@ -11,7 +11,7 @@ import {
   getOrCreateDefaultUnidade,
   garantirFeriadosAno,
 } from '../../lib/supabase'
-import { calcularVTVA, calcularDiasUteisAuto, trabalhaNoMes, formatarMoeda, MESES } from '../../utils/calculoVT'
+import { calcularVTVA, calcularDiasUteisAuto, trabalhaNoMes, formatarMoeda, resolverValorVA, MESES } from '../../utils/calculoVT'
 
 type CFComFunc = CompetenciaFuncionario & { funcionarios: Funcionario }
 
@@ -135,7 +135,7 @@ export default function RecibosPage() {
       const valorVT = reg.valor_vt ?? reg.funcionarios?.valor_vt ?? 0
       const valorVTSabado = ehExcecao ? valorVTSabadoBase : 0
       const diasSabado = ehExcecao ? (reg.dias_sabado ?? 0) : 0
-      const valorVA = reg.competenciaObj.valor_va ?? 0
+      const valorVA = resolverValorVA(reg.funcionarios?.valor_va, reg.competenciaObj.valor_va)
       const diasUteisAuto = calcularDiasUteisAuto(mes, ano, reg.funcionarios?.folga_semanal, reg.feriadosDatas, reg.funcionarios?.data_admissao, reg.funcionarios?.data_fim_aviso)
 
       // Re-busca descontos/acréscimos frescos do banco para garantir dados atualizados
@@ -213,7 +213,7 @@ export default function RecibosPage() {
         const valorVT = reg.valor_vt ?? reg.funcionarios?.valor_vt ?? 0
         const valorVTSabado = ehExcecao ? vtSabadoBase : 0
         const diasSabado = ehExcecao ? (reg.dias_sabado ?? 0) : 0
-        const valorVA = reg.competenciaObj.valor_va ?? 0
+        const valorVA = resolverValorVA(reg.funcionarios?.valor_va, reg.competenciaObj.valor_va)
         const diasUteisAuto = calcularDiasUteisAuto(mes, ano, reg.funcionarios?.folga_semanal, reg.feriadosDatas, reg.funcionarios?.data_admissao, reg.funcionarios?.data_fim_aviso)
         const resultado = calcularVTVA({
           diasUteis: diasUteisAuto, diasFeriado: 0, diasSabado,
@@ -262,7 +262,7 @@ export default function RecibosPage() {
           diasDesconto: reg.dias_desconto,
           valorVT: reg.valor_vt ?? reg.funcionarios?.valor_vt ?? 0,
           valorVTSabado: ehExcecao ? vtSabadoBase : 0,
-          valorVA: reg.competenciaObj.valor_va ?? 0,
+          valorVA: resolverValorVA(reg.funcionarios?.valor_va, reg.competenciaObj.valor_va),
         })
         return {
           'Empresa': reg.empresaObj.razao_social,
@@ -297,7 +297,7 @@ export default function RecibosPage() {
       diasDesconto: reg.dias_desconto,
       valorVT: reg.valor_vt ?? reg.funcionarios?.valor_vt ?? 0,
       valorVTSabado: ehExcecao ? vtSabadoBase : 0,
-      valorVA: reg.competenciaObj.valor_va ?? 0,
+      valorVA: resolverValorVA(reg.funcionarios?.valor_va, reg.competenciaObj.valor_va),
     })
     return sum + r.valorTotal
   }, 0)
@@ -416,7 +416,7 @@ export default function RecibosPage() {
                           diasDesconto: reg.dias_desconto,
                           valorVT: reg.valor_vt ?? reg.funcionarios?.valor_vt ?? 0,
                           valorVTSabado: ehExcecao ? vtSabadoBase : 0,
-                          valorVA: reg.competenciaObj.valor_va ?? 0,
+                          valorVA: resolverValorVA(reg.funcionarios?.valor_va, reg.competenciaObj.valor_va),
                         })
                         return (
                           <tr key={`${reg.empresaObj.id}-${reg.funcionario_id}`} className="hover:bg-gray-50 transition-colors">

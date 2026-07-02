@@ -33,6 +33,7 @@ export type Funcionario = {
   ativo: boolean
   valor_vt: number
   valor_vt_sabado: number
+  valor_va?: number | null         // VA por funcionário (exceção) — 0/null usa o VA da empresa/competência
   data_admissao?: string | null    // 'YYYY-MM-DD'
   em_aviso_previo?: boolean        // está cumprindo aviso prévio
   data_inicio_aviso?: string | null // 'YYYY-MM-DD' — início do aviso

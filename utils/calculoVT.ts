@@ -52,6 +52,19 @@ export function calcularVTVA(params: ParamsCalculo): ResultadoCalculo {
   }
 }
 
+/**
+ * Resolve o valor de VA a aplicar: se o funcionário tiver um VA de exceção
+ * (> 0), ele prevalece; caso contrário usa o VA da empresa/competência.
+ */
+export function resolverValorVA(
+  valorVAFuncionario?: number | null,
+  valorVACompetencia?: number | null
+): number {
+  const f = valorVAFuncionario ?? 0
+  if (f > 0) return f
+  return valorVACompetencia ?? 0
+}
+
 export function formatarMoeda(valor: number): string {
   return new Intl.NumberFormat('pt-BR', {
     style: 'currency',

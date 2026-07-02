@@ -20,6 +20,8 @@ import {
   calcularSabadosDesde,
   trabalhaNoMes,
   formatarMoeda,
+  resolverValorVA,
+  FOLGA_TO_DOW,
   MESES,
 } from '../../utils/calculoVT'
 
@@ -53,11 +55,19 @@ const TODAS = '__todas__'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function contarDiasNoPeriodo(start: Date, end: Date): number {
+function contarDiasNoPeriodo(
+  start: Date,
+  end: Date,
+  dow: number,
+  feriadosSet: Set<string>
+): number {
   let count = 0
   const cur = new Date(start)
   while (cur <= end) {
-    if (cur.getDay() !== 0) count++ // não conta domingo
+    const cd = cur.getDay()
+    const iso = `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, '0')}-${String(cur.getDate()).padStart(2, '0')}`
+    // conta apenas dias úteis: exclui domingo, a folga semanal e feriados
+    if (cd !== 0 && cd !== dow && !feriadosSet.has(iso)) count++
     cur.setDate(cur.getDate() + 1)
   }
   return Math.max(0, count)
@@ -78,21 +88,25 @@ function calcularDiasComCarryOver(
   inicio: string,
   fim: string,
   mes: number,
-  ano: number
+  ano: number,
+  folgaSemanal?: string | null,
+  feriadosDatas: string[] = []
 ): { diasCorrente: number; diasProximo: number } {
   if (!inicio) return { diasCorrente: 1, diasProximo: 0 }
+  const dow = folgaSemanal ? (FOLGA_TO_DOW[folgaSemanal] ?? -1) : -1
+  const feriadosSet = new Set(feriadosDatas)
   const start = new Date(inicio + 'T12:00:00')
   const end = new Date((fim || inicio) + 'T12:00:00')
   const lastDay = ultimoDiaDoMes(mes, ano)
 
   const endCorrente = end <= lastDay ? end : lastDay
-  const diasCorrente = contarDiasNoPeriodo(start, endCorrente)
+  const diasCorrente = contarDiasNoPeriodo(start, endCorrente, dow, feriadosSet)
 
   let diasProximo = 0
   if (end > lastDay) {
     const nextStart = new Date(lastDay)
     nextStart.setDate(nextStart.getDate() + 1)
-    diasProximo = contarDiasNoPeriodo(nextStart, end)
+    diasProximo = contarDiasNoPeriodo(nextStart, end, dow, feriadosSet)
   }
   return { diasCorrente, diasProximo }
 }
@@ -454,7 +468,8 @@ export default function CompetenciasPage() {
     setNovaDataInicio(val)
     if (val) {
       const fim = novaDataFim || val
-      const { diasCorrente, diasProximo } = calcularDiasComCarryOver(val, fim, mes, ano)
+      const folga = modalIdx !== null ? itens[modalIdx]?.funcionario?.folga_semanal : null
+      const { diasCorrente, diasProximo } = calcularDiasComCarryOver(val, fim, mes, ano, folga, feriadosDatas)
       setNovoDias(diasCorrente || 1)
       setNovoDiasProximo(diasProximo)
     }
@@ -464,7 +479,8 @@ export default function CompetenciasPage() {
     setNovaDataFim(val)
     if (novaDataInicio) {
       const fim = val || novaDataInicio
-      const { diasCorrente, diasProximo } = calcularDiasComCarryOver(novaDataInicio, fim, mes, ano)
+      const folga = modalIdx !== null ? itens[modalIdx]?.funcionario?.folga_semanal : null
+      const { diasCorrente, diasProximo } = calcularDiasComCarryOver(novaDataInicio, fim, mes, ano, folga, feriadosDatas)
       setNovoDias(diasCorrente || 1)
       setNovoDiasProximo(diasProximo)
     }
@@ -513,10 +529,12 @@ export default function CompetenciasPage() {
     const descontosReais = item.descontos.filter(d => !d.isCarryOver)
     const totalDescontos = descontosReais.reduce((s, d) => s + d.dias, 0)
     const diasUteisAuto = calcularDiasUteisAuto(mes, ano, item.funcionario.folga_semanal, feriadosDatas, item.funcionario.data_admissao, item.funcionario.data_fim_aviso)
+    // VA de exceção do funcionário prevalece sobre o VA da empresa/competência
+    const vaFinal = resolverValorVA(item.funcionario?.valor_va, vaEfetivo)
     const resultado = calcularVTVA({
       diasUteis: diasUteisAuto, diasFeriado: 0, diasSabado: diasSabadoSalvar,
       diasDesconto: totalDescontos, valorVT: item.valor_vt,
-      valorVTSabado: valorVtSabadoSalvar, valorVA: vaEfetivo,
+      valorVTSabado: valorVtSabadoSalvar, valorVA: vaFinal,
     })
 
     const payload = {
@@ -673,7 +691,7 @@ export default function CompetenciasPage() {
         const valorVtSabado = ehExcecao ? (f.valor_vt_sabado ?? 0) : 0
         const resultado = calcularVTVA({
           diasUteis: diasAuto, diasFeriado: 0, diasSabado,
-          diasDesconto: 0, valorVT: f.valor_vt ?? 0, valorVTSabado: valorVtSabado, valorVA: compValorVA,
+          diasDesconto: 0, valorVT: f.valor_vt ?? 0, valorVTSabado: valorVtSabado, valorVA: resolverValorVA(f.valor_va, compValorVA),
         })
 
         await supabase.from('competencia_funcionario').insert({
@@ -746,7 +764,7 @@ export default function CompetenciasPage() {
         const diasAuto = calcularDiasUteisAuto(mes, ano, f.folga_semanal, feriados, f.data_admissao, f.data_fim_aviso)
         const resultado = calcularVTVA({
           diasUteis: diasAuto, diasFeriado: 0, diasSabado,
-          diasDesconto, valorVT: valorVt, valorVTSabado: valorVtSabado, valorVA: compValorVA,
+          diasDesconto, valorVT: valorVt, valorVTSabado: valorVtSabado, valorVA: resolverValorVA(f.valor_va, compValorVA),
         })
         const payload = {
           competencia_id: compId, funcionario_id: f.id,
@@ -771,7 +789,7 @@ export default function CompetenciasPage() {
 
   const totalGeral = itens.reduce((sum, item) => {
     const ehExcecao = (item.valor_vt_sabado ?? 0) > 0
-    const vaEfetivo = modoTodas ? (item.valorVAItem ?? 0) : valorVA
+    const vaEfetivo = resolverValorVA(item.funcionario?.valor_va, modoTodas ? (item.valorVAItem ?? 0) : valorVA)
     const totalDesc = item.descontos.filter(d => !d.isCarryOver).reduce((s, d) => s + d.dias, 0)
     const diasAuto = calcularDiasUteisAuto(mes, ano, item.funcionario.folga_semanal, feriadosDatas, item.funcionario.data_admissao, item.funcionario.data_fim_aviso)
     const r = calcularVTVA({
@@ -1102,7 +1120,7 @@ export default function CompetenciasPage() {
                         const ehExcecao = (item.valor_vt_sabado ?? 0) > 0
                         const diasSabadoEfetivo = ehExcecao ? item.dias_sabado : 0
                         const valorVtSabadoEfetivo = ehExcecao ? item.valor_vt_sabado : 0
-                        const vaEfetivo = modoTodas ? (item.valorVAItem ?? 0) : valorVA
+                        const vaEfetivo = resolverValorVA(item.funcionario?.valor_va, modoTodas ? (item.valorVAItem ?? 0) : valorVA)
                         const totalDescComCarry = item.descontos.reduce((s, d) => s + d.dias, 0)
                         const numDescontos = item.descontos.filter(d => !d.isCarryOver && d.dias > 0).length
                         const numAcrescimos = item.descontos.filter(d => !d.isCarryOver && d.dias < 0).length
