@@ -41,6 +41,7 @@ export default function ValesPage() {
   const [funcs, setFuncs] = useState<FuncOpt[]>([])
   const [vales, setVales] = useState<PagamentoVale[]>([])
   const [loading, setLoading] = useState(false)
+  const [gerando, setGerando] = useState<string | null>(null)
 
   const [filtroEmpresa, setFiltroEmpresa] = useState('')
   const [busca, setBusca] = useState('')
@@ -151,6 +152,28 @@ export default function ValesPage() {
     carregarVales()
   }
 
+  async function gerarRecibo(v: PagamentoVale) {
+    setGerando(v.id)
+    try {
+      const { gerarReciboValePDF } = await import('../../../services/gerarReciboValePDF')
+      const parcelas = Math.max(1, v.parcelas ?? 1)
+      await gerarReciboValePDF({
+        empresaNome: v.empresas?.razao_social ?? '',
+        empresaCnpj: v.empresas?.cnpj ?? '',
+        funcionarioNome: v.funcionarios?.nome ?? '',
+        funcao: v.funcionarios?.funcao ?? '',
+        data: v.data,
+        descricao: v.descricao,
+        valorTotal: v.valor_total,
+        parcelas,
+        valorParcela: v.valor_total / parcelas,
+        mesInicio: v.mes_inicio,
+        mesFim: v.mes_inicio,
+      })
+    } catch (err) { console.error(err); notify('Erro ao gerar recibo.', 'erro') }
+    finally { setGerando(null) }
+  }
+
   return (
     <LayoutAdmin
       title="Vales / Descontos"
@@ -232,7 +255,16 @@ export default function ValesPage() {
                         <td className="table-cell text-right">{formatarMoeda(v.valor_total / parcelas)}</td>
                         <td className="table-cell text-xs text-gray-600">{periodo}</td>
                         <td className="table-cell text-right">
-                          <button onClick={() => remover(v)} className="text-red-500 hover:text-red-700 text-xs font-medium">Excluir</button>
+                          <div className="flex gap-2 justify-end items-center">
+                            <button
+                              onClick={() => gerarRecibo(v)}
+                              disabled={gerando === v.id}
+                              className="inline-flex items-center gap-1 bg-amber-50 hover:bg-amber-100 text-amber-700 text-xs font-medium px-2.5 py-1.5 rounded-lg transition-colors disabled:opacity-50"
+                            >
+                              {gerando === v.id ? 'Gerando...' : 'Recibo'}
+                            </button>
+                            <button onClick={() => remover(v)} className="text-red-500 hover:text-red-700 text-xs font-medium">Excluir</button>
+                          </div>
                         </td>
                       </tr>
                     )
