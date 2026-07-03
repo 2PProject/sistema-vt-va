@@ -130,6 +130,30 @@ export default function FechamentoPage() {
     URL.revokeObjectURL(url)
   }
 
+  async function gerarTudo() {
+    if (filtradas.length === 0) { notify('Nada para gerar nesta competência.', 'erro'); return }
+    setGerando('__tudo__')
+    try {
+      const { gerarMultiplosPDFs } = await import('../../../services/gerarReciboPDF')
+      const { gerarMultiplosConsolidados } = await import('../../../services/gerarReciboValePDF')
+      let semPix = 0
+      const lotes = lotesPorEmpresa()
+      for (const g of lotes) {
+        const suf = g.nome ? '_' + slug(g.nome) : ''
+        const vtva = g.linhas.filter(l => l.reciboVTVA).map(l => l.reciboVTVA!)
+        if (vtva.length) await gerarMultiplosPDFs(vtva, `recibos_vtva_${mesRef}${suf}.pdf`)
+        const vales = g.linhas.filter(l => l.reciboVales).map(l => l.reciboVales!)
+        if (vales.length) await gerarMultiplosConsolidados(vales, `recibos_vales_${mesRef}${suf}.pdf`)
+        const { csv, semPix: sp } = montarCSVFechamento(g.linhas)
+        semPix += sp
+        baixarCSV(csv, `fechamento_banco_${mesRef}${suf}.csv`)
+      }
+      const aviso = semPix > 0 ? ` Atenção: ${semPix} sem chave Pix.` : ''
+      notify(`Fechamento gerado: recibos VT/VA, recibos de vales e CSV do banco.${aviso}`, semPix > 0 ? 'erro' : 'ok')
+    } catch (e) { console.error(e); notify('Erro ao gerar o fechamento.', 'erro') }
+    finally { setGerando(null) }
+  }
+
   function exportarCSV() {
     if (filtradas.length === 0) return
     const lotes = lotesPorEmpresa()
@@ -216,8 +240,15 @@ export default function FechamentoPage() {
               <button className="btn-secondary text-sm" onClick={gerarTodosVales} disabled={gerando !== null || loading}>
                 {gerando === '__vales__' ? 'Gerando...' : 'Recibos de Vales'}
               </button>
-              <button className="btn-primary text-sm" onClick={exportarCSV} disabled={gerando !== null || loading || filtradas.length === 0}>
+              <button className="btn-secondary text-sm" onClick={exportarCSV} disabled={gerando !== null || loading || filtradas.length === 0}>
                 CSV Banco
+              </button>
+              <button
+                className="text-sm bg-green-600 text-white py-2 px-4 rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors font-medium"
+                onClick={gerarTudo}
+                disabled={gerando !== null || loading || filtradas.length === 0}
+              >
+                {gerando === '__tudo__' ? 'Gerando...' : '✓ Gerar Tudo'}
               </button>
             </div>
           </div>
