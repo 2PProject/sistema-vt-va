@@ -154,6 +154,15 @@ export async function criarVale(vale: Omit<PagamentoVale, 'id' | 'criado_em' | '
   return { ok: true }
 }
 
+export async function atualizarVale(
+  id: string,
+  patch: Partial<Omit<PagamentoVale, 'id' | 'criado_em' | 'funcionarios' | 'empresas'>>
+): Promise<{ ok: boolean; erro?: string }> {
+  const { error } = await supabase.from('pagamento_vales').update(patch).eq('id', id)
+  if (error) return { ok: false, erro: error.message }
+  return { ok: true }
+}
+
 export async function excluirVale(id: string): Promise<void> {
   await supabase.from('pagamento_vales').delete().eq('id', id)
 }

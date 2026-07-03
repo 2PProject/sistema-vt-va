@@ -1,26 +1,21 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import LayoutAdmin from '../../../components/LayoutAdmin'
 import { supabase, Empresa } from '../../../lib/supabase'
 import { formatarMoeda, MESES } from '../../../utils/calculoVT'
 import {
   competenciaMesAnterior,
   listarVales,
-  descontoDoVale,
   statusParcelasVale,
   PagamentoVale,
+  StatusVale,
 } from '../../../lib/pagamentos'
-import type { DadosReciboVale } from '../../../services/gerarReciboValePDF'
+import type { DadosReciboConsolidado } from '../../../services/gerarReciboValePDF'
 
 function fmtMes(mes: string) {
   const [a, m] = mes.split('-').map(Number)
   return m ? `${MESES[m - 1]}/${a}` : mes
-}
-function fmtData(iso: string) {
-  if (!iso) return ''
-  const [a, m, d] = iso.split('-')
-  return `${d}/${m}/${a}`
 }
 function competenciasParcelas(mesInicio: string, parcelas: number): string[] {
   const [ay, am] = mesInicio.split('-').map(Number)
@@ -32,6 +27,19 @@ function competenciasParcelas(mesInicio: string, parcelas: number): string[] {
   return out
 }
 
+type ValeSt = { v: PagamentoVale; st: StatusVale }
+type Grupo = {
+  funcionario_id: string
+  funcionarioNome: string
+  funcao: string
+  empresaNome: string
+  empresaCnpj: string
+  vales: ValeSt[]
+  total: number
+  descontado: number
+  restante: number
+}
+
 export default function RecibosValesPage() {
   const [empresas, setEmpresas] = useState<Empresa[]>([])
   const [vales, setVales] = useState<PagamentoVale[]>([])
@@ -40,9 +48,9 @@ export default function RecibosValesPage() {
 
   const [empresaFiltro, setEmpresaFiltro] = useState('')
   const [refComp, setRefComp] = useState(competenciaMesAnterior())
-  const [soAtivos, setSoAtivos] = useState(false)
-  const [soEmAberto, setSoEmAberto] = useState(false)
+  const [soEmAberto, setSoEmAberto] = useState(true)
   const [busca, setBusca] = useState('')
+  const [aberto, setAberto] = useState<Set<string>>(new Set())
 
   const [msg, setMsg] = useState('')
   const [msgTipo, setMsgTipo] = useState<'ok' | 'erro'>('ok')
@@ -64,95 +72,125 @@ export default function RecibosValesPage() {
     setTimeout(() => setMsg(''), 6000)
   }
 
-  // Vales + status calculado na competência de referência
-  const linhas = useMemo(() => {
+  // Agrupa por profissional, com status calculado na competência de referência
+  const grupos = useMemo<Grupo[]>(() => {
     const q = busca.trim().toLowerCase()
-    return vales
-      .map(v => ({ v, st: statusParcelasVale(v, refComp) }))
-      .filter(({ v, st }) => {
-        if (soAtivos && !descontoDoVale(v, refComp)) return false
-        if (soEmAberto && st.restantes === 0) return false
-        if (q) {
-          const txt = `${v.funcionarios?.nome ?? ''} ${v.empresas?.razao_social ?? ''} ${v.descricao ?? ''}`.toLowerCase()
-          if (!txt.includes(q)) return false
+    const map = new Map<string, Grupo>()
+    for (const v of vales) {
+      const st = statusParcelasVale(v, refComp)
+      if (soEmAberto && st.restantes === 0) continue
+      if (q) {
+        const txt = `${v.funcionarios?.nome ?? ''} ${v.empresas?.razao_social ?? ''} ${v.descricao ?? ''}`.toLowerCase()
+        if (!txt.includes(q)) continue
+      }
+      const key = v.funcionario_id
+      let g = map.get(key)
+      if (!g) {
+        g = {
+          funcionario_id: key,
+          funcionarioNome: v.funcionarios?.nome ?? '—',
+          funcao: v.funcionarios?.funcao ?? '',
+          empresaNome: v.empresas?.razao_social ?? '',
+          empresaCnpj: v.empresas?.cnpj ?? '',
+          vales: [], total: 0, descontado: 0, restante: 0,
         }
-        return true
-      })
-  }, [vales, refComp, soAtivos, soEmAberto, busca])
+        map.set(key, g)
+      }
+      g.vales.push({ v, st })
+      g.total += v.valor_total
+      g.descontado += st.valorDescontado
+      g.restante += st.valorRestante
+    }
+    return Array.from(map.values()).sort((a, b) =>
+      b.restante - a.restante || a.funcionarioNome.localeCompare(b.funcionarioNome))
+  }, [vales, refComp, soEmAberto, busca])
 
   const totais = useMemo(() => ({
-    total: linhas.reduce((s, l) => s + l.v.valor_total, 0),
-    descontado: linhas.reduce((s, l) => s + l.st.valorDescontado, 0),
-    restante: linhas.reduce((s, l) => s + l.st.valorRestante, 0),
-  }), [linhas])
+    total: grupos.reduce((s, g) => s + g.total, 0),
+    descontado: grupos.reduce((s, g) => s + g.descontado, 0),
+    restante: grupos.reduce((s, g) => s + g.restante, 0),
+    profissionais: grupos.length,
+  }), [grupos])
 
-  function montarDados(v: PagamentoVale): DadosReciboVale {
-    const parcelas = Math.max(1, v.parcelas ?? 1)
+  function toggle(id: string) {
+    setAberto(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+  }
+
+  function montarConsolidado(g: Grupo): DadosReciboConsolidado {
     return {
-      empresaNome: v.empresas?.razao_social ?? '',
-      empresaCnpj: v.empresas?.cnpj ?? '',
-      funcionarioNome: v.funcionarios?.nome ?? '',
-      funcao: v.funcionarios?.funcao ?? '',
-      data: v.data,
-      descricao: v.descricao,
-      valorTotal: v.valor_total,
-      parcelas,
-      valorParcela: v.valor_total / parcelas,
-      mesInicio: v.mes_inicio,
-      mesFim: v.mes_inicio,
+      empresaNome: g.empresaNome,
+      empresaCnpj: g.empresaCnpj,
+      funcionarioNome: g.funcionarioNome,
+      funcao: g.funcao,
+      refCompetencia: refComp,
+      vales: g.vales.map(({ v, st }) => ({
+        descricao: v.descricao,
+        data: v.data,
+        valorTotal: v.valor_total,
+        parcelas: st.parcelas,
+        valorParcela: st.valorParcela,
+        descontadas: st.descontadas,
+        restantes: st.restantes,
+        valorRestante: st.valorRestante,
+        mesInicio: v.mes_inicio,
+      })),
+      totalGeral: g.total,
+      totalDescontado: g.descontado,
+      totalRestante: g.restante,
     }
   }
 
-  async function gerarRecibo(v: PagamentoVale) {
-    setGerando(v.id)
+  async function gerarRecibo(g: Grupo) {
+    setGerando(g.funcionario_id)
     try {
-      const { gerarReciboValePDF } = await import('../../../services/gerarReciboValePDF')
-      await gerarReciboValePDF(montarDados(v))
+      const { gerarReciboConsolidadoPDF } = await import('../../../services/gerarReciboValePDF')
+      await gerarReciboConsolidadoPDF(montarConsolidado(g))
     } catch (err) { console.error(err); notify('Erro ao gerar recibo.', 'erro') }
     finally { setGerando(null) }
   }
 
   async function gerarTodos() {
-    if (linhas.length === 0) return
+    if (grupos.length === 0) return
     setGerando('__todos__')
     try {
-      const { gerarMultiplosRecibosVale } = await import('../../../services/gerarReciboValePDF')
-      await gerarMultiplosRecibosVale(linhas.map(l => montarDados(l.v)))
+      const { gerarMultiplosConsolidados } = await import('../../../services/gerarReciboValePDF')
+      await gerarMultiplosConsolidados(grupos.map(montarConsolidado))
     } catch (err) { console.error(err); notify('Erro ao gerar recibos.', 'erro') }
     finally { setGerando(null) }
   }
 
-  function proximaCompetencia(v: PagamentoVale, descontadas: number): string | null {
-    const parcelas = Math.max(1, v.parcelas ?? 1)
-    if (descontadas >= parcelas) return null
-    return competenciasParcelas(v.mes_inicio, parcelas)[descontadas]
-  }
-
   async function gerarXLSX() {
-    if (linhas.length === 0) return
+    if (grupos.length === 0) return
     setGerando('__xlsx__')
     try {
       const { utils, writeFile } = await import('xlsx')
-      const dados = linhas.map(({ v, st }) => {
-        const prox = proximaCompetencia(v, st.descontadas)
+      const resumo = grupos.map(g => ({
+        'Profissional': g.funcionarioNome,
+        'Empresa': g.empresaNome,
+        'Vales': g.vales.length,
+        'Valor Total': g.total,
+        'Descontado': g.descontado,
+        'Devendo': g.restante,
+      }))
+      const detalhe = grupos.flatMap(g => g.vales.map(({ v, st }) => {
+        const prox = st.restantes > 0 ? competenciasParcelas(v.mes_inicio, st.parcelas)[st.descontadas] : null
         return {
-          'Profissional': v.funcionarios?.nome ?? '',
-          'Empresa': v.empresas?.razao_social ?? '',
+          'Profissional': g.funcionarioNome,
+          'Empresa': g.empresaNome,
           'Descrição': v.descricao,
-          'Data': fmtData(v.data),
           'Valor Total': v.valor_total,
           'Parcelas': st.parcelas,
           'Valor Parcela': st.valorParcela,
           'Descontadas': st.descontadas,
           'Faltam': st.restantes,
-          'Valor Descontado': st.valorDescontado,
-          'Valor Restante': st.valorRestante,
-          'Próxima Competência': prox ? fmtMes(prox) : 'Quitado',
+          'Descontado': st.valorDescontado,
+          'Restante': st.valorRestante,
+          'Próxima': prox ? fmtMes(prox) : 'Quitado',
         }
-      })
-      const ws = utils.json_to_sheet(dados)
+      }))
       const wb = utils.book_new()
-      utils.book_append_sheet(wb, ws, `Vales ${fmtMes(refComp)}`.slice(0, 31))
+      utils.book_append_sheet(wb, utils.json_to_sheet(resumo), 'Resumo')
+      utils.book_append_sheet(wb, utils.json_to_sheet(detalhe), 'Detalhe')
       writeFile(wb, `relatorio_vales_${refComp}.xlsx`)
     } catch (err) { console.error(err); notify('Erro ao exportar.', 'erro') }
     finally { setGerando(null) }
@@ -179,9 +217,9 @@ export default function RecibosValesPage() {
               </select>
             </div>
             <div>
-              <label className="label-field">Descontadas até</label>
+              <label className="label-field">Posição em</label>
               <input type="month" className="input-field" value={refComp} onChange={e => setRefComp(e.target.value)} />
-              <p className="text-xs text-gray-400 mt-1">Competência de referência.</p>
+              <p className="text-xs text-gray-400 mt-1">Descontadas até esta competência.</p>
             </div>
             <div>
               <label className="label-field">Buscar</label>
@@ -191,41 +229,43 @@ export default function RecibosValesPage() {
           <div className="flex flex-wrap gap-4 mt-4">
             <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
               <input type="checkbox" className="w-4 h-4" checked={soEmAberto} onChange={e => setSoEmAberto(e.target.checked)} />
-              Somente com parcelas em aberto
-            </label>
-            <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
-              <input type="checkbox" className="w-4 h-4" checked={soAtivos} onChange={e => setSoAtivos(e.target.checked)} />
-              Somente com parcela nesta competência ({fmtMes(refComp)})
+              Somente quem está devendo
             </label>
           </div>
         </div>
 
         {/* Resumo */}
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div className="card">
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">Valor Total dos Vales</p>
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">Profissionais</p>
+            <p className="text-2xl font-bold text-gray-800 mt-1">{totais.profissionais}</p>
+          </div>
+          <div className="card">
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">Valor Total</p>
             <p className="text-2xl font-bold text-gray-800 mt-1">{formatarMoeda(totais.total)}</p>
           </div>
           <div className="card">
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">Já Descontado (até {fmtMes(refComp)})</p>
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">Já Descontado</p>
             <p className="text-2xl font-bold text-green-700 mt-1">{formatarMoeda(totais.descontado)}</p>
           </div>
           <div className="card">
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">Falta Descontar</p>
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">Devendo</p>
             <p className="text-2xl font-bold text-amber-600 mt-1">{formatarMoeda(totais.restante)}</p>
           </div>
         </div>
 
-        {/* Lista */}
+        {/* Lista agrupada por profissional */}
         <div className="card">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-base font-semibold text-gray-800">{linhas.length} vale(s)</h2>
-            {linhas.length > 0 && (
+            <h2 className="text-base font-semibold text-gray-800">
+              {grupos.length} profissional(is) · posição {fmtMes(refComp)}
+            </h2>
+            {grupos.length > 0 && (
               <div className="flex items-center gap-2">
-                <button className="btn-secondary flex items-center gap-2 text-sm" onClick={gerarXLSX} disabled={gerando !== null}>
+                <button className="btn-secondary text-sm" onClick={gerarXLSX} disabled={gerando !== null}>
                   {gerando === '__xlsx__' ? 'Gerando...' : 'Exportar XLSX'}
                 </button>
-                <button className="btn-primary flex items-center gap-2 text-sm" onClick={gerarTodos} disabled={gerando !== null}>
+                <button className="btn-primary text-sm" onClick={gerarTodos} disabled={gerando !== null}>
                   {gerando === '__todos__' ? 'Gerando...' : 'Gerar Todos os Recibos'}
                 </button>
               </div>
@@ -234,7 +274,7 @@ export default function RecibosValesPage() {
 
           {loading ? (
             <div className="text-center py-12 text-gray-400 text-sm">Carregando...</div>
-          ) : linhas.length === 0 ? (
+          ) : grupos.length === 0 ? (
             <div className="text-center py-12 text-gray-400 text-sm">
               Nenhum vale encontrado.<br />
               <span className="text-xs">Lance vales em Pagamentos → Vales / Descontos.</span>
@@ -244,83 +284,108 @@ export default function RecibosValesPage() {
               <table className="w-full border-collapse">
                 <thead>
                   <tr className="bg-gray-50 border-b border-gray-200">
-                    <th className="table-header">Data</th>
+                    <th className="table-header" style={{ width: 32 }}></th>
                     <th className="table-header">Profissional</th>
-                    <th className="table-header">Descrição</th>
+                    <th className="table-header text-center">Vales</th>
                     <th className="table-header text-right">Valor Total</th>
-                    <th className="table-header text-center">Progresso</th>
-                    <th className="table-header text-center">Faltam</th>
-                    <th className="table-header text-center">Próxima</th>
-                    <th className="table-header text-right">Restante</th>
+                    <th className="table-header text-right">Descontado</th>
+                    <th className="table-header text-right">Devendo</th>
                     <th className="table-header text-right">Recibo</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {linhas.map(({ v, st }) => {
-                    const comps = competenciasParcelas(v.mes_inicio, st.parcelas)
-                    const periodo = st.parcelas > 1
-                      ? `${fmtMes(comps[0])} → ${fmtMes(comps[comps.length - 1])}`
-                      : fmtMes(v.mes_inicio)
-                    const pct = Math.round((st.descontadas / st.parcelas) * 100)
-                    const quitado = st.restantes === 0
+                  {grupos.map((g) => {
+                    const isOpen = aberto.has(g.funcionario_id)
                     return (
-                      <tr key={v.id} className="hover:bg-gray-50 transition-colors">
-                        <td className="table-cell text-xs text-gray-500">{fmtData(v.data)}</td>
-                        <td className="table-cell">
-                          <div className="font-medium text-gray-900">{v.funcionarios?.nome ?? '—'}</div>
-                          <div className="text-xs text-gray-400">{v.empresas?.razao_social ?? ''}</div>
-                        </td>
-                        <td className="table-cell">{v.descricao}</td>
-                        <td className="table-cell text-right">
-                          {formatarMoeda(v.valor_total)}
-                          <div className="text-xs text-gray-400">{st.parcelas}x {formatarMoeda(st.valorParcela)}</div>
-                        </td>
-                        <td className="table-cell" style={{ minWidth: 150 }}>
-                          <div className="flex items-center justify-between text-xs mb-1">
-                            <span className={quitado ? 'text-green-700 font-medium' : 'text-gray-600'}>
-                              {st.descontadas}/{st.parcelas} descontada(s)
-                            </span>
-                            <span className="text-gray-400">{periodo}</span>
-                          </div>
-                          <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
-                            <div className={`h-full rounded-full ${quitado ? 'bg-green-500' : 'bg-blue-500'}`} style={{ width: `${pct}%` }} />
-                          </div>
-                        </td>
-                        <td className="table-cell text-center">
-                          {quitado
-                            ? <span className="badge-green">Quitado</span>
-                            : <span className="text-amber-700 font-semibold">{st.restantes}</span>}
-                        </td>
-                        <td className="table-cell text-center text-sm">
-                          {quitado
-                            ? <span className="text-gray-300">—</span>
-                            : <span className="text-blue-700 font-medium">{fmtMes(comps[st.descontadas])}</span>}
-                        </td>
-                        <td className="table-cell text-right">
-                          {st.valorRestante > 0
-                            ? <span className="text-amber-700 font-medium">{formatarMoeda(st.valorRestante)}</span>
-                            : <span className="text-gray-300">—</span>}
-                        </td>
-                        <td className="table-cell text-right">
-                          <button
-                            onClick={() => gerarRecibo(v)}
-                            disabled={gerando === v.id}
-                            className="inline-flex items-center gap-1 bg-amber-50 hover:bg-amber-100 text-amber-700 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
-                          >
-                            {gerando === v.id ? 'Gerando...' : 'Recibo'}
-                          </button>
-                        </td>
-                      </tr>
+                      <Fragment key={g.funcionario_id}>
+                        <tr className="hover:bg-gray-50 transition-colors">
+                          <td className="table-cell text-center">
+                            <button onClick={() => toggle(g.funcionario_id)} className="text-gray-400 hover:text-gray-700" title="Ver vales">
+                              <svg className={`w-4 h-4 transition-transform ${isOpen ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                              </svg>
+                            </button>
+                          </td>
+                          <td className="table-cell">
+                            <div className="font-medium text-gray-900">{g.funcionarioNome}</div>
+                            <div className="text-xs text-gray-400">{g.empresaNome}</div>
+                          </td>
+                          <td className="table-cell text-center">{g.vales.length}</td>
+                          <td className="table-cell text-right">{formatarMoeda(g.total)}</td>
+                          <td className="table-cell text-right text-green-700">{formatarMoeda(g.descontado)}</td>
+                          <td className="table-cell text-right font-bold text-amber-700">{formatarMoeda(g.restante)}</td>
+                          <td className="table-cell text-right">
+                            <button
+                              onClick={() => gerarRecibo(g)}
+                              disabled={gerando === g.funcionario_id}
+                              className="inline-flex items-center gap-1 bg-amber-50 hover:bg-amber-100 text-amber-700 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
+                            >
+                              {gerando === g.funcionario_id ? 'Gerando...' : 'Recibo'}
+                            </button>
+                          </td>
+                        </tr>
+                        {isOpen && (
+                          <tr>
+                            <td />
+                            <td colSpan={6} className="px-4 pb-4">
+                              <div className="rounded-lg border border-gray-100 overflow-hidden">
+                                <table className="w-full text-xs">
+                                  <thead>
+                                    <tr className="bg-gray-50 text-gray-500">
+                                      <th className="text-left py-2 px-3 font-semibold">Descrição</th>
+                                      <th className="text-center py-2 px-3 font-semibold">Progresso</th>
+                                      <th className="text-center py-2 px-3 font-semibold">Faltam</th>
+                                      <th className="text-center py-2 px-3 font-semibold">Próxima</th>
+                                      <th className="text-right py-2 px-3 font-semibold">Restante</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {g.vales.map(({ v, st }) => {
+                                      const comps = competenciasParcelas(v.mes_inicio, st.parcelas)
+                                      const quitado = st.restantes === 0
+                                      const pct = Math.round((st.descontadas / st.parcelas) * 100)
+                                      return (
+                                        <tr key={v.id} className="border-t border-gray-100">
+                                          <td className="py-2 px-3">
+                                            <div className="font-medium text-gray-800">{v.descricao}</div>
+                                            <div className="text-gray-400">{formatarMoeda(v.valor_total)} · {st.parcelas}x {formatarMoeda(st.valorParcela)}</div>
+                                          </td>
+                                          <td className="py-2 px-3" style={{ minWidth: 140 }}>
+                                            <div className="text-center text-gray-500 mb-1">{st.descontadas}/{st.parcelas}</div>
+                                            <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                                              <div className={`h-full ${quitado ? 'bg-green-500' : 'bg-blue-500'}`} style={{ width: `${pct}%` }} />
+                                            </div>
+                                          </td>
+                                          <td className="py-2 px-3 text-center">
+                                            {quitado ? <span className="badge-green">Quitado</span> : <span className="text-amber-700 font-semibold">{st.restantes}</span>}
+                                          </td>
+                                          <td className="py-2 px-3 text-center text-blue-700">
+                                            {quitado ? '—' : fmtMes(comps[st.descontadas])}
+                                          </td>
+                                          <td className="py-2 px-3 text-right font-medium text-amber-700">
+                                            {st.valorRestante > 0 ? formatarMoeda(st.valorRestante) : '—'}
+                                          </td>
+                                        </tr>
+                                      )
+                                    })}
+                                  </tbody>
+                                </table>
+                              </div>
+                              <p className="text-xs text-gray-400 mt-2">Para corrigir um vale, use Pagamentos → Vales / Descontos (botão Editar).</p>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
                     )
                   })}
                 </tbody>
                 <tfoot>
                   <tr className="border-t-2 border-gray-200 bg-gray-50">
-                    <td colSpan={3} className="table-cell text-right text-sm font-semibold text-gray-600">Totais:</td>
+                    <td />
+                    <td className="table-cell text-right text-sm font-semibold text-gray-600">Totais:</td>
+                    <td className="table-cell text-center font-semibold">{grupos.reduce((s, g) => s + g.vales.length, 0)}</td>
                     <td className="table-cell text-right font-semibold">{formatarMoeda(totais.total)}</td>
-                    <td className="table-cell text-center text-xs text-gray-500">descontado {formatarMoeda(totais.descontado)}</td>
-                    <td />
-                    <td />
+                    <td className="table-cell text-right font-semibold text-green-700">{formatarMoeda(totais.descontado)}</td>
                     <td className="table-cell text-right font-bold text-amber-700">{formatarMoeda(totais.restante)}</td>
                     <td />
                   </tr>

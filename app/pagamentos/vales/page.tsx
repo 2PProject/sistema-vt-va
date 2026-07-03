@@ -8,6 +8,7 @@ import {
   competenciaMesAnterior,
   listarVales,
   criarVale,
+  atualizarVale,
   excluirVale,
   PagamentoVale,
 } from '../../../lib/pagamentos'
@@ -51,6 +52,7 @@ export default function ValesPage() {
 
   // Form
   const [showForm, setShowForm] = useState(false)
+  const [editId, setEditId] = useState<string | null>(null)
   const [fEmpresa, setFEmpresa] = useState('')
   const [fFunc, setFFunc] = useState('')
   const [fData, setFData] = useState(hoje())
@@ -113,8 +115,21 @@ export default function ValesPage() {
   }, [vales, busca])
 
   function abrirForm() {
+    setEditId(null)
     setFEmpresa(filtroEmpresa); setFFunc(''); setFData(hoje()); setFDescricao(''); setFValor(''); setFParcelas(1)
     setFMesInicio(competenciaMesAnterior()); setFErro(''); setShowForm(true)
+  }
+
+  function editarVale(v: PagamentoVale) {
+    setEditId(v.id)
+    setFEmpresa(v.empresa_id)
+    setFFunc(v.funcionario_id)
+    setFData(v.data)
+    setFDescricao(v.descricao)
+    setFValor(String(v.valor_total))
+    setFParcelas(Math.max(1, v.parcelas ?? 1))
+    setFMesInicio(v.mes_inicio)
+    setFErro(''); setShowForm(true)
   }
 
   const valorNum = parseFloat(fValor.replace(',', '.'))
@@ -129,7 +144,7 @@ export default function ValesPage() {
     if (!func) { setFErro('Profissional inválido.'); return }
 
     setSalvando(true); setFErro('')
-    const res = await criarVale({
+    const payload = {
       funcionario_id: func.id,
       empresa_id: func.empresa_id,
       data: fData || hoje(),
@@ -137,11 +152,12 @@ export default function ValesPage() {
       valor_total: valorNum,
       parcelas: fParcelas,
       mes_inicio: fMesInicio,
-    })
+    }
+    const res = editId ? await atualizarVale(editId, payload) : await criarVale(payload)
     setSalvando(false)
     if (!res.ok) { setFErro(res.erro ?? 'Erro ao salvar.'); return }
     setShowForm(false)
-    notify('Vale/desconto lançado com sucesso.', 'ok')
+    notify(editId ? 'Vale/desconto atualizado.' : 'Vale/desconto lançado com sucesso.', 'ok')
     carregarVales()
   }
 
@@ -263,6 +279,7 @@ export default function ValesPage() {
                             >
                               {gerando === v.id ? 'Gerando...' : 'Recibo'}
                             </button>
+                            <button onClick={() => editarVale(v)} className="text-blue-600 hover:text-blue-800 text-xs font-medium">Editar</button>
                             <button onClick={() => remover(v)} className="text-red-500 hover:text-red-700 text-xs font-medium">Excluir</button>
                           </div>
                         </td>
@@ -279,7 +296,7 @@ export default function ValesPage() {
         {showForm && (
           <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={e => { if (e.target === e.currentTarget) setShowForm(false) }}>
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg p-6 max-h-[90vh] overflow-auto">
-              <h2 className="text-lg font-bold text-gray-800 mb-5">Novo Vale / Desconto</h2>
+              <h2 className="text-lg font-bold text-gray-800 mb-5">{editId ? 'Editar Vale / Desconto' : 'Novo Vale / Desconto'}</h2>
               {fErro && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm mb-4">{fErro}</div>}
 
               <div className="space-y-4">
@@ -344,7 +361,7 @@ export default function ValesPage() {
 
               <div className="flex gap-3 pt-5">
                 <button className="btn-primary flex-1" onClick={salvar} disabled={salvando}>
-                  {salvando ? 'Salvando...' : 'Lançar'}
+                  {salvando ? 'Salvando...' : editId ? 'Salvar alterações' : 'Lançar'}
                 </button>
                 <button className="btn-secondary flex-1" onClick={() => setShowForm(false)}>Cancelar</button>
               </div>
