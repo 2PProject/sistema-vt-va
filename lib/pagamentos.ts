@@ -413,7 +413,25 @@ export async function processarImportacaoSalarios(
   const erros: string[] = []
   if (linhas.length === 0) return { gravados: 0, erros }
 
-  const payload = linhas.map((l) => ({
+  // Deduplica por funcionário (mantém a última linha) para não inserir 2x
+  const byFunc = new Map<string, LinhaImportSalario>()
+  for (const l of linhas) byFunc.set(l.funcionarioId, l)
+  const unicas = Array.from(byFunc.values())
+  const funcIds = unicas.map((l) => l.funcionarioId)
+
+  // Reimportação limpa: remove os registros do mês desses funcionários e reinsere.
+  // Não depende de constraint UNIQUE (funcionario_id, mes_referencia) no banco.
+  const del = await supabase
+    .from('pagamento_registros')
+    .delete()
+    .eq('mes_referencia', mesReferencia)
+    .in('funcionario_id', funcIds)
+  if (del.error) {
+    erros.push(`Erro ao gravar: ${del.error.message}`)
+    return { gravados: 0, erros }
+  }
+
+  const payload = unicas.map((l) => ({
     funcionario_id: l.funcionarioId,
     empresa_id: l.empresaId,
     mes_referencia: mesReferencia,
@@ -421,20 +439,17 @@ export async function processarImportacaoSalarios(
     atualizado_em: new Date().toISOString(),
   }))
 
-  const { error } = await supabase
-    .from('pagamento_registros')
-    .upsert(payload, { onConflict: 'funcionario_id,mes_referencia' })
-
+  const { error } = await supabase.from('pagamento_registros').insert(payload)
   if (error) {
     erros.push(`Erro ao gravar: ${error.message}`)
     return { gravados: 0, erros }
   }
 
   // Atualiza a chave Pix do cadastro quando informada na planilha (não bloqueia)
-  const comPix = linhas.filter((l) => l.pix)
+  const comPix = unicas.filter((l) => l.pix)
   await Promise.all(comPix.map((l) =>
     supabase.from('funcionarios').update({ pix: l.pix }).eq('id', l.funcionarioId)
   )).catch(() => { /* coluna pix pode não existir ainda — ignora */ })
 
-  return { gravados: linhas.length, erros }
+  return { gravados: unicas.length, erros }
 }
