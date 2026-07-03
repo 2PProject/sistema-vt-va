@@ -97,6 +97,27 @@ const menuItems = [
   },
 ]
 
+const pagamentosItems = [
+  {
+    href: '/pagamentos',
+    label: 'Pagamentos',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" />
+      </svg>
+    ),
+  },
+  {
+    href: '/pagamentos/vales',
+    label: 'Vales / Descontos',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />
+      </svg>
+    ),
+  },
+]
+
 export default function Sidebar() {
   const pathname = usePathname()
   const router = useRouter()
@@ -117,6 +138,30 @@ export default function Sidebar() {
       <nav className="flex-1 p-3 overflow-y-auto">
         <ul className="space-y-1">
           {menuItems.map((item) => {
+            const isActive = pathname === item.href
+            return (
+              <li key={item.href}>
+                <Link
+                  href={item.href}
+                  className={`flex items-center gap-3 px-4 py-2.5 rounded-lg transition-colors text-sm font-medium ${
+                    isActive
+                      ? 'bg-blue-700 text-white shadow-sm'
+                      : 'text-blue-200 hover:bg-blue-800 hover:text-white'
+                  }`}
+                >
+                  {item.icon}
+                  <span>{item.label}</span>
+                </Link>
+              </li>
+            )
+          })}
+        </ul>
+
+        <div className="mt-6 mb-2 px-4">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-blue-400">Pagamentos</span>
+        </div>
+        <ul className="space-y-1">
+          {pagamentosItems.map((item) => {
             const isActive = pathname === item.href
             return (
               <li key={item.href}>

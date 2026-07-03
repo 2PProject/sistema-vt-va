@@ -28,11 +28,22 @@ export default function EmpresasPage() {
   }
 
   async function salvar(data: Omit<Empresa, 'id'>) {
-    if (editando) {
-      await supabase.from('empresas').update(data).eq('id', editando.id)
-    } else {
-      await supabase.from('empresas').insert(data)
+    const run = async (p: Omit<Empresa, 'id'>) => {
+      if (editando) {
+        return (await supabase.from('empresas').update(p).eq('id', editando.id)).error
+      }
+      return (await supabase.from('empresas').insert(p)).error
     }
+
+    let error = await run(data)
+    // Fallback: coluna apelido ainda não existe no banco
+    if (error && error.message?.includes('apelido')) {
+      const { apelido: _ap, ...semApelido } = data as Omit<Empresa, 'id'> & { apelido?: unknown }
+      void _ap
+      error = await run(semApelido as Omit<Empresa, 'id'>)
+    }
+    if (error) throw new Error(error.message)
+
     await carregar()
     fecharForm()
   }

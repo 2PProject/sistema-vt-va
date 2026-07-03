@@ -12,6 +12,7 @@ interface FormEmpresaProps {
 export default function FormEmpresa({ empresa, onSave, onCancel }: FormEmpresaProps) {
   const [razaoSocial, setRazaoSocial] = useState('')
   const [cnpj, setCnpj] = useState('')
+  const [apelido, setApelido] = useState('')
   const [valorVA, setValorVA] = useState(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -20,10 +21,12 @@ export default function FormEmpresa({ empresa, onSave, onCancel }: FormEmpresaPr
     if (empresa) {
       setRazaoSocial(empresa.razao_social)
       setCnpj(empresa.cnpj)
+      setApelido(empresa.apelido ?? '')
       setValorVA(empresa.valor_va ?? 0)
     } else {
       setRazaoSocial('')
       setCnpj('')
+      setApelido('')
       setValorVA(0)
     }
   }, [empresa])
@@ -33,7 +36,7 @@ export default function FormEmpresa({ empresa, onSave, onCancel }: FormEmpresaPr
     setError('')
     setLoading(true)
     try {
-      await onSave({ razao_social: razaoSocial, cnpj, valor_va: valorVA })
+      await onSave({ razao_social: razaoSocial, cnpj, valor_va: valorVA, apelido: apelido.trim() || null })
     } catch (err) {
       setError('Erro ao salvar. Tente novamente.')
       console.error(err)
@@ -72,6 +75,17 @@ export default function FormEmpresa({ empresa, onSave, onCancel }: FormEmpresaPr
           className="input-field"
           placeholder="00.000.000/0000-00"
           maxLength={18}
+        />
+      </div>
+
+      <div>
+        <label className="label-field">Apelido (opcional)</label>
+        <input
+          type="text"
+          value={apelido}
+          onChange={(e) => setApelido(e.target.value)}
+          className="input-field"
+          placeholder="Nome curto p/ casar a planilha de pagamentos"
         />
       </div>
 
