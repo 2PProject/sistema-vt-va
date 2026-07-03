@@ -283,7 +283,7 @@ export async function gerarReciboPDF(dados: DadosRecibo): Promise<void> {
 }
 
 /** Gera um único PDF com todos os recibos (um por página) */
-export async function gerarMultiplosPDFs(dadosList: DadosRecibo[]): Promise<void> {
+export async function gerarMultiplosPDFs(dadosList: DadosRecibo[], nomeArquivo?: string): Promise<void> {
   if (dadosList.length === 0) return
   const { default: jsPDF } = await import('jspdf')
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
@@ -301,5 +301,5 @@ export async function gerarMultiplosPDFs(dadosList: DadosRecibo[]): Promise<void
   })
 
   const first = dadosList[0]
-  doc.save(`recibos_${first.mes}_${first.ano}.pdf`)
+  doc.save(nomeArquivo ?? `recibos_${first.mes}_${first.ano}.pdf`)
 }

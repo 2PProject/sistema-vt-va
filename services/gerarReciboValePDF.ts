@@ -258,7 +258,7 @@ export async function gerarReciboConsolidadoPDF(dados: DadosReciboConsolidado): 
 }
 
 /** Um PDF com um recibo consolidado por profissional (um por página). */
-export async function gerarMultiplosConsolidados(lista: DadosReciboConsolidado[]): Promise<void> {
+export async function gerarMultiplosConsolidados(lista: DadosReciboConsolidado[], nomeArquivo?: string): Promise<void> {
   if (lista.length === 0) return
   const { default: jsPDF } = await import('jspdf')
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
@@ -266,5 +266,5 @@ export async function gerarMultiplosConsolidados(lista: DadosReciboConsolidado[]
     if (i > 0) doc.addPage()
     desenharConsolidado(doc, dados)
   })
-  doc.save('recibos_vales_consolidados.pdf')
+  doc.save(nomeArquivo ?? 'recibos_vales_consolidados.pdf')
 }

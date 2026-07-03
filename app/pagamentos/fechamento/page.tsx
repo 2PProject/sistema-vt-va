@@ -19,6 +19,7 @@ export default function FechamentoPage() {
   const [linhas, setLinhas] = useState<LinhaFechamento[]>([])
   const [loading, setLoading] = useState(false)
   const [busca, setBusca] = useState('')
+  const [porEmpresa, setPorEmpresa] = useState(true)
   const [gerando, setGerando] = useState<string | null>(null)
 
   const [msg, setMsg] = useState('')
@@ -56,6 +57,19 @@ export default function FechamentoPage() {
     pagar: filtradas.reduce((s, l) => s + l.totalPagar, 0),
   }), [filtradas])
 
+  // Agrupa por empresa quando "Todas" + opção ligada
+  function slug(s: string) { return (s || 'empresa').replace(/[^\w]+/g, '_').replace(/^_|_$/g, '').slice(0, 40) }
+  function lotesPorEmpresa(): { nome: string; linhas: LinhaFechamento[] }[] {
+    if (empresaFiltro || !porEmpresa) return [{ nome: '', linhas: filtradas }]
+    const map = new Map<string, { nome: string; linhas: LinhaFechamento[] }>()
+    for (const l of filtradas) {
+      let g = map.get(l.empresa_id)
+      if (!g) { g = { nome: l.empresaNome, linhas: [] }; map.set(l.empresa_id, g) }
+      g.linhas.push(l)
+    }
+    return Array.from(map.values())
+  }
+
   async function gerarReciboVTVA(l: LinhaFechamento) {
     if (!l.reciboVTVA) return
     setGerando('vtva:' + l.funcionario_id)
@@ -77,37 +91,57 @@ export default function FechamentoPage() {
   }
 
   async function gerarTodosVTVA() {
-    const lista = filtradas.filter(l => l.reciboVTVA).map(l => l.reciboVTVA!)
-    if (lista.length === 0) { notify('Nenhum recibo de VT/VA nesta competência.', 'erro'); return }
+    const lotes = lotesPorEmpresa()
+    const totalDocs = lotes.reduce((s, g) => s + g.linhas.filter(l => l.reciboVTVA).length, 0)
+    if (totalDocs === 0) { notify('Nenhum recibo de VT/VA nesta competência.', 'erro'); return }
     setGerando('__vtva__')
     try {
       const { gerarMultiplosPDFs } = await import('../../../services/gerarReciboPDF')
-      await gerarMultiplosPDFs(lista)
+      for (const g of lotes) {
+        const lista = g.linhas.filter(l => l.reciboVTVA).map(l => l.reciboVTVA!)
+        if (!lista.length) continue
+        await gerarMultiplosPDFs(lista, `recibos_vtva_${mesRef}${g.nome ? '_' + slug(g.nome) : ''}.pdf`)
+      }
     } catch (e) { console.error(e); notify('Erro ao gerar recibos VT/VA.', 'erro') }
     finally { setGerando(null) }
   }
 
   async function gerarTodosVales() {
-    const lista = filtradas.filter(l => l.reciboVales).map(l => l.reciboVales!)
-    if (lista.length === 0) { notify('Nenhum desconto de vale nesta competência.', 'erro'); return }
+    const lotes = lotesPorEmpresa()
+    const totalDocs = lotes.reduce((s, g) => s + g.linhas.filter(l => l.reciboVales).length, 0)
+    if (totalDocs === 0) { notify('Nenhum desconto de vale nesta competência.', 'erro'); return }
     setGerando('__vales__')
     try {
       const { gerarMultiplosConsolidados } = await import('../../../services/gerarReciboValePDF')
-      await gerarMultiplosConsolidados(lista)
+      for (const g of lotes) {
+        const lista = g.linhas.filter(l => l.reciboVales).map(l => l.reciboVales!)
+        if (!lista.length) continue
+        await gerarMultiplosConsolidados(lista, `recibos_vales_${mesRef}${g.nome ? '_' + slug(g.nome) : ''}.pdf`)
+      }
     } catch (e) { console.error(e); notify('Erro ao gerar recibos de vales.', 'erro') }
     finally { setGerando(null) }
   }
 
-  function exportarCSV() {
-    if (filtradas.length === 0) return
-    const { csv, semPix } = montarCSVFechamento(filtradas)
+  function baixarCSV(csv: string, nome: string) {
     const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
-    a.href = url; a.download = `fechamento_banco_${mesRef}.csv`; a.click()
+    a.href = url; a.download = nome; a.click()
     URL.revokeObjectURL(url)
-    if (semPix > 0) notify(`CSV gerado. Atenção: ${semPix} profissional(is) sem chave Pix.`, 'erro')
-    else notify('CSV do banco gerado com sucesso.', 'ok')
+  }
+
+  function exportarCSV() {
+    if (filtradas.length === 0) return
+    const lotes = lotesPorEmpresa()
+    let semPix = 0
+    for (const g of lotes) {
+      const { csv, semPix: sp } = montarCSVFechamento(g.linhas)
+      semPix += sp
+      baixarCSV(csv, `fechamento_banco_${mesRef}${g.nome ? '_' + slug(g.nome) : ''}.csv`)
+    }
+    const qtd = lotes.length > 1 ? ` (${lotes.length} arquivos)` : ''
+    if (semPix > 0) notify(`CSV gerado${qtd}. Atenção: ${semPix} profissional(is) sem chave Pix.`, 'erro')
+    else notify(`CSV do banco gerado com sucesso${qtd}.`, 'ok')
   }
 
   return (
@@ -139,6 +173,14 @@ export default function FechamentoPage() {
               <input className="input-field" placeholder="Profissional ou empresa..." value={busca} onChange={e => setBusca(e.target.value)} />
             </div>
           </div>
+          {!empresaFiltro && (
+            <div className="mt-4">
+              <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+                <input type="checkbox" className="w-4 h-4" checked={porEmpresa} onChange={e => setPorEmpresa(e.target.checked)} />
+                Gerar arquivos separados por empresa (CSV e recibos)
+              </label>
+            </div>
+          )}
         </div>
 
         {/* Resumo */}
