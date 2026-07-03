@@ -119,9 +119,8 @@ function derivar(d: DadosReciboVale): DadosReciboVale {
   return { ...d, parcelas, valorParcela, mesFim }
 }
 
-export async function gerarReciboValePDF(dados: DadosReciboVale): Promise<void> {
-  const { default: jsPDF } = await import('jspdf')
-  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function desenharValeCompleto(doc: any, dados: DadosReciboVale) {
   const d = derivar(dados)
   // Duas vias: empresa e profissional
   desenharRecibo(doc, d, 12, '1ª VIA — EMPRESA')
@@ -130,5 +129,23 @@ export async function gerarReciboValePDF(dados: DadosReciboVale): Promise<void> 
   doc.line(10, 150, 200, 150)
   doc.setLineDashPattern([], 0)
   desenharRecibo(doc, d, 156, '2ª VIA — PROFISSIONAL')
-  doc.save(`recibo_vale_${d.funcionarioNome.replace(/\s+/g, '_')}_${d.data}.pdf`)
+}
+
+export async function gerarReciboValePDF(dados: DadosReciboVale): Promise<void> {
+  const { default: jsPDF } = await import('jspdf')
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+  desenharValeCompleto(doc, dados)
+  doc.save(`recibo_vale_${dados.funcionarioNome.replace(/\s+/g, '_')}_${dados.data}.pdf`)
+}
+
+/** Um único PDF com vários recibos de vale (um por página). */
+export async function gerarMultiplosRecibosVale(lista: DadosReciboVale[]): Promise<void> {
+  if (lista.length === 0) return
+  const { default: jsPDF } = await import('jspdf')
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+  lista.forEach((dados, i) => {
+    if (i > 0) doc.addPage()
+    desenharValeCompleto(doc, dados)
+  })
+  doc.save('recibos_vales.pdf')
 }
