@@ -278,17 +278,35 @@ export async function importarPlanilhaSalarios(
     if (e.apelido) empByApelido.set(norm(e.apelido), { id: e.id, razao_social: e.razao_social })
   })
 
-  // Funcionários indexados por (empresa_id + nome)
+  // Funcionários agrupados por empresa (para casamento tolerante de nome)
   const { data: funcs } = await supabase
     .from('funcionarios')
     .select('id, nome, unidades(empresa_id)')
-  const funcByEmpNome = new Map<string, string>()
+  const funcsPorEmp = new Map<string, { id: string; nomeNorm: string }[]>()
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ;(funcs ?? []).forEach((f: any) => {
     const uni = Array.isArray(f.unidades) ? f.unidades[0] : f.unidades
     const empId = uni?.empresa_id
-    if (empId) funcByEmpNome.set(`${empId}::${norm(f.nome)}`, f.id)
+    if (!empId) return
+    const arr = funcsPorEmp.get(empId) ?? []
+    arr.push({ id: f.id, nomeNorm: norm(f.nome) })
+    funcsPorEmp.set(empId, arr)
   })
+
+  // Resolve o funcionário pelo nome dentro da empresa, ignorando maiúsculas
+  // e acentos: tenta match exato; senão, prefixo (um nome começa com o outro).
+  function resolverFuncionario(empId: string, nome: string): { id?: string; ambiguo?: boolean } {
+    const alvo = norm(nome)
+    const lista = funcsPorEmp.get(empId) ?? []
+    if (!alvo) return {}
+    const exato = lista.filter(f => f.nomeNorm === alvo)
+    if (exato.length === 1) return { id: exato[0].id }
+    if (exato.length > 1) return { ambiguo: true }
+    const prefixo = lista.filter(f => f.nomeNorm.startsWith(alvo) || alvo.startsWith(f.nomeNorm))
+    if (prefixo.length === 1) return { id: prefixo[0].id }
+    if (prefixo.length > 1) return { ambiguo: true }
+    return {}
+  }
 
   for (const sheetName of wb.SheetNames) {
     const ws = wb.Sheets[sheetName]
@@ -325,8 +343,12 @@ export async function importarPlanilhaSalarios(
         continue
       }
 
-      const funcId = funcByEmpNome.get(`${empresa.id}::${norm(nome)}`)
-      if (!funcId) {
+      const resolvido = resolverFuncionario(empresa.id, nome)
+      if (resolvido.ambiguo) {
+        erros.push(`Linha ${i + 2} (${sheetName}): mais de um funcionário corresponde a "${nome}" na empresa ${empresa.razao_social}. Use o nome completo.`)
+        continue
+      }
+      if (!resolvido.id) {
         erros.push(`Linha ${i + 2} (${sheetName}): funcionário "${nome}" não encontrado na empresa ${empresa.razao_social}.`)
         continue
       }
@@ -336,7 +358,7 @@ export async function importarPlanilhaSalarios(
         identificadorEmpresa: ident || sheetName,
         empresaId: empresa.id,
         empresaNome: empresa.razao_social,
-        funcionarioId: funcId,
+        funcionarioId: resolvido.id,
         valorLiquido: valor,
       })
     }

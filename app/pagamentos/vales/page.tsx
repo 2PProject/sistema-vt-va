@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import LayoutAdmin from '../../../components/LayoutAdmin'
 import { supabase, Empresa } from '../../../lib/supabase'
 import { formatarMoeda, MESES } from '../../../utils/calculoVT'
@@ -10,6 +10,8 @@ import {
   criarVale,
   atualizarVale,
   excluirVale,
+  descontoDoVale,
+  statusParcelasVale,
   PagamentoVale,
 } from '../../../lib/pagamentos'
 
@@ -46,6 +48,8 @@ export default function ValesPage() {
 
   const [filtroEmpresa, setFiltroEmpresa] = useState('')
   const [busca, setBusca] = useState('')
+  const [refComp, setRefComp] = useState(competenciaMesAnterior())
+  const [aberto, setAberto] = useState<Set<string>>(new Set())
 
   const [msg, setMsg] = useState('')
   const [msgTipo, setMsgTipo] = useState<'ok' | 'erro'>('ok')
@@ -106,13 +110,45 @@ export default function ValesPage() {
     [funcs, fEmpresa]
   )
 
-  const valesFiltrados = useMemo(() => {
+  // Agrupa os vales por profissional, com desconto do mês e saldo devedor
+  type Grupo = {
+    funcionario_id: string
+    nome: string
+    empresaNome: string
+    vales: PagamentoVale[]
+    totalVales: number
+    descontoMes: number
+    saldoDevedor: number
+  }
+  const grupos = useMemo<Grupo[]>(() => {
     const q = busca.trim().toLowerCase()
-    if (!q) return vales
-    return vales.filter(v =>
-      (v.funcionarios?.nome ?? '').toLowerCase().includes(q) ||
-      (v.descricao ?? '').toLowerCase().includes(q))
-  }, [vales, busca])
+    const map = new Map<string, Grupo>()
+    for (const v of vales) {
+      if (q && !((v.funcionarios?.nome ?? '').toLowerCase().includes(q) || (v.descricao ?? '').toLowerCase().includes(q))) continue
+      const key = v.funcionario_id
+      let g = map.get(key)
+      if (!g) {
+        g = {
+          funcionario_id: key,
+          nome: v.funcionarios?.nome ?? '—',
+          empresaNome: v.empresas?.razao_social ?? '',
+          vales: [], totalVales: 0, descontoMes: 0, saldoDevedor: 0,
+        }
+        map.set(key, g)
+      }
+      g.vales.push(v)
+      g.totalVales += v.valor_total
+      g.descontoMes += descontoDoVale(v, refComp)?.valorParcela ?? 0
+      g.saldoDevedor += statusParcelasVale(v, refComp).valorRestante
+    }
+    return Array.from(map.values()).sort((a, b) => a.nome.localeCompare(b.nome))
+  }, [vales, busca, refComp])
+
+  const totalVales = useMemo(() => grupos.reduce((s, g) => s + g.vales.length, 0), [grupos])
+
+  function toggle(id: string) {
+    setAberto(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+  }
 
   function abrirForm() {
     setEditId(null)
@@ -212,7 +248,7 @@ export default function ValesPage() {
 
         {/* Filtros */}
         <div className="card">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div className="md:col-span-2">
               <label className="label-field">Empresa</label>
               <select className="input-field" value={filtroEmpresa} onChange={e => setFiltroEmpresa(e.target.value)}>
@@ -221,69 +257,125 @@ export default function ValesPage() {
               </select>
             </div>
             <div>
+              <label className="label-field">Competência</label>
+              <input type="month" className="input-field" value={refComp} onChange={e => setRefComp(e.target.value)} />
+              <p className="text-xs text-gray-400 mt-1">Base do &quot;desconto no mês&quot;.</p>
+            </div>
+            <div>
               <label className="label-field">Buscar</label>
               <input className="input-field" placeholder="Profissional ou descrição..." value={busca} onChange={e => setBusca(e.target.value)} />
             </div>
           </div>
         </div>
 
-        {/* Lista */}
+        {/* Lista agrupada por profissional */}
         <div className="card">
           <div className="mb-4 text-sm font-semibold text-gray-600">
-            {loading ? 'Carregando...' : `${valesFiltrados.length} vale(s) / desconto(s)`}
+            {loading ? 'Carregando...' : `${grupos.length} profissional(is) · ${totalVales} vale(s) · desconto em ${fmtMes(refComp)}`}
           </div>
           {loading ? (
             <div className="text-center py-12 text-gray-400 text-sm">Carregando...</div>
-          ) : valesFiltrados.length === 0 ? (
+          ) : grupos.length === 0 ? (
             <div className="text-center py-12 text-gray-400 text-sm">Nenhum vale/desconto lançado.</div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full border-collapse">
                 <thead>
                   <tr className="bg-gray-50 border-b border-gray-200">
-                    <th className="table-header">Data</th>
+                    <th className="table-header" style={{ width: 32 }}></th>
                     <th className="table-header">Profissional</th>
-                    <th className="table-header">Descrição</th>
-                    <th className="table-header text-right">Valor Total</th>
-                    <th className="table-header text-center">Parcelas</th>
-                    <th className="table-header text-right">Valor Parcela</th>
-                    <th className="table-header">Período</th>
+                    <th className="table-header text-center">Vales</th>
+                    <th className="table-header text-right">Desconto em {fmtMes(refComp)}</th>
+                    <th className="table-header text-right">Saldo Devedor</th>
                     <th className="table-header text-right">Ação</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {valesFiltrados.map((v) => {
-                    const parcelas = Math.max(1, v.parcelas ?? 1)
-                    const comps = competenciasParcelas(v.mes_inicio, parcelas)
-                    const periodo = parcelas > 1
-                      ? `${fmtMes(comps[0])} → ${fmtMes(comps[comps.length - 1])}`
-                      : fmtMes(v.mes_inicio)
+                  {grupos.map((g) => {
+                    const isOpen = aberto.has(g.funcionario_id)
                     return (
-                      <tr key={v.id} className="hover:bg-gray-50 transition-colors">
-                        <td className="table-cell text-xs text-gray-500">{fmtData(v.data)}</td>
-                        <td className="table-cell">
-                          <div className="font-medium text-gray-900">{v.funcionarios?.nome ?? '—'}</div>
-                          <div className="text-xs text-gray-400">{v.empresas?.razao_social ?? ''}</div>
-                        </td>
-                        <td className="table-cell">{v.descricao}</td>
-                        <td className="table-cell text-right">{formatarMoeda(v.valor_total)}</td>
-                        <td className="table-cell text-center">{parcelas > 1 ? `${parcelas}x` : 'À vista'}</td>
-                        <td className="table-cell text-right">{formatarMoeda(v.valor_total / parcelas)}</td>
-                        <td className="table-cell text-xs text-gray-600">{periodo}</td>
-                        <td className="table-cell text-right">
-                          <div className="flex gap-2 justify-end items-center">
-                            <button
-                              onClick={() => gerarRecibo(v)}
-                              disabled={gerando === v.id}
-                              className="inline-flex items-center gap-1 bg-amber-50 hover:bg-amber-100 text-amber-700 text-xs font-medium px-2.5 py-1.5 rounded-lg transition-colors disabled:opacity-50"
-                            >
-                              {gerando === v.id ? 'Gerando...' : 'Recibo'}
+                      <Fragment key={g.funcionario_id}>
+                        <tr className="hover:bg-gray-50 transition-colors">
+                          <td className="table-cell text-center">
+                            <button onClick={() => toggle(g.funcionario_id)} className="text-gray-400 hover:text-gray-700" title="Ver vales">
+                              <svg className={`w-4 h-4 transition-transform ${isOpen ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                              </svg>
                             </button>
-                            <button onClick={() => editarVale(v)} className="text-blue-600 hover:text-blue-800 text-xs font-medium">Editar</button>
-                            <button onClick={() => remover(v)} className="text-red-500 hover:text-red-700 text-xs font-medium">Excluir</button>
-                          </div>
-                        </td>
-                      </tr>
+                          </td>
+                          <td className="table-cell">
+                            <div className="font-medium text-gray-900">{g.nome}</div>
+                            <div className="text-xs text-gray-400">{g.empresaNome}</div>
+                          </td>
+                          <td className="table-cell text-center">{g.vales.length}</td>
+                          <td className="table-cell text-right font-semibold text-gray-800">
+                            {g.descontoMes > 0 ? formatarMoeda(g.descontoMes) : <span className="text-gray-300">—</span>}
+                          </td>
+                          <td className="table-cell text-right font-bold text-amber-700">
+                            {g.saldoDevedor > 0 ? formatarMoeda(g.saldoDevedor) : <span className="badge-green">Quitado</span>}
+                          </td>
+                          <td className="table-cell text-right">
+                            <button onClick={() => toggle(g.funcionario_id)} className="text-blue-600 hover:text-blue-800 text-xs font-medium">
+                              {isOpen ? 'Fechar' : 'Ver vales'}
+                            </button>
+                          </td>
+                        </tr>
+                        {isOpen && (
+                          <tr>
+                            <td />
+                            <td colSpan={5} className="px-4 pb-4">
+                              <div className="rounded-lg border border-gray-100 overflow-hidden">
+                                <table className="w-full text-xs">
+                                  <thead>
+                                    <tr className="bg-gray-50 text-gray-500">
+                                      <th className="text-left py-2 px-3 font-semibold">Data</th>
+                                      <th className="text-left py-2 px-3 font-semibold">Descrição</th>
+                                      <th className="text-right py-2 px-3 font-semibold">Valor Total</th>
+                                      <th className="text-center py-2 px-3 font-semibold">Parcelas</th>
+                                      <th className="text-right py-2 px-3 font-semibold">Parcela</th>
+                                      <th className="text-left py-2 px-3 font-semibold">Período</th>
+                                      <th className="text-right py-2 px-3 font-semibold">Ações</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {g.vales.map((v) => {
+                                      const parcelas = Math.max(1, v.parcelas ?? 1)
+                                      const comps = competenciasParcelas(v.mes_inicio, parcelas)
+                                      const periodo = parcelas > 1
+                                        ? `${fmtMes(comps[0])} → ${fmtMes(comps[comps.length - 1])}`
+                                        : fmtMes(v.mes_inicio)
+                                      const ativa = descontoDoVale(v, refComp)
+                                      return (
+                                        <tr key={v.id} className="border-t border-gray-100">
+                                          <td className="py-2 px-3 text-gray-500">{fmtData(v.data)}</td>
+                                          <td className="py-2 px-3">
+                                            <span className="font-medium text-gray-800">{v.descricao}</span>
+                                            {ativa && <span className="ml-1 text-amber-600">· parc. {ativa.parcelaAtual}/{ativa.totalParcelas}</span>}
+                                          </td>
+                                          <td className="py-2 px-3 text-right">{formatarMoeda(v.valor_total)}</td>
+                                          <td className="py-2 px-3 text-center">{parcelas > 1 ? `${parcelas}x` : 'À vista'}</td>
+                                          <td className="py-2 px-3 text-right">{formatarMoeda(v.valor_total / parcelas)}</td>
+                                          <td className="py-2 px-3 text-gray-600">{periodo}</td>
+                                          <td className="py-2 px-3 text-right">
+                                            <div className="flex gap-2 justify-end items-center">
+                                              <button onClick={() => gerarRecibo(v)} disabled={gerando === v.id}
+                                                className="text-amber-700 hover:text-amber-900 font-medium disabled:opacity-50">
+                                                {gerando === v.id ? '...' : 'Recibo'}
+                                              </button>
+                                              <button onClick={() => editarVale(v)} className="text-blue-600 hover:text-blue-800 font-medium">Editar</button>
+                                              <button onClick={() => remover(v)} className="text-red-500 hover:text-red-700 font-medium">Excluir</button>
+                                            </div>
+                                          </td>
+                                        </tr>
+                                      )
+                                    })}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
                     )
                   })}
                 </tbody>
