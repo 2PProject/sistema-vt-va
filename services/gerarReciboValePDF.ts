@@ -150,18 +150,14 @@ export async function gerarMultiplosRecibosVale(lista: DadosReciboVale[]): Promi
   doc.save('recibos_vales.pdf')
 }
 
-// ── Recibo CONSOLIDADO por profissional (todos os vales num só recibo) ─────────
+// ── Recibo de DESCONTO DE VALES da competência (para assinar no fechamento) ────
 
 export type ValeConsolidadoItem = {
   descricao: string
-  data: string
-  valorTotal: number
-  parcelas: number
-  valorParcela: number
-  descontadas: number
-  restantes: number
-  valorRestante: number
-  mesInicio: string
+  parcelaAtual: number     // parcela descontada nesta competência
+  totalParcelas: number
+  valorParcela: number     // valor descontado nesta competência
+  valorRestante: number    // saldo após esta competência
 }
 
 export type DadosReciboConsolidado = {
@@ -170,18 +166,9 @@ export type DadosReciboConsolidado = {
   funcionarioNome: string
   funcao: string
   refCompetencia: string
-  vales: ValeConsolidadoItem[]
-  totalGeral: number
-  totalDescontado: number
-  totalRestante: number
-}
-
-function labelPeriodo(mesInicio: string, parcelas: number): string {
-  const [ay, am] = mesInicio.split('-').map(Number)
-  if (parcelas <= 1) return labelMes(mesInicio)
-  const fim = new Date(ay, am - 1 + (parcelas - 1), 1)
-  const mesFim = `${fim.getFullYear()}-${String(fim.getMonth() + 1).padStart(2, '0')}`
-  return `${labelMes(mesInicio)} a ${labelMes(mesFim)}`
+  vales: ValeConsolidadoItem[]      // apenas os com parcela nesta competência
+  totalDescontadoNoMes: number
+  saldoDevedor: number
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -191,7 +178,7 @@ function desenharConsolidado(doc: any, d: DadosReciboConsolidado) {
   doc.setFillColor(180, 83, 9)
   doc.rect(10, y, 190, 12, 'F')
   doc.setTextColor(255, 255, 255); doc.setFontSize(11); doc.setFont('helvetica', 'bold')
-  doc.text('RECIBO DE VALES / ADIANTAMENTOS', 105, y + 8, { align: 'center' })
+  doc.text(`RECIBO DE DESCONTO DE VALES — ${labelMes(d.refCompetencia).toUpperCase()}`, 105, y + 8, { align: 'center' })
   y += 18
 
   doc.setTextColor(0, 0, 0); doc.setFontSize(9)
@@ -200,8 +187,8 @@ function desenharConsolidado(doc: any, d: DadosReciboConsolidado) {
   y += 6
   doc.setFont('helvetica', 'bold'); doc.text('CNPJ:', 12, y)
   doc.setFont('helvetica', 'normal'); doc.text(d.empresaCnpj || '—', 35, y)
-  doc.setFont('helvetica', 'bold'); doc.text('POSIÇÃO EM:', 125, y)
-  doc.setFont('helvetica', 'normal'); doc.text(labelMes(d.refCompetencia), 155, y)
+  doc.setFont('helvetica', 'bold'); doc.text('COMPETÊNCIA:', 125, y)
+  doc.setFont('helvetica', 'normal'); doc.text(labelMes(d.refCompetencia), 158, y)
   y += 8
 
   doc.setFillColor(245, 247, 250); doc.rect(10, y - 4, 190, 9, 'F')
@@ -213,47 +200,47 @@ function desenharConsolidado(doc: any, d: DadosReciboConsolidado) {
   }
   y += 12
 
-  // Cabeçalho da tabela
+  // Cabeçalho da tabela — descontos DO MÊS
   doc.setFillColor(180, 83, 9); doc.rect(10, y - 4, 190, 7, 'F')
-  doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5)
+  doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold'); doc.setFontSize(8)
   doc.text('DESCRIÇÃO', 12, y)
-  doc.text('PERÍODO', 62, y)
-  doc.text('PARC.', 120, y)
-  doc.text('PARCELA', 150, y, { align: 'right' })
-  doc.text('SALDO', 198, y, { align: 'right' })
+  doc.text('PARCELA', 120, y)
+  doc.text('VALOR DESCONTADO', 198, y, { align: 'right' })
   y += 6
 
   doc.setTextColor(0, 0, 0); doc.setFont('helvetica', 'normal'); doc.setFontSize(8)
   d.vales.forEach((v, i) => {
     if (y > 250) { doc.addPage(); y = 16 }
     if (i % 2 === 0) { doc.setFillColor(255, 251, 235); doc.rect(10, y - 4, 190, 6, 'F') }
-    doc.text(String(v.descricao).slice(0, 32), 12, y)
-    doc.text(labelPeriodo(v.mesInicio, v.parcelas), 62, y)
-    doc.text(`${v.descontadas}/${v.parcelas}`, 120, y)
-    doc.text(formatarMoeda(v.valorParcela), 150, y, { align: 'right' })
-    doc.text(formatarMoeda(v.valorRestante), 198, y, { align: 'right' })
+    doc.text(String(v.descricao).slice(0, 40), 12, y)
+    doc.text(v.totalParcelas > 1 ? `${v.parcelaAtual}/${v.totalParcelas}` : 'única', 120, y)
+    doc.text(formatarMoeda(v.valorParcela), 198, y, { align: 'right' })
     y += 6
   })
+  if (d.vales.length === 0) {
+    doc.setTextColor(120, 120, 120)
+    doc.text('Nenhum desconto nesta competência.', 12, y); doc.setTextColor(0, 0, 0); y += 6
+  }
 
-  // Totais
+  // Total descontado no mês (destaque)
   y += 2
-  doc.setDrawColor(200, 200, 200); doc.line(10, y - 4, 200, y - 4)
-  doc.setFont('helvetica', 'normal'); doc.setFontSize(9)
-  doc.text('Total dos vales:', 120, y); doc.text(formatarMoeda(d.totalGeral), 198, y, { align: 'right' }); y += 6
-  doc.setTextColor(22, 101, 52)
-  doc.text('Já descontado:', 120, y); doc.text(formatarMoeda(d.totalDescontado), 198, y, { align: 'right' }); y += 8
-
   doc.setFillColor(180, 83, 9); doc.rect(10, y - 5, 190, 11, 'F')
   doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold'); doc.setFontSize(10)
-  doc.text('SALDO DEVEDOR', 12, y + 2)
-  doc.text(formatarMoeda(d.totalRestante), 198, y + 2, { align: 'right' })
-  y += 16
+  doc.text(`TOTAL DESCONTADO EM ${labelMes(d.refCompetencia).toUpperCase()}`, 12, y + 2)
+  doc.text(formatarMoeda(d.totalDescontadoNoMes), 198, y + 2, { align: 'right' })
+  y += 14
+
+  // Saldo devedor remanescente (informativo)
+  doc.setTextColor(80, 80, 80); doc.setFont('helvetica', 'normal'); doc.setFontSize(9)
+  doc.text('Saldo devedor após esta competência:', 12, y)
+  doc.text(formatarMoeda(d.saldoDevedor), 198, y, { align: 'right' })
+  y += 10
 
   // Declaração + assinatura
-  doc.setTextColor(0, 0, 0); doc.setFont('helvetica', 'normal'); doc.setFontSize(9)
-  const texto = `Reconheço o(s) vale(s)/adiantamento(s) acima, cujo saldo devedor em ` +
-    `${labelMes(d.refCompetencia)} é de ${formatarMoeda(d.totalRestante)}, a ser descontado ` +
-    `nas próximas competências conforme o parcelamento.`
+  doc.setTextColor(0, 0, 0); doc.setFontSize(9)
+  const texto = `Reconheço o desconto de ${formatarMoeda(d.totalDescontadoNoMes)} no meu pagamento ` +
+    `da competência ${labelMes(d.refCompetencia)}, referente ao(s) vale(s)/adiantamento(s) acima.` +
+    (d.saldoDevedor > 0 ? ` Saldo devedor remanescente: ${formatarMoeda(d.saldoDevedor)}.` : '')
   const linhas = doc.splitTextToSize(texto, 186)
   doc.text(linhas, 12, y); y += linhas.length * 5 + 12
 
