@@ -33,6 +33,7 @@ export default function FormFuncionario({
   const [valorVT, setValorVT] = useState(0)
   const [valorVTSabado, setValorVTSabado] = useState(0)
   const [valorVA, setValorVA] = useState(0)
+  const [pix, setPix] = useState('')
   const [dataAdmissao, setDataAdmissao] = useState('')
   const [emAvisoPrevio, setEmAvisoPrevio] = useState(false)
   const [dataInicioAviso, setDataInicioAviso] = useState('')
@@ -51,6 +52,7 @@ export default function FormFuncionario({
       setValorVT(funcionario.valor_vt ?? 0)
       setValorVTSabado(funcionario.valor_vt_sabado ?? 0)
       setValorVA(funcionario.valor_va ?? 0)
+      setPix(funcionario.pix ?? '')
       setDataAdmissao(funcionario.data_admissao ?? '')
       setEmAvisoPrevio(funcionario.em_aviso_previo ?? false)
       setDataInicioAviso(funcionario.data_inicio_aviso ?? '')
@@ -67,6 +69,7 @@ export default function FormFuncionario({
       setValorVT(0)
       setValorVTSabado(0)
       setValorVA(0)
+      setPix('')
       setDataAdmissao(new Date().toISOString().split('T')[0])
       setEmAvisoPrevio(false)
       setDataInicioAviso('')
@@ -99,6 +102,7 @@ export default function FormFuncionario({
           valor_vt: valorVT,
           valor_vt_sabado: valorVTSabado,
           valor_va: valorVA || 0,
+          pix: pix.trim() || null,
           data_admissao: dataAdmissao || null,
           em_aviso_previo: emAvisoPrevio,
           data_inicio_aviso: emAvisoPrevio ? (dataInicioAviso || null) : null,
@@ -281,6 +285,21 @@ export default function FormFuncionario({
           <p className="text-xs text-gray-400 mt-1">
             Opcional. Deixe <strong>0</strong> para usar o VA da empresa/competência.
             Informe um valor apenas em caso de exceção para este funcionário.
+          </p>
+        </div>
+
+        {/* Chave Pix */}
+        <div>
+          <label className="label-field">Chave Pix</label>
+          <input
+            type="text"
+            value={pix}
+            onChange={(e) => setPix(e.target.value)}
+            className="input-field"
+            placeholder="E-mail, CPF, telefone ou chave aleatória"
+          />
+          <p className="text-xs text-gray-400 mt-1">
+            Usada para gerar o arquivo CSV de pagamento do banco. Sem formatação — cole a chave como está.
           </p>
         </div>
 

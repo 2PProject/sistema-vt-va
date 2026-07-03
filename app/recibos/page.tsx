@@ -11,7 +11,7 @@ import {
   getOrCreateDefaultUnidade,
   garantirFeriadosAno,
 } from '../../lib/supabase'
-import { calcularVTVA, calcularDiasUteisAuto, trabalhaNoMes, formatarMoeda, resolverValorVA, MESES } from '../../utils/calculoVT'
+import { calcularVTVA, calcularDiasUteisAuto, trabalhaNoMes, formatarMoeda, resolverValorVA, contarSabadosEmDescontos, MESES } from '../../utils/calculoVT'
 
 type CFComFunc = CompetenciaFuncionario & { funcionarios: Funcionario }
 
@@ -134,7 +134,7 @@ export default function RecibosPage() {
       const ehExcecao = valorVTSabadoBase > 0
       const valorVT = reg.valor_vt ?? reg.funcionarios?.valor_vt ?? 0
       const valorVTSabado = ehExcecao ? valorVTSabadoBase : 0
-      const diasSabado = ehExcecao ? (reg.dias_sabado ?? 0) : 0
+      const diasSabadoBase = ehExcecao ? (reg.dias_sabado ?? 0) : 0
       const valorVA = resolverValorVA(reg.funcionarios?.valor_va, reg.competenciaObj.valor_va)
       const diasUteisAuto = calcularDiasUteisAuto(mes, ano, reg.funcionarios?.folga_semanal, reg.feriadosDatas, reg.funcionarios?.data_admissao, reg.funcionarios?.data_fim_aviso)
 
@@ -162,6 +162,9 @@ export default function RecibosPage() {
         .from('competencia_funcionario').select('dias_desconto')
         .eq('id', reg.id).maybeSingle()
       const diasDesconto = (cfAtual as { dias_desconto: number } | null)?.dias_desconto ?? reg.dias_desconto
+
+      // Sábados em férias/faltas não são pagos
+      const diasSabado = Math.max(0, diasSabadoBase - contarSabadosEmDescontos(descontosRecibo, mes, ano))
 
       const resultado = calcularVTVA({
         diasUteis: diasUteisAuto,
@@ -212,7 +215,7 @@ export default function RecibosPage() {
         const ehExcecao = vtSabadoBase > 0
         const valorVT = reg.valor_vt ?? reg.funcionarios?.valor_vt ?? 0
         const valorVTSabado = ehExcecao ? vtSabadoBase : 0
-        const diasSabado = ehExcecao ? (reg.dias_sabado ?? 0) : 0
+        const diasSabado = ehExcecao ? Math.max(0, (reg.dias_sabado ?? 0) - contarSabadosEmDescontos(reg.descontosRecibo, mes, ano)) : 0
         const valorVA = resolverValorVA(reg.funcionarios?.valor_va, reg.competenciaObj.valor_va)
         const diasUteisAuto = calcularDiasUteisAuto(mes, ano, reg.funcionarios?.folga_semanal, reg.feriadosDatas, reg.funcionarios?.data_admissao, reg.funcionarios?.data_fim_aviso)
         const resultado = calcularVTVA({
@@ -258,7 +261,7 @@ export default function RecibosPage() {
         const diasUteisAuto = calcularDiasUteisAuto(mes, ano, reg.funcionarios?.folga_semanal, reg.feriadosDatas, reg.funcionarios?.data_admissao, reg.funcionarios?.data_fim_aviso)
         const r = calcularVTVA({
           diasUteis: diasUteisAuto, diasFeriado: 0,
-          diasSabado: ehExcecao ? (reg.dias_sabado ?? 0) : 0,
+          diasSabado: ehExcecao ? Math.max(0, (reg.dias_sabado ?? 0) - contarSabadosEmDescontos(reg.descontosRecibo, mes, ano)) : 0,
           diasDesconto: reg.dias_desconto,
           valorVT: reg.valor_vt ?? reg.funcionarios?.valor_vt ?? 0,
           valorVTSabado: ehExcecao ? vtSabadoBase : 0,
@@ -293,7 +296,7 @@ export default function RecibosPage() {
     const r = calcularVTVA({
       diasUteis: diasUteisAuto,
       diasFeriado: 0,
-      diasSabado: ehExcecao ? (reg.dias_sabado ?? 0) : 0,
+      diasSabado: ehExcecao ? Math.max(0, (reg.dias_sabado ?? 0) - contarSabadosEmDescontos(reg.descontosRecibo, mes, ano)) : 0,
       diasDesconto: reg.dias_desconto,
       valorVT: reg.valor_vt ?? reg.funcionarios?.valor_vt ?? 0,
       valorVTSabado: ehExcecao ? vtSabadoBase : 0,
@@ -412,7 +415,7 @@ export default function RecibosPage() {
                         const r = calcularVTVA({
                           diasUteis: diasUteisAuto,
                           diasFeriado: 0,
-                          diasSabado: ehExcecao ? (reg.dias_sabado ?? 0) : 0,
+                          diasSabado: ehExcecao ? Math.max(0, (reg.dias_sabado ?? 0) - contarSabadosEmDescontos(reg.descontosRecibo, mes, ano)) : 0,
                           diasDesconto: reg.dias_desconto,
                           valorVT: reg.valor_vt ?? reg.funcionarios?.valor_vt ?? 0,
                           valorVTSabado: ehExcecao ? vtSabadoBase : 0,

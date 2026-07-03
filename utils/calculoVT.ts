@@ -33,13 +33,18 @@ export function calcularVTVA(params: ParamsCalculo): ResultadoCalculo {
   // VA = dias efetivos × valor diário VA (inclui sábados trabalhados)
   const totalVA = diasEfetivos * valorVA
 
+  // Sábados efetivamente trabalhados nunca podem exceder os dias efetivos.
+  // Ex.: em férias, os sábados do período não são pagos — evita cobrar VT de
+  // sábado quando a pessoa não trabalhou (bug: sábado diferenciado em férias).
+  const diasSabadoEfetivo = Math.min(Math.max(0, diasSabado), diasEfetivos)
+
   // VT dias úteis = (dias efetivos - sábados) × valor VT
   // Sábados são tratados separadamente para evitar dupla contagem
-  const diasUteisVT = Math.max(0, diasEfetivos - diasSabado)
+  const diasUteisVT = Math.max(0, diasEfetivos - diasSabadoEfetivo)
   const totalVT = diasUteisVT * valorVT
 
   // VT sábado = dias sábado × valor VT sábado
-  const totalVTSabado = diasSabado * valorVTSabado
+  const totalVTSabado = diasSabadoEfetivo * valorVTSabado
 
   const valorTotal = totalVA + totalVT + totalVTSabado
 
@@ -198,6 +203,30 @@ export function calcularDiasUteisAuto(
 /** Retorna quantos sábados existem no mês */
 export function calcularSabadosDoMes(mes: number, ano: number): number {
   return contarDiasSemana(mes, ano)[6]
+}
+
+/**
+ * Conta os sábados que caem dentro dos períodos de desconto (férias/faltas)
+ * no mês/ano informado. Usado para não pagar VT de sábado quando o
+ * profissional está afastado. Ignora descontos sem datas ou acréscimos.
+ */
+export function contarSabadosEmDescontos(
+  descontos: { dias: number; data_inicio: string | null; data_fim: string | null }[],
+  mes: number,
+  ano: number
+): number {
+  let count = 0
+  for (const d of descontos) {
+    if ((d.dias ?? 0) <= 0 || !d.data_inicio) continue
+    const start = new Date(d.data_inicio + 'T12:00:00')
+    const end = new Date((d.data_fim || d.data_inicio) + 'T12:00:00')
+    const cur = new Date(start)
+    while (cur <= end) {
+      if (cur.getFullYear() === ano && cur.getMonth() + 1 === mes && cur.getDay() === 6) count++
+      cur.setDate(cur.getDate() + 1)
+    }
+  }
+  return count
 }
 
 /**

@@ -10,6 +10,7 @@ import {
   importarPlanilhaSalarios,
   processarImportacaoSalarios,
   baixarModeloPlanilhaSalarios,
+  montarCSVBanco,
   LinhaPagamento,
   LinhaImportSalario,
 } from '../../lib/pagamentos'
@@ -107,6 +108,20 @@ export default function PagamentosPage() {
     finally { setGerando(null) }
   }
 
+  function exportarCSVBanco() {
+    if (filtradas.length === 0) return
+    const { csv, semPix } = montarCSVBanco(filtradas)
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `pagamento_banco_${mesRef}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+    if (semPix > 0) notify(`CSV gerado. Atenção: ${semPix} profissional(is) sem chave Pix cadastrada.`, 'erro')
+    else notify('CSV do banco gerado com sucesso.', 'ok')
+  }
+
   function montarDados(l: LinhaPagamento) {
     return {
       empresaNome: l.empresaNome,
@@ -190,9 +205,14 @@ export default function PagamentosPage() {
               {fmtMes(mesRef)} — {filtradas.length} profissional(is)
             </h2>
             {filtradas.length > 0 && (
-              <button className="btn-primary flex items-center gap-2 text-sm" onClick={gerarTodos} disabled={gerando !== null}>
-                {gerando === '__todos__' ? 'Gerando...' : 'Gerar Todos os Recibos'}
-              </button>
+              <div className="flex items-center gap-2">
+                <button className="btn-secondary flex items-center gap-2 text-sm" onClick={exportarCSVBanco} disabled={gerando !== null}>
+                  CSV Banco
+                </button>
+                <button className="btn-primary flex items-center gap-2 text-sm" onClick={gerarTodos} disabled={gerando !== null}>
+                  {gerando === '__todos__' ? 'Gerando...' : 'Gerar Todos os Recibos'}
+                </button>
+              </div>
             )}
           </div>
 
@@ -277,8 +297,9 @@ export default function PagamentosPage() {
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl p-6 max-h-[90vh] overflow-auto">
               <h2 className="text-lg font-bold text-gray-800 mb-4">Importar Salário Líquido — {fmtMes(mesRef)}</h2>
               <div className="bg-blue-50 border border-blue-200 text-blue-800 text-xs rounded-lg p-3 mb-4">
-                A planilha deve conter as colunas: <strong>Apelido</strong> (ou CNPJ) da empresa, <strong>Nome</strong> do profissional e <strong>Valor</strong> líquido.
-                O profissional é casado pelo nome dentro da empresa. A competência aplicada é <strong>{fmtMes(mesRef)}</strong> (selecione acima antes de importar).
+                Colunas: <strong>Unidade</strong> (apelido da empresa, ou CNPJ), <strong>Nome</strong> do profissional e <strong>Valor</strong> líquido.
+                Opcional: <strong>PIX</strong> — quando presente, atualiza a chave Pix do cadastro.
+                O profissional é casado pelo nome dentro da empresa. Competência aplicada: <strong>{fmtMes(mesRef)}</strong> (selecione acima antes de importar).
               </div>
               <div className="flex items-center justify-between gap-3 mb-4">
                 <input type="file" accept=".xlsx,.xls" onChange={handleFile} disabled={importLoad} className="input-field flex-1" />

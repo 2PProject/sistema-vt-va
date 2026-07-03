@@ -52,6 +52,7 @@ export type LinhaPagamento = {
   funcao: string
   empresaNome: string
   empresaCnpj: string
+  pix: string | null
   valorLiquido: number
   descontos: DescontoAplicado[]
   totalDescontos: number
@@ -183,13 +184,14 @@ export async function consolidarPagamentos(params: {
   const [registros, vales, funcsRes, empresasRes] = await Promise.all([
     listarPagamentos({ mesReferencia, empresaId }),
     listarVales({ empresaId }),
-    supabase.from('funcionarios').select('id, nome, funcao'),
+    supabase.from('funcionarios').select('id, nome, funcao, pix'),
     supabase.from('empresas').select('id, razao_social, cnpj'),
   ])
 
-  const funcMap = new Map<string, { nome: string; funcao: string }>()
-  ;(funcsRes.data ?? []).forEach((f: Pick<Funcionario, 'id' | 'nome' | 'funcao'>) =>
-    funcMap.set(f.id, { nome: f.nome, funcao: f.funcao }))
+  const funcMap = new Map<string, { nome: string; funcao: string; pix: string | null }>()
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ;(funcsRes.data ?? []).forEach((f: any) =>
+    funcMap.set(f.id, { nome: f.nome, funcao: f.funcao, pix: f.pix ?? null }))
   const empMap = new Map<string, { razao_social: string; cnpj: string }>()
   ;(empresasRes.data ?? []).forEach((e: Pick<Empresa, 'id' | 'razao_social' | 'cnpj'>) =>
     empMap.set(e.id, { razao_social: e.razao_social, cnpj: e.cnpj }))
@@ -218,6 +220,7 @@ export async function consolidarPagamentos(params: {
       funcao: func?.funcao ?? '',
       empresaNome: emp?.razao_social ?? '—',
       empresaCnpj: emp?.cnpj ?? '',
+      pix: func?.pix ?? null,
       valorLiquido: reg.valor_liquido,
       descontos,
       totalDescontos,
@@ -227,15 +230,33 @@ export async function consolidarPagamentos(params: {
     a.empresaNome.localeCompare(b.empresaNome) || a.funcionarioNome.localeCompare(b.funcionarioNome))
 }
 
+/**
+ * Monta o conteúdo CSV para pagamento no banco (Nome; Chave Pix; Valor).
+ * Valor = valor a pagar (líquido - descontos). Separador ";" e decimal ",".
+ */
+export function montarCSVBanco(linhas: LinhaPagamento[]): { csv: string; semPix: number } {
+  const header = 'Nome;Chave PIX;Valor'
+  const rows: string[] = []
+  let semPix = 0
+  for (const l of linhas) {
+    if (!l.pix) semPix++
+    const nome = (l.funcionarioNome ?? '').replace(/[;\r\n]/g, ' ').trim()
+    const valor = l.valorAPagar.toFixed(2).replace('.', ',')
+    rows.push(`${nome};${l.pix ?? ''};${valor}`)
+  }
+  return { csv: [header, ...rows].join('\r\n'), semPix }
+}
+
 // ── Importação da planilha de salário líquido ─────────────────────────────────
 
 export type LinhaImportSalario = {
   funcionarioNome: string
-  identificadorEmpresa: string  // CNPJ ou apelido informado na planilha
+  identificadorEmpresa: string  // CNPJ/apelido/unidade informado na planilha
   empresaId: string
   empresaNome: string
   funcionarioId: string
   valorLiquido: number
+  pix?: string                  // opcional — atualiza a chave Pix do cadastro
 }
 
 function soDigitos(s: string) { return (s ?? '').replace(/\D/g, '') }
@@ -321,11 +342,13 @@ export async function importarPlanilhaSalarios(
       const row = rows[i]
       const nome = String(row['Nome'] ?? row['nome'] ?? row['Nome completo'] ?? row['Profissional'] ?? row['NOME'] ?? '').trim()
       const ident = String(
+        row['Unidade'] ?? row['unidade'] ?? row['UNIDADE'] ??
         row['CNPJ'] ?? row['cnpj'] ?? row['Apelido'] ?? row['apelido'] ?? row['Empresa'] ?? row['empresa'] ?? ''
       ).trim()
       const valorRaw = row['Valor líquido'] ?? row['Valor liquido'] ?? row['Líquido'] ?? row['Liquido'] ??
         row['Valor'] ?? row['valor'] ?? row['VALOR'] ?? 0
       const valor = parseValorBR(valorRaw)
+      const pix = String(row['PIX'] ?? row['Pix'] ?? row['pix'] ?? row['Chave Pix'] ?? row['Chave PIX'] ?? '').trim()
 
       if (!nome) continue // linha em branco
 
@@ -360,6 +383,7 @@ export async function importarPlanilhaSalarios(
         empresaNome: empresa.razao_social,
         funcionarioId: resolvido.id,
         valorLiquido: valor,
+        pix: pix || undefined,
       })
     }
   }
@@ -405,5 +429,12 @@ export async function processarImportacaoSalarios(
     erros.push(`Erro ao gravar: ${error.message}`)
     return { gravados: 0, erros }
   }
+
+  // Atualiza a chave Pix do cadastro quando informada na planilha (não bloqueia)
+  const comPix = linhas.filter((l) => l.pix)
+  await Promise.all(comPix.map((l) =>
+    supabase.from('funcionarios').update({ pix: l.pix }).eq('id', l.funcionarioId)
+  )).catch(() => { /* coluna pix pode não existir ainda — ignora */ })
+
   return { gravados: linhas.length, erros }
 }
