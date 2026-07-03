@@ -26,6 +26,16 @@ export type PagamentoVale = {
   empresas?: Empresa
 }
 
+/** Situação do parcelamento de um vale relativa a uma competência de referência. */
+export type StatusVale = {
+  parcelas: number
+  valorParcela: number
+  descontadas: number
+  restantes: number
+  valorDescontado: number
+  valorRestante: number
+}
+
 /** Desconto de um vale aplicável a uma competência específica. */
 export type DescontoAplicado = {
   vale: PagamentoVale
@@ -79,6 +89,27 @@ export function descontoDoVale(vale: PagamentoVale, mesRef: string): DescontoApl
     valorParcela,
     parcelaAtual: idx + 1,
     totalParcelas: parcelas,
+  }
+}
+
+/**
+ * Situação do parcelamento até uma competência de referência:
+ * quantas parcelas já foram descontadas e quantas ainda faltam.
+ * Considera descontadas as parcelas cujo mês é <= referência.
+ */
+export function statusParcelasVale(vale: PagamentoVale, refCompetencia: string): StatusVale {
+  const parcelas = Math.max(1, vale.parcelas ?? 1)
+  const valorParcela = Math.round((vale.valor_total / parcelas) * 100) / 100
+  let descontadas = diffMeses(vale.mes_inicio, refCompetencia) + 1
+  descontadas = Math.max(0, Math.min(parcelas, descontadas))
+  const restantes = parcelas - descontadas
+  return {
+    parcelas,
+    valorParcela,
+    descontadas,
+    restantes,
+    valorDescontado: Math.round(descontadas * valorParcela * 100) / 100,
+    valorRestante: Math.round(restantes * valorParcela * 100) / 100,
   }
 }
 

@@ -8,17 +8,25 @@
 --      as parcelas restantes (Y-X) sigam sendo descontadas de 2026-06 em diante.
 --      Quem está "0 de Y" começa a descontar em 2026-06.
 --
--- O funcionário é resolvido pelo NOME (ILIKE 'nome%'); Janaina é filtrada
--- pela empresa "Sudoeste".
+-- O funcionário é resolvido pelo NOME, ignorando MAIÚSCULAS e ACENTOS
+-- (ex.: 'João Vitor' casa com 'JOAO VITOR LOPES HENRIQUE').
+-- Janaina é filtrada pela empresa "Sudoeste".
 -- ============================================================
+
+-- Função auxiliar (sessão) para normalizar nome: minúsculo + sem acento
+CREATE OR REPLACE FUNCTION pg_temp.norm(txt text) RETURNS text AS $$
+  SELECT lower(translate(coalesce($1, ''),
+    'ÀÁÂÃÄÅÇÈÉÊËÌÍÎÏÑÒÓÔÕÖÙÚÛÜÝàáâãäåçèéêëìíîïñòóôõöùúûüý',
+    'AAAAAACEEEEIIIINOOOOOUUUUYaaaaaaceeeeiiiinooooouuuuy'));
+$$ LANGUAGE sql IMMUTABLE;
 
 
 -- ── BLOCO 1 — CONFERÊNCIA (rode ANTES da carga) ──────────────────────────────
 -- Confira se cada nome casa com exatamente 1 funcionário (e Janaina em Sudoeste).
 SELECT v.nome_busca, f.id AS funcionario_id, f.nome AS funcionario,
        e.razao_social AS empresa, e.apelido
-FROM (VALUES ('Janaina'), ('João Vitor'), ('Aritana'), ('marlene')) AS v(nome_busca)
-LEFT JOIN funcionarios f ON f.nome ILIKE v.nome_busca || '%'
+FROM (VALUES ('João Vitor'), ('Janaina'), ('Aritana'), ('marlene')) AS v(nome_busca)
+LEFT JOIN funcionarios f ON pg_temp.norm(f.nome) LIKE pg_temp.norm(v.nome_busca) || '%'
 LEFT JOIN unidades u     ON u.id = f.unidade_id
 LEFT JOIN empresas e     ON e.id = u.empresa_id
 ORDER BY v.nome_busca, f.nome;
@@ -44,12 +52,12 @@ resolvidos AS (
   SELECT d.valor_total, d.parcelas, d.mes_inicio, d.data, d.descricao,
          f.id AS funcionario_id, u.empresa_id
   FROM dados d
-  JOIN funcionarios f ON f.nome ILIKE d.nome || '%'
+  JOIN funcionarios f ON pg_temp.norm(f.nome) LIKE pg_temp.norm(d.nome) || '%'
   JOIN unidades u     ON u.id = f.unidade_id
   LEFT JOIN empresas e ON e.id = u.empresa_id
   WHERE d.empresa_hint IS NULL
-     OR e.razao_social ILIKE '%' || d.empresa_hint || '%'
-     OR e.apelido      ILIKE '%' || d.empresa_hint || '%'
+     OR pg_temp.norm(e.razao_social) LIKE '%' || pg_temp.norm(d.empresa_hint) || '%'
+     OR pg_temp.norm(e.apelido)      LIKE '%' || pg_temp.norm(d.empresa_hint) || '%'
 )
 INSERT INTO pagamento_vales (funcionario_id, empresa_id, data, descricao, valor_total, parcelas, mes_inicio)
 SELECT r.funcionario_id, r.empresa_id, r.data, r.descricao, r.valor_total, r.parcelas, r.mes_inicio
