@@ -122,6 +122,42 @@ export default function RecibosValesPage() {
     finally { setGerando(null) }
   }
 
+  function proximaCompetencia(v: PagamentoVale, descontadas: number): string | null {
+    const parcelas = Math.max(1, v.parcelas ?? 1)
+    if (descontadas >= parcelas) return null
+    return competenciasParcelas(v.mes_inicio, parcelas)[descontadas]
+  }
+
+  async function gerarXLSX() {
+    if (linhas.length === 0) return
+    setGerando('__xlsx__')
+    try {
+      const { utils, writeFile } = await import('xlsx')
+      const dados = linhas.map(({ v, st }) => {
+        const prox = proximaCompetencia(v, st.descontadas)
+        return {
+          'Profissional': v.funcionarios?.nome ?? '',
+          'Empresa': v.empresas?.razao_social ?? '',
+          'Descrição': v.descricao,
+          'Data': fmtData(v.data),
+          'Valor Total': v.valor_total,
+          'Parcelas': st.parcelas,
+          'Valor Parcela': st.valorParcela,
+          'Descontadas': st.descontadas,
+          'Faltam': st.restantes,
+          'Valor Descontado': st.valorDescontado,
+          'Valor Restante': st.valorRestante,
+          'Próxima Competência': prox ? fmtMes(prox) : 'Quitado',
+        }
+      })
+      const ws = utils.json_to_sheet(dados)
+      const wb = utils.book_new()
+      utils.book_append_sheet(wb, ws, `Vales ${fmtMes(refComp)}`.slice(0, 31))
+      writeFile(wb, `relatorio_vales_${refComp}.xlsx`)
+    } catch (err) { console.error(err); notify('Erro ao exportar.', 'erro') }
+    finally { setGerando(null) }
+  }
+
   return (
     <LayoutAdmin title="Recibos de Vales">
       <div className="space-y-6">
@@ -185,9 +221,14 @@ export default function RecibosValesPage() {
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-base font-semibold text-gray-800">{linhas.length} vale(s)</h2>
             {linhas.length > 0 && (
-              <button className="btn-primary flex items-center gap-2 text-sm" onClick={gerarTodos} disabled={gerando !== null}>
-                {gerando === '__todos__' ? 'Gerando...' : 'Gerar Todos os Recibos'}
-              </button>
+              <div className="flex items-center gap-2">
+                <button className="btn-secondary flex items-center gap-2 text-sm" onClick={gerarXLSX} disabled={gerando !== null}>
+                  {gerando === '__xlsx__' ? 'Gerando...' : 'Exportar XLSX'}
+                </button>
+                <button className="btn-primary flex items-center gap-2 text-sm" onClick={gerarTodos} disabled={gerando !== null}>
+                  {gerando === '__todos__' ? 'Gerando...' : 'Gerar Todos os Recibos'}
+                </button>
+              </div>
             )}
           </div>
 
@@ -209,6 +250,7 @@ export default function RecibosValesPage() {
                     <th className="table-header text-right">Valor Total</th>
                     <th className="table-header text-center">Progresso</th>
                     <th className="table-header text-center">Faltam</th>
+                    <th className="table-header text-center">Próxima</th>
                     <th className="table-header text-right">Restante</th>
                     <th className="table-header text-right">Recibo</th>
                   </tr>
@@ -249,6 +291,11 @@ export default function RecibosValesPage() {
                             ? <span className="badge-green">Quitado</span>
                             : <span className="text-amber-700 font-semibold">{st.restantes}</span>}
                         </td>
+                        <td className="table-cell text-center text-sm">
+                          {quitado
+                            ? <span className="text-gray-300">—</span>
+                            : <span className="text-blue-700 font-medium">{fmtMes(comps[st.descontadas])}</span>}
+                        </td>
                         <td className="table-cell text-right">
                           {st.valorRestante > 0
                             ? <span className="text-amber-700 font-medium">{formatarMoeda(st.valorRestante)}</span>
@@ -272,6 +319,7 @@ export default function RecibosValesPage() {
                     <td colSpan={3} className="table-cell text-right text-sm font-semibold text-gray-600">Totais:</td>
                     <td className="table-cell text-right font-semibold">{formatarMoeda(totais.total)}</td>
                     <td className="table-cell text-center text-xs text-gray-500">descontado {formatarMoeda(totais.descontado)}</td>
+                    <td />
                     <td />
                     <td className="table-cell text-right font-bold text-amber-700">{formatarMoeda(totais.restante)}</td>
                     <td />
