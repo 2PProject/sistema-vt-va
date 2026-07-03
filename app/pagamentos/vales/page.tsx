@@ -50,6 +50,7 @@ export default function ValesPage() {
 
   // Form
   const [showForm, setShowForm] = useState(false)
+  const [fEmpresa, setFEmpresa] = useState('')
   const [fFunc, setFFunc] = useState('')
   const [fData, setFData] = useState(hoje())
   const [fDescricao, setFDescricao] = useState('')
@@ -96,9 +97,10 @@ export default function ValesPage() {
     setTimeout(() => setMsg(''), 6000)
   }
 
-  const funcsFiltrados = useMemo(
-    () => filtroEmpresa ? funcs.filter(f => f.empresa_id === filtroEmpresa) : funcs,
-    [funcs, filtroEmpresa]
+  // Profissionais do formulário — filtrados pela empresa escolhida no modal
+  const funcsForm = useMemo(
+    () => fEmpresa ? funcs.filter(f => f.empresa_id === fEmpresa) : funcs,
+    [funcs, fEmpresa]
   )
 
   const valesFiltrados = useMemo(() => {
@@ -110,7 +112,7 @@ export default function ValesPage() {
   }, [vales, busca])
 
   function abrirForm() {
-    setFFunc(''); setFData(hoje()); setFDescricao(''); setFValor(''); setFParcelas(1)
+    setFEmpresa(filtroEmpresa); setFFunc(''); setFData(hoje()); setFDescricao(''); setFValor(''); setFParcelas(1)
     setFMesInicio(competenciaMesAnterior()); setFErro(''); setShowForm(true)
   }
 
@@ -249,14 +251,23 @@ export default function ValesPage() {
               {fErro && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm mb-4">{fErro}</div>}
 
               <div className="space-y-4">
-                <div>
-                  <label className="label-field">Profissional</label>
-                  <select className="input-field" value={fFunc} onChange={e => setFFunc(e.target.value)}>
-                    <option value="">Selecione o profissional</option>
-                    {funcsFiltrados.map(f => (
-                      <option key={f.id} value={f.id}>{f.nome} — {f.empresaNome}</option>
-                    ))}
-                  </select>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="label-field">Empresa</label>
+                    <select className="input-field" value={fEmpresa} onChange={e => { setFEmpresa(e.target.value); setFFunc('') }}>
+                      <option value="">Todas as empresas</option>
+                      {empresas.map(e => <option key={e.id} value={e.id}>{e.razao_social}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="label-field">Profissional</label>
+                    <select className="input-field" value={fFunc} onChange={e => setFFunc(e.target.value)}>
+                      <option value="">Selecione o profissional</option>
+                      {funcsForm.map(f => (
+                        <option key={f.id} value={f.id}>{f.nome}{fEmpresa ? '' : ` — ${f.empresaNome}`}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
@@ -265,7 +276,7 @@ export default function ValesPage() {
                     <input type="date" className="input-field" value={fData} onChange={e => setFData(e.target.value)} />
                   </div>
                   <div>
-                    <label className="label-field">Valor total (R$)</label>
+                    <label className="label-field">Valor total do desconto (R$)</label>
                     <input type="number" step="0.01" min="0" className="input-field" value={fValor} onChange={e => setFValor(e.target.value)} placeholder="0,00" />
                   </div>
                 </div>
@@ -277,7 +288,7 @@ export default function ValesPage() {
 
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="label-field">Parcelas</label>
+                    <label className="label-field">Nº de parcelas (quantas vezes)</label>
                     <input type="number" min="1" max="60" className="input-field" value={fParcelas} onChange={e => setFParcelas(Math.max(1, Number(e.target.value)))} />
                   </div>
                   <div>
@@ -286,11 +297,15 @@ export default function ValesPage() {
                   </div>
                 </div>
 
-                {fParcelas > 1 && valorParcela > 0 && (
+                {valorParcela > 0 && (
                   <div className="bg-blue-50 border border-blue-200 text-blue-800 text-xs rounded-lg p-3">
-                    Serão descontadas <strong>{fParcelas} parcelas</strong> de <strong>{formatarMoeda(valorParcela)}</strong>, de{' '}
-                    <strong>{fmtMes(competenciasParcelas(fMesInicio, fParcelas)[0])}</strong> a{' '}
-                    <strong>{fmtMes(competenciasParcelas(fMesInicio, fParcelas)[fParcelas - 1])}</strong>.
+                    {fParcelas > 1 ? (
+                      <>Serão descontadas automaticamente <strong>{fParcelas} parcelas</strong> de <strong>{formatarMoeda(valorParcela)}</strong>, de{' '}
+                      <strong>{fmtMes(competenciasParcelas(fMesInicio, fParcelas)[0])}</strong> a{' '}
+                      <strong>{fmtMes(competenciasParcelas(fMesInicio, fParcelas)[fParcelas - 1])}</strong>.</>
+                    ) : (
+                      <>Desconto único de <strong>{formatarMoeda(valorParcela)}</strong> na competência <strong>{fmtMes(fMesInicio)}</strong>.</>
+                    )}
                   </div>
                 )}
               </div>

@@ -305,6 +305,21 @@ export async function importarPlanilhaSalarios(
   return { linhas, erros }
 }
 
+/** Gera e baixa um modelo (.xlsx) da planilha de salário líquido. */
+export async function baixarModeloPlanilhaSalarios(): Promise<void> {
+  const XLSX = await import('xlsx')
+  const linhas = [
+    ['Apelido', 'Nome', 'Valor'],
+    ['apelido-da-empresa', 'Nome do Profissional', 1500.00],
+    ['apelido-da-empresa', 'Outro Profissional', 2300.50],
+  ]
+  const ws = XLSX.utils.aoa_to_sheet(linhas)
+  ws['!cols'] = [{ wch: 22 }, { wch: 32 }, { wch: 14 }]
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, 'Salarios')
+  XLSX.writeFile(wb, 'modelo_pagamentos.xlsx')
+}
+
 export async function processarImportacaoSalarios(
   linhas: LinhaImportSalario[],
   mesReferencia: string

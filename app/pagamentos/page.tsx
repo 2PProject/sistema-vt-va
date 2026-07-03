@@ -9,6 +9,7 @@ import {
   consolidarPagamentos,
   importarPlanilhaSalarios,
   processarImportacaoSalarios,
+  baixarModeloPlanilhaSalarios,
   LinhaPagamento,
   LinhaImportSalario,
 } from '../../lib/pagamentos'
@@ -276,10 +277,18 @@ export default function PagamentosPage() {
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl p-6 max-h-[90vh] overflow-auto">
               <h2 className="text-lg font-bold text-gray-800 mb-4">Importar Salário Líquido — {fmtMes(mesRef)}</h2>
               <div className="bg-blue-50 border border-blue-200 text-blue-800 text-xs rounded-lg p-3 mb-4">
-                A planilha deve conter, por linha: <strong>Nome</strong> do profissional, <strong>CNPJ</strong> ou <strong>Apelido</strong> da empresa e <strong>Valor líquido</strong>.
+                A planilha deve conter as colunas: <strong>Apelido</strong> (ou CNPJ) da empresa, <strong>Nome</strong> do profissional e <strong>Valor</strong> líquido.
                 O profissional é casado pelo nome dentro da empresa. A competência aplicada é <strong>{fmtMes(mesRef)}</strong> (selecione acima antes de importar).
               </div>
-              <input type="file" accept=".xlsx,.xls" onChange={handleFile} disabled={importLoad} className="input-field mb-4" />
+              <div className="flex items-center justify-between gap-3 mb-4">
+                <input type="file" accept=".xlsx,.xls" onChange={handleFile} disabled={importLoad} className="input-field flex-1" />
+                <button type="button" onClick={() => baixarModeloPlanilhaSalarios()} className="btn-secondary text-sm whitespace-nowrap flex items-center gap-2">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  Baixar modelo
+                </button>
+              </div>
 
               {importLoad && <div className="text-sm text-gray-400 mb-3">Processando...</div>}
 
