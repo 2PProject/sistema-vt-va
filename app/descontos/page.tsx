@@ -23,7 +23,7 @@ import {
   FOLGA_TO_DOW,
   MESES,
 } from '../../utils/calculoVT'
-import { isMesFechado } from '../../lib/fechamentoStatus'
+import { isMesFechado, listarFechamentos } from '../../lib/fechamentoStatus'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -139,11 +139,14 @@ export default function DescontosPage() {
   const [view, setView] = useState<'list' | 'form' | 'bulk-feriado'>('list')
   const [selecionado, setSelecionado] = useState<FuncionarioComEmpresa | null>(null)
   const [mesFechado, setMesFechado] = useState(false)
+  const [fechadosMap, setFechadosMap] = useState<Map<string, boolean>>(new Map())
 
   useEffect(() => {
     if (!selecionado) { setMesFechado(false); return }
     isMesFechado(selecionado.empresa.id, mes, ano).then(setMesFechado)
   }, [selecionado, mes, ano])
+
+  useEffect(() => { listarFechamentos(mes, ano).then(setFechadosMap) }, [mes, ano])
 
   // Bulk feriado view
   const [feriadosBulk, setFeriadosBulk] = useState<Array<{ data: string; descricao: string }>>([])
@@ -623,6 +626,9 @@ export default function DescontosPage() {
       const item = todosFuncionarios.find(f => f.func.id === funcId)
       if (!item) continue
       const { func, empresa, unidadeId } = item
+
+      // Empresa com competência FECHADA — não altera
+      if (fechadosMap.get(empresa.id) === true) { ignorados++; continue }
 
       // Get/create competencia
       let { data: comp } = await supabase.from('competencias').select('*')

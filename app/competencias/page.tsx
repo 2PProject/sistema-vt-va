@@ -24,7 +24,7 @@ import {
   FOLGA_TO_DOW,
   MESES,
 } from '../../utils/calculoVT'
-import { isMesFechado } from '../../lib/fechamentoStatus'
+import { isMesFechado, listarFechamentos } from '../../lib/fechamentoStatus'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -131,6 +131,7 @@ export default function CompetenciasPage() {
   const [ano, setAno] = useState(new Date().getFullYear())
   const [criando, setCriando] = useState(false)
   const [mesFechado, setMesFechado] = useState(false)
+  const [fechadosMap, setFechadosMap] = useState<Map<string, boolean>>(new Map())
 
   const modoTodas = empresaId === TODAS
 
@@ -138,6 +139,12 @@ export default function CompetenciasPage() {
     if (modoTodas) { setMesFechado(false); return }
     isMesFechado(empresaId, mes, ano).then(setMesFechado)
   }, [empresaId, mes, ano, modoTodas])
+
+  // Empresas fechadas na competência (usado para travar os salvamentos em massa)
+  useEffect(() => { listarFechamentos(mes, ano).then(setFechadosMap) }, [mes, ano])
+  function empresaFechada(empId: string | undefined): boolean {
+    return !!empId && fechadosMap.get(empId) === true
+  }
 
   // Modal de descontos
   const [modalIdx, setModalIdx] = useState<number | null>(null)
@@ -589,9 +596,14 @@ export default function CompetenciasPage() {
     setSucesso(false)
 
     if (modoTodas) {
+      // Não salva itens de empresas com a competência FECHADA
+      const empIdByNome = new Map(empresas.map(e => [e.razao_social, e.id]))
+      const itensLivres = itens.filter(item => !empresaFechada(empIdByNome.get(item.empresaNome)))
+      const bloqueados = itens.length - itensLivres.length
+
       // Itens com competencia_id: salva normalmente
       // Itens âmbar (sem competencia_id) com descontos: cria competência antes
-      const ambarComConteudo = itens.filter(
+      const ambarComConteudo = itensLivres.filter(
         item => !item.competencia_id && item.descontos.some(d => !d.isCarryOver)
       )
 
@@ -615,11 +627,12 @@ export default function CompetenciasPage() {
         if (comp) novasCompIds.set(unidadeId, comp.id)
       }
 
-      await Promise.all(itens.map(item => {
+      await Promise.all(itensLivres.map(item => {
         const compId = item.competencia_id || novasCompIds.get(item.funcionario.unidade_id) || ''
         if (!compId) return Promise.resolve()
         return salvarItemCF({ ...item, competencia_id: compId }, item.valorVAItem)
       }))
+      if (bloqueados > 0) alert(`${bloqueados} registro(s) de empresas FECHADAS não foram salvos. Reabra o mês para editá-los.`)
     } else {
       const unidadeId = await getOrCreateDefaultUnidade(empresaId)
       if (!unidadeId) { setSalvando(false); return }
@@ -663,6 +676,7 @@ export default function CompetenciasPage() {
     const sabadosDoMes = calcularSabadosDoMes(mes, ano)
 
     await Promise.all(empresas.map(async (emp) => {
+      if (empresaFechada(emp.id)) return  // competência fechada — não inicializa
       const unidadeId = await getOrCreateDefaultUnidade(emp.id)
       if (!unidadeId) return
 
@@ -733,6 +747,7 @@ export default function CompetenciasPage() {
     const sabadosDoMes = calcularSabadosDoMes(mes, ano)
 
     await Promise.all(empresas.map(async (emp) => {
+      if (empresaFechada(emp.id)) return  // competência fechada — não recalcula
       const unidadeId = await getOrCreateDefaultUnidade(emp.id)
       if (!unidadeId) return
 
