@@ -215,15 +215,20 @@ export async function consolidarFechamento(params: {
     a.empresaNome.localeCompare(b.empresaNome) || a.nome.localeCompare(b.nome))
 }
 
-/** CSV do banco a partir do fechamento (Nome; Chave PIX; Total a pagar). */
+/**
+ * CSV do banco no layout do modelo:
+ *   Nome completo (opcional);Documento (opcional);Chave pix;Valor
+ * A coluna Documento é mantida (vazia) — obrigatória no arquivo do banco.
+ */
 export function montarCSVFechamento(linhas: LinhaFechamento[]): { csv: string; semPix: number } {
-  const header = 'Nome;Chave PIX;Valor'
+  const header = 'Nome completo (opcional);Documento (opcional);Chave pix;Valor'
   const rows: string[] = []
   let semPix = 0
   for (const l of linhas) {
     if (!l.pix) semPix++
     const nome = (l.nome ?? '').replace(/[;\r\n]/g, ' ').trim()
-    rows.push(`${nome};${l.pix ?? ''};${l.totalPagar.toFixed(2).replace('.', ',')}`)
+    const valor = l.totalPagar.toFixed(2).replace('.', ',')
+    rows.push(`${nome};;${l.pix ?? ''};${valor}`)
   }
   return { csv: [header, ...rows].join('\r\n'), semPix }
 }

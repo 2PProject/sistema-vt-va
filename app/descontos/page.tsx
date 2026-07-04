@@ -23,6 +23,7 @@ import {
   FOLGA_TO_DOW,
   MESES,
 } from '../../utils/calculoVT'
+import { isMesFechado } from '../../lib/fechamentoStatus'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -137,6 +138,12 @@ export default function DescontosPage() {
   // View: 'list' | 'form' | 'bulk-feriado'
   const [view, setView] = useState<'list' | 'form' | 'bulk-feriado'>('list')
   const [selecionado, setSelecionado] = useState<FuncionarioComEmpresa | null>(null)
+  const [mesFechado, setMesFechado] = useState(false)
+
+  useEffect(() => {
+    if (!selecionado) { setMesFechado(false); return }
+    isMesFechado(selecionado.empresa.id, mes, ano).then(setMesFechado)
+  }, [selecionado, mes, ano])
 
   // Bulk feriado view
   const [feriadosBulk, setFeriadosBulk] = useState<Array<{ data: string; descricao: string }>>([])
@@ -467,6 +474,7 @@ export default function DescontosPage() {
 
   async function salvar() {
     if (!cfCarregado || !selecionado) return
+    if (mesFechado) { setErro('Competência FECHADA. Reabra o mês no Fechamento para editar.'); return }
     setSalvando(true)
     setErro(null)
     setSucesso(null)
@@ -1292,11 +1300,16 @@ export default function DescontosPage() {
                 </div>
               </div>
 
+              {mesFechado && (
+                <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-2 rounded-lg text-sm mb-3">
+                  🔒 Competência fechada — reabra o mês no Fechamento para editar.
+                </div>
+              )}
               {/* Botões de ação */}
               <div className="flex gap-3">
                 <button
                   onClick={salvar}
-                  disabled={salvando}
+                  disabled={salvando || mesFechado}
                   className="btn-primary flex-1 flex items-center justify-center gap-2"
                 >
                   {salvando ? (

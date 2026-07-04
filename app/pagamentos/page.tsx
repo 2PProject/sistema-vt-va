@@ -10,7 +10,6 @@ import {
   importarPlanilhaSalarios,
   processarImportacaoSalarios,
   baixarModeloPlanilhaSalarios,
-  montarCSVBanco,
   LinhaPagamento,
   LinhaImportSalario,
 } from '../../lib/pagamentos'
@@ -27,7 +26,6 @@ export default function PagamentosPage() {
   const [linhas, setLinhas] = useState<LinhaPagamento[]>([])
   const [loading, setLoading] = useState(false)
   const [busca, setBusca] = useState('')
-  const [gerando, setGerando] = useState<string | null>(null)
 
   const [msg, setMsg] = useState('')
   const [msgTipo, setMsgTipo] = useState<'ok' | 'erro'>('ok')
@@ -86,59 +84,6 @@ export default function PagamentosPage() {
     notify(`${gravados} salário(s) importado(s) para ${fmtMes(mesRef)}.${erros.length ? ' Verifique os erros.' : ''}`, erros.length && !gravados ? 'erro' : 'ok')
     if (erros.length) setImportErros(erros)
     else { setModalImport(false); setImportPreview([]); setImportErros([]); carregar() }
-  }
-
-  // ── Recibos ─────────────────────────────────────────────────
-  async function gerarPDF(l: LinhaPagamento) {
-    setGerando(l.funcionario_id)
-    try {
-      const { gerarReciboPagamentoPDF } = await import('../../services/gerarReciboPagamentoPDF')
-      await gerarReciboPagamentoPDF(montarDados(l))
-    } catch (err) { console.error(err); notify('Erro ao gerar PDF.', 'erro') }
-    finally { setGerando(null) }
-  }
-
-  async function gerarTodos() {
-    if (filtradas.length === 0) return
-    setGerando('__todos__')
-    try {
-      const { gerarMultiplosRecibosPagamento } = await import('../../services/gerarReciboPagamentoPDF')
-      await gerarMultiplosRecibosPagamento(filtradas.map(montarDados))
-    } catch (err) { console.error(err); notify('Erro ao gerar PDFs.', 'erro') }
-    finally { setGerando(null) }
-  }
-
-  function exportarCSVBanco() {
-    if (filtradas.length === 0) return
-    const { csv, semPix } = montarCSVBanco(filtradas)
-    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `pagamento_banco_${mesRef}.csv`
-    a.click()
-    URL.revokeObjectURL(url)
-    if (semPix > 0) notify(`CSV gerado. Atenção: ${semPix} profissional(is) sem chave Pix cadastrada.`, 'erro')
-    else notify('CSV do banco gerado com sucesso.', 'ok')
-  }
-
-  function montarDados(l: LinhaPagamento) {
-    return {
-      empresaNome: l.empresaNome,
-      empresaCnpj: l.empresaCnpj,
-      funcionarioNome: l.funcionarioNome,
-      funcao: l.funcao,
-      mesReferencia: mesRef,
-      valorLiquido: l.valorLiquido,
-      descontos: l.descontos.map(d => ({
-        descricao: d.vale.descricao,
-        valor: d.valorParcela,
-        parcelaAtual: d.parcelaAtual,
-        totalParcelas: d.totalParcelas,
-      })),
-      totalDescontos: l.totalDescontos,
-      valorAPagar: l.valorAPagar,
-    }
   }
 
   return (
@@ -204,16 +149,7 @@ export default function PagamentosPage() {
             <h2 className="text-base font-semibold text-gray-800">
               {fmtMes(mesRef)} — {filtradas.length} profissional(is)
             </h2>
-            {filtradas.length > 0 && (
-              <div className="flex items-center gap-2">
-                <button className="btn-secondary flex items-center gap-2 text-sm" onClick={exportarCSVBanco} disabled={gerando !== null}>
-                  CSV Banco
-                </button>
-                <button className="btn-primary flex items-center gap-2 text-sm" onClick={gerarTodos} disabled={gerando !== null}>
-                  {gerando === '__todos__' ? 'Gerando...' : 'Gerar Todos os Recibos'}
-                </button>
-              </div>
-            )}
+            <span className="text-xs text-gray-400">Recibos e CSV do banco: use o Fechamento do Mês.</span>
           </div>
 
           {loading ? (
@@ -234,7 +170,6 @@ export default function PagamentosPage() {
                     <th className="table-header text-center">Descontos</th>
                     <th className="table-header text-right">Total Desc.</th>
                     <th className="table-header text-right">A Pagar</th>
-                    <th className="table-header text-right">Recibo</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
@@ -264,15 +199,6 @@ export default function PagamentosPage() {
                         {l.totalDescontos > 0 ? `- ${formatarMoeda(l.totalDescontos)}` : <span className="text-gray-300">—</span>}
                       </td>
                       <td className="table-cell text-right font-semibold text-green-700">{formatarMoeda(l.valorAPagar)}</td>
-                      <td className="table-cell text-right">
-                        <button
-                          onClick={() => gerarPDF(l)}
-                          disabled={gerando === l.funcionario_id}
-                          className="inline-flex items-center gap-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
-                        >
-                          {gerando === l.funcionario_id ? 'Gerando...' : 'PDF'}
-                        </button>
-                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -283,7 +209,6 @@ export default function PagamentosPage() {
                     <td />
                     <td className="table-cell text-right font-semibold text-amber-700">- {formatarMoeda(totais.descontos)}</td>
                     <td className="table-cell text-right font-bold text-green-700">{formatarMoeda(totais.pagar)}</td>
-                    <td />
                   </tr>
                 </tfoot>
               </table>

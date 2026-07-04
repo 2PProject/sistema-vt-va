@@ -230,23 +230,6 @@ export async function consolidarPagamentos(params: {
     a.empresaNome.localeCompare(b.empresaNome) || a.funcionarioNome.localeCompare(b.funcionarioNome))
 }
 
-/**
- * Monta o conteúdo CSV para pagamento no banco (Nome; Chave Pix; Valor).
- * Valor = valor a pagar (líquido - descontos). Separador ";" e decimal ",".
- */
-export function montarCSVBanco(linhas: LinhaPagamento[]): { csv: string; semPix: number } {
-  const header = 'Nome;Chave PIX;Valor'
-  const rows: string[] = []
-  let semPix = 0
-  for (const l of linhas) {
-    if (!l.pix) semPix++
-    const nome = (l.funcionarioNome ?? '').replace(/[;\r\n]/g, ' ').trim()
-    const valor = l.valorAPagar.toFixed(2).replace('.', ',')
-    rows.push(`${nome};${l.pix ?? ''};${valor}`)
-  }
-  return { csv: [header, ...rows].join('\r\n'), semPix }
-}
-
 // ── Importação da planilha de salário líquido ─────────────────────────────────
 
 export type LinhaImportSalario = {

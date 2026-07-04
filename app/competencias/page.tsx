@@ -24,6 +24,7 @@ import {
   FOLGA_TO_DOW,
   MESES,
 } from '../../utils/calculoVT'
+import { isMesFechado } from '../../lib/fechamentoStatus'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -129,8 +130,14 @@ export default function CompetenciasPage() {
   const [mes, setMes] = useState(new Date().getMonth() + 1)
   const [ano, setAno] = useState(new Date().getFullYear())
   const [criando, setCriando] = useState(false)
+  const [mesFechado, setMesFechado] = useState(false)
 
   const modoTodas = empresaId === TODAS
+
+  useEffect(() => {
+    if (modoTodas) { setMesFechado(false); return }
+    isMesFechado(empresaId, mes, ano).then(setMesFechado)
+  }, [empresaId, mes, ano, modoTodas])
 
   // Modal de descontos
   const [modalIdx, setModalIdx] = useState<number | null>(null)
@@ -577,6 +584,7 @@ export default function CompetenciasPage() {
 
   async function salvar() {
     if (!empresaId) return
+    if (mesFechado) { alert('Competência FECHADA. Reabra o mês no Fechamento para editar.'); return }
     setSalvando(true)
     setSucesso(false)
 
@@ -1218,8 +1226,11 @@ export default function CompetenciasPage() {
                   </table>
                 </div>
 
-                <div className="flex justify-end mt-6">
-                  <button onClick={salvar} disabled={salvando} className="btn-primary px-8 flex items-center gap-2">
+                <div className="flex justify-between items-center mt-6">
+                  {mesFechado
+                    ? <span className="text-sm font-medium text-red-600">🔒 Competência fechada — reabra no Fechamento para editar.</span>
+                    : <span />}
+                  <button onClick={salvar} disabled={salvando || mesFechado} className="btn-primary px-8 flex items-center gap-2">
                     {salvando ? (
                       <>
                         <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">

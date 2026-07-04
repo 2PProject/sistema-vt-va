@@ -6,6 +6,7 @@ import { supabase, Empresa } from '../../../lib/supabase'
 import { formatarMoeda, MESES } from '../../../utils/calculoVT'
 import { competenciaMesAnterior } from '../../../lib/pagamentos'
 import { consolidarFechamento, montarCSVFechamento, LinhaFechamento } from '../../../lib/fechamento'
+import { listarFechamentos, definirFechamento } from '../../../lib/fechamentoStatus'
 
 function fmtMes(mes: string) {
   const [a, m] = mes.split('-').map(Number)
@@ -21,6 +22,7 @@ export default function FechamentoPage() {
   const [busca, setBusca] = useState('')
   const [porEmpresa, setPorEmpresa] = useState(true)
   const [gerando, setGerando] = useState<string | null>(null)
+  const [fechados, setFechados] = useState<Map<string, boolean>>(new Map())
 
   const [msg, setMsg] = useState('')
   const [msgTipo, setMsgTipo] = useState<'ok' | 'erro'>('ok')
@@ -33,11 +35,26 @@ export default function FechamentoPage() {
     const [ano, mes] = mesRef.split('-').map(Number)
     if (!ano || !mes) return
     setLoading(true)
-    setLinhas(await consolidarFechamento({ mes, ano, empresaId: empresaFiltro || undefined }))
+    const [dados, status] = await Promise.all([
+      consolidarFechamento({ mes, ano, empresaId: empresaFiltro || undefined }),
+      listarFechamentos(mes, ano),
+    ])
+    setLinhas(dados)
+    setFechados(status)
     setLoading(false)
   }, [mesRef, empresaFiltro])
 
   useEffect(() => { carregar() }, [carregar])
+
+  async function alternarFechamento(empresaId: string, empresaNome: string, fechar: boolean) {
+    const [ano, mes] = mesRef.split('-').map(Number)
+    setGerando('fech:' + empresaId)
+    const res = await definirFechamento(empresaId, mes, ano, fechar)
+    setGerando(null)
+    if (!res.ok) { notify(`Erro ao ${fechar ? 'fechar' : 'reabrir'}: ${res.erro ?? ''}`, 'erro'); return }
+    setFechados(prev => { const n = new Map(prev); n.set(empresaId, fechar); return n })
+    notify(`${empresaNome}: competência ${fmtMes(mesRef)} ${fechar ? 'FECHADA' : 'REABERTA'}.`, 'ok')
+  }
 
   function notify(text: string, tipo: 'ok' | 'erro') {
     setMsg(text); setMsgTipo(tipo)
@@ -56,6 +73,14 @@ export default function FechamentoPage() {
     vales: filtradas.reduce((s, l) => s + l.descontoVales, 0),
     pagar: filtradas.reduce((s, l) => s + l.totalPagar, 0),
   }), [filtradas])
+
+  // Empresas presentes no fechamento (para o painel de status)
+  const empresasNoFechamento = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const l of linhas) if (!map.has(l.empresa_id)) map.set(l.empresa_id, l.empresaNome)
+    return Array.from(map.entries()).map(([id, nome]) => ({ id, nome }))
+      .sort((a, b) => a.nome.localeCompare(b.nome))
+  }, [linhas])
 
   // Agrupa por empresa quando "Todas" + opção ligada
   function slug(s: string) { return (s || 'empresa').replace(/[^\w]+/g, '_').replace(/^_|_$/g, '').slice(0, 40) }
@@ -226,6 +251,38 @@ export default function FechamentoPage() {
             <p className="text-2xl font-bold text-green-700 mt-1">{formatarMoeda(totais.pagar)}</p>
           </div>
         </div>
+
+        {/* Status do fechamento por empresa */}
+        {empresasNoFechamento.length > 0 && (
+          <div className="card">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-semibold text-gray-700">Status do fechamento — {fmtMes(mesRef)}</h2>
+              <span className="text-xs text-gray-400">Feche para travar a edição de VT/VA e descontos; reabra para editar.</span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {empresasNoFechamento.map(emp => {
+                const fechado = fechados.get(emp.id) === true
+                return (
+                  <div key={emp.id} className={`flex items-center gap-3 px-3 py-2 rounded-lg border ${fechado ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200'}`}>
+                    <div>
+                      <div className="text-sm font-medium text-gray-800">{emp.nome}</div>
+                      <div className={`text-xs font-semibold ${fechado ? 'text-red-600' : 'text-green-700'}`}>
+                        {fechado ? '🔒 FECHADO' : '🔓 Aberto'}
+                      </div>
+                    </div>
+                    <button
+                      className={`text-xs font-medium px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50 ${fechado ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-red-600 text-white hover:bg-red-700'}`}
+                      onClick={() => alternarFechamento(emp.id, emp.nome, !fechado)}
+                      disabled={gerando === 'fech:' + emp.id}
+                    >
+                      {gerando === 'fech:' + emp.id ? '...' : fechado ? 'Reabrir' : 'Fechar mês'}
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Ações do fechamento */}
         <div className="card">
