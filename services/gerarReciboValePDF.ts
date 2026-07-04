@@ -154,6 +154,8 @@ export async function gerarMultiplosRecibosVale(lista: DadosReciboVale[]): Promi
 
 export type ValeConsolidadoItem = {
   descricao: string
+  data: string             // data do lançamento do vale ('YYYY-MM-DD')
+  valorTotal: number       // valor total do vale
   parcelaAtual: number     // parcela descontada nesta competência
   totalParcelas: number
   valorParcela: number     // valor descontado nesta competência
@@ -202,9 +204,11 @@ function desenharConsolidado(doc: any, d: DadosReciboConsolidado) {
 
   // Cabeçalho da tabela — descontos DO MÊS
   doc.setFillColor(180, 83, 9); doc.rect(10, y - 4, 190, 7, 'F')
-  doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold'); doc.setFontSize(8)
+  doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5)
   doc.text('DESCRIÇÃO', 12, y)
-  doc.text('PARCELA', 120, y)
+  doc.text('DATA', 60, y)
+  doc.text('VALOR TOTAL', 108, y, { align: 'right' })
+  doc.text('PARCELA', 128, y)
   doc.text('VALOR DESCONTADO', 198, y, { align: 'right' })
   y += 6
 
@@ -212,8 +216,10 @@ function desenharConsolidado(doc: any, d: DadosReciboConsolidado) {
   d.vales.forEach((v, i) => {
     if (y > 250) { doc.addPage(); y = 16 }
     if (i % 2 === 0) { doc.setFillColor(255, 251, 235); doc.rect(10, y - 4, 190, 6, 'F') }
-    doc.text(String(v.descricao).slice(0, 40), 12, y)
-    doc.text(v.totalParcelas > 1 ? `${v.parcelaAtual}/${v.totalParcelas}` : 'única', 120, y)
+    doc.text(String(v.descricao).slice(0, 26), 12, y)
+    doc.text(fmtData(v.data), 60, y)
+    doc.text(formatarMoeda(v.valorTotal), 108, y, { align: 'right' })
+    doc.text(v.totalParcelas > 1 ? `${v.parcelaAtual} de ${v.totalParcelas}` : 'única', 128, y)
     doc.text(formatarMoeda(v.valorParcela), 198, y, { align: 'right' })
     y += 6
   })

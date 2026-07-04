@@ -117,6 +117,8 @@ export default function RecibosValesPage() {
       refCompetencia: refComp,
       vales: g.valesDoMes.map(({ v, st, d }) => ({
         descricao: v.descricao,
+        data: v.data,
+        valorTotal: v.valor_total,
         parcelaAtual: d!.parcelaAtual,
         totalParcelas: d!.totalParcelas,
         valorParcela: d!.valorParcela,

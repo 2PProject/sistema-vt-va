@@ -174,6 +174,8 @@ export async function consolidarFechamento(params: {
       descontoVales += d.valorParcela
       valesItens.push({
         descricao: v.descricao,
+        data: v.data,
+        valorTotal: v.valor_total,
         parcelaAtual: d.parcelaAtual,
         totalParcelas: d.totalParcelas,
         valorParcela: d.valorParcela,
