@@ -27,6 +27,7 @@ export default function FormFuncionario({
   const [ctps, setCtps] = useState('')
   const [serie, setSerie] = useState('')
   const [funcao, setFuncao] = useState('')
+  const [outroCargo, setOutroCargo] = useState(false)
   const [folgaSemanal, setFolgaSemanal] = useState('Domingo')
   const [empresaId, setEmpresaId] = useState<string>('')
   const [ativo, setAtivo] = useState(true)
@@ -47,6 +48,7 @@ export default function FormFuncionario({
       setCtps(funcionario.ctps)
       setSerie(funcionario.serie)
       setFuncao(funcionario.funcao)
+      setOutroCargo(!!funcionario.funcao && !cargos.some((c) => c.nome === funcionario.funcao))
       setFolgaSemanal(funcionario.folga_semanal)
       setAtivo(funcionario.ativo)
       setValorVT(funcionario.valor_vt ?? 0)
@@ -63,6 +65,7 @@ export default function FormFuncionario({
       setCtps('')
       setSerie('')
       setFuncao('')
+      setOutroCargo(false)
       setFolgaSemanal('Domingo')
       setEmpresaId('')
       setAtivo(true)
@@ -171,9 +174,12 @@ export default function FormFuncionario({
           <label className="label-field">Cargo / Função</label>
           {cargos.length > 0 ? (
             <select
-              value={funcao}
-              onChange={(e) => setFuncao(e.target.value)}
-              required
+              value={outroCargo ? '__outro__' : funcao}
+              onChange={(e) => {
+                if (e.target.value === '__outro__') { setOutroCargo(true); setFuncao('') }
+                else { setOutroCargo(false); setFuncao(e.target.value) }
+              }}
+              required={!outroCargo}
               className="input-field"
             >
               <option value="">Selecione um cargo</option>
@@ -195,9 +201,10 @@ export default function FormFuncionario({
             />
           )}
           {/* Campo livre quando seleciona "Outro" */}
-          {funcao === '__outro__' && (
+          {outroCargo && (
             <input
               type="text"
+              value={funcao}
               onChange={(e) => setFuncao(e.target.value)}
               required
               className="input-field mt-2"

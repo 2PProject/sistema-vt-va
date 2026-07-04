@@ -3,9 +3,9 @@ import {
   getOrCreateDefaultUnidade, garantirFeriadosAno,
 } from './supabase'
 import {
-  calcularVTVA, calcularDiasUteisAuto, trabalhaNoMes, resolverValorVA, contarSabadosEmDescontos,
+  calcularVTVA, calcularDiasUteisAuto, trabalhaNoMes, resolverValorVA, contarSabadosEmDescontos, contarSabadosFeriado,
 } from '../utils/calculoVT'
-import { listarVales, descontoDoVale } from './pagamentos'
+import { listarVales, descontoDoVale, statusParcelasVale } from './pagamentos'
 import type { DadosRecibo, DescontoRecibo } from '../services/gerarReciboPDF'
 import type { DadosReciboConsolidado } from '../services/gerarReciboValePDF'
 
@@ -75,7 +75,7 @@ export async function consolidarFechamento(params: {
     const unidadeId = await getOrCreateDefaultUnidade(empId)
     if (!unidadeId) return
     const { data: comp } = await supabase.from('competencias').select('*')
-      .eq('unidade_id', unidadeId).eq('mes', mes).eq('ano', ano).maybeSingle()
+      .eq('unidade_id', unidadeId).eq('mes', mes).eq('ano', ano).limit(1).maybeSingle()
     if (!comp) return
     compMap.set((comp as Competencia).id, comp as Competencia)
     const { data: cfs } = await supabase.from('competencia_funcionario').select('*')
@@ -144,7 +144,7 @@ export async function consolidarFechamento(params: {
       const descontos = descMap.get(cf.id) ?? []
       const acrescimos = acrescMap.get(cf.id) ?? []
       const diasSabadoBase = ehExcecao ? (cf.dias_sabado ?? 0) : 0
-      const diasSabado = Math.max(0, diasSabadoBase - contarSabadosEmDescontos(descontos, mes, ano))
+      const diasSabado = Math.max(0, diasSabadoBase - contarSabadosEmDescontos(descontos, mes, ano) - contarSabadosFeriado(feriadosDatas))
       const valorVA = resolverValorVA(func.valor_va, comp.valor_va)
       const diasUteisAuto = calcularDiasUteisAuto(mes, ano, func.folga_semanal, feriadosDatas, func.data_admissao, func.data_fim_aviso)
       const resultado = calcularVTVA({
@@ -184,16 +184,12 @@ export async function consolidarFechamento(params: {
 
     let reciboVales: DadosReciboConsolidado | null = null
     if (valesItens.length > 0) {
-      // saldo devedor total (todos os vales) para exibir no recibo
+      // saldo devedor total após a competência (vales já quitados contam 0)
       let saldo = 0
       for (const v of valesPorFunc.get(fid) ?? []) {
-        const parcelas = Math.max(1, v.parcelas ?? 1)
-        const dd = descontoDoVale(v, mesRef)
-        const jaIdx = dd ? dd.parcelaAtual : 0
-        // usa status simples: parcelas restantes após a competência
-        const restantes = Math.max(0, parcelas - jaIdx)
-        saldo += Math.round(restantes * (v.valor_total / parcelas) * 100) / 100
+        saldo += statusParcelasVale(v, mesRef).valorRestante
       }
+      saldo = Math.round(saldo * 100) / 100
       reciboVales = {
         empresaNome: emp?.razao_social ?? '', empresaCnpj: emp?.cnpj ?? '',
         funcionarioNome: func.nome, funcao: func.funcao, refCompetencia: mesRef,

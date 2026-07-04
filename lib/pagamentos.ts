@@ -264,13 +264,19 @@ function norm(s: string) { return (s ?? '').toLowerCase().trim() }
 
 function parseValorBR(raw: unknown): number {
   if (typeof raw === 'number') return raw
-  return parseFloat(
-    String(raw ?? '')
-      .replace(/R\$\s*/i, '')
-      .replace(/\./g, '')
-      .replace(',', '.')
-      .trim()
-  )
+  let s = String(raw ?? '').replace(/R\$/i, '').replace(/\s/g, '').trim()
+  if (!s) return NaN
+  if (s.includes(',')) {
+    // vírgula = decimal, pontos = separador de milhar
+    s = s.replace(/\./g, '').replace(',', '.')
+  } else if (s.includes('.')) {
+    // sem vírgula: ponto só é decimal quando há 1 ponto com até 2 casas
+    const partes = s.split('.')
+    if (!(partes.length === 2 && partes[1].length <= 2)) {
+      s = s.replace(/\./g, '') // caso contrário, pontos são milhar
+    }
+  }
+  return parseFloat(s)
 }
 
 /**

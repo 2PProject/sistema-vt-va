@@ -77,7 +77,11 @@ export default function FuncionariosPage() {
   }
 
   async function excluir(id: string) {
-    await supabase.from('funcionarios').delete().eq('id', id)
+    const { error } = await supabase.from('funcionarios').delete().eq('id', id)
+    if (error) {
+      alert('Não foi possível excluir este funcionário. Ele possui competências/lançamentos vinculados — considere inativá-lo.')
+      return
+    }
     await carregar()
   }
 

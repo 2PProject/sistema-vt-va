@@ -486,7 +486,9 @@ export default function DescontosPage() {
     }
 
     const descontosReais = descontos.filter(d => !d.isCarryOver)
-    const totalDescontos = descontosReais.reduce((s, d) => s + d.dias, 0)
+    // Conta inclui o carry-over (férias que transbordaram do mês anterior);
+    // só os descontos reais são persistidos como linhas.
+    const totalDescontos = descontos.reduce((s, d) => s + d.dias, 0)
     const { valorVT, valorVTSabado, diasSabado, feriados, valorVA } = cfCarregado
     const ehExcecao = valorVTSabado > 0
     const diasAuto = calcularDiasUteisAuto(mes, ano, func.folga_semanal, feriados, func.data_admissao, func.data_fim_aviso)
@@ -547,7 +549,7 @@ export default function DescontosPage() {
     const { func } = selecionado
     const { valorVT, valorVTSabado, diasSabado, feriados, valorVA } = cfCarregado
     const ehExcecao = valorVTSabado > 0
-    const totalDesc = descontos.filter(d => !d.isCarryOver).reduce((s, d) => s + d.dias, 0)
+    const totalDesc = descontos.reduce((s, d) => s + d.dias, 0)
     const diasAuto = calcularDiasUteisAuto(mes, ano, func.folga_semanal, feriados, func.data_admissao, func.data_fim_aviso)
     return calcularVTVA({
       diasUteis: diasAuto, diasFeriado: 0,

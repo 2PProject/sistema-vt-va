@@ -527,7 +527,9 @@ export default function CompetenciasPage() {
     const diasSabadoSalvar = ehExcecao ? item.dias_sabado : 0
     const valorVtSabadoSalvar = ehExcecao ? item.valor_vt_sabado : 0
     const descontosReais = item.descontos.filter(d => !d.isCarryOver)
-    const totalDescontos = descontosReais.reduce((s, d) => s + d.dias, 0)
+    // Conta inclui o carry-over (dias de férias que transbordaram do mês anterior),
+    // que devem ser descontados neste mês; só os descontos reais são persistidos.
+    const totalDescontos = item.descontos.reduce((s, d) => s + d.dias, 0)
     const diasUteisAuto = calcularDiasUteisAuto(mes, ano, item.funcionario.folga_semanal, feriadosDatas, item.funcionario.data_admissao, item.funcionario.data_fim_aviso)
     // VA de exceção do funcionário prevalece sobre o VA da empresa/competência
     const vaFinal = resolverValorVA(item.funcionario?.valor_va, vaEfetivo)
@@ -790,7 +792,7 @@ export default function CompetenciasPage() {
   const totalGeral = itens.reduce((sum, item) => {
     const ehExcecao = (item.valor_vt_sabado ?? 0) > 0
     const vaEfetivo = resolverValorVA(item.funcionario?.valor_va, modoTodas ? (item.valorVAItem ?? 0) : valorVA)
-    const totalDesc = item.descontos.filter(d => !d.isCarryOver).reduce((s, d) => s + d.dias, 0)
+    const totalDesc = item.descontos.reduce((s, d) => s + d.dias, 0)
     const diasAuto = calcularDiasUteisAuto(mes, ano, item.funcionario.folga_semanal, feriadosDatas, item.funcionario.data_admissao, item.funcionario.data_fim_aviso)
     const r = calcularVTVA({
       diasUteis: diasAuto, diasFeriado: 0,

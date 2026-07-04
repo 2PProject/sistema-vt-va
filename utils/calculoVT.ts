@@ -205,6 +205,11 @@ export function calcularSabadosDoMes(mes: number, ano: number): number {
   return contarDiasSemana(mes, ano)[6]
 }
 
+/** Conta quantos feriados do mês caem num sábado (não são pagos como sábado). */
+export function contarSabadosFeriado(feriadosDatas: string[]): number {
+  return (feriadosDatas ?? []).filter((s) => new Date(s + 'T12:00:00').getDay() === 6).length
+}
+
 /**
  * Conta os sábados que caem dentro dos períodos de desconto (férias/faltas)
  * no mês/ano informado. Usado para não pagar VT de sábado quando o

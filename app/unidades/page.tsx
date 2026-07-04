@@ -45,7 +45,11 @@ export default function UnidadesPage() {
   }
 
   async function excluir(id: string) {
-    await supabase.from('unidades').delete().eq('id', id)
+    const { error } = await supabase.from('unidades').delete().eq('id', id)
+    if (error) {
+      alert('Não foi possível excluir esta unidade. Verifique se há funcionários/competências vinculados.')
+      return
+    }
     await carregar()
   }
 

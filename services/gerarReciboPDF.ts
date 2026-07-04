@@ -100,8 +100,10 @@ function desenharVia(doc: any, dados: DadosRecibo, mesNome: string, referencia: 
   doc.setTextColor(0, 0, 0)
   doc.setFont('helvetica', 'normal')
 
-  // Exceção real = valor de sábado diferente do valor do dia útil
-  const ehExcecaoPDF = dados.valorVTSabado > 0 && dados.valorVTSabado !== dados.valorVT
+  // Exceção = há valor de VT de sábado (consistente com o cálculo, que já
+  // separa os sábados). Antes usava "!= valorVT" e, quando os valores eram
+  // iguais, a linha de dias úteis ficava com contagem cheia e total parcial.
+  const ehExcecaoPDF = dados.valorVTSabado > 0
   const diasVTUteis = ehExcecaoPDF
     ? Math.max(0, dados.diasEfetivos - dados.diasSabado)
     : dados.diasEfetivos

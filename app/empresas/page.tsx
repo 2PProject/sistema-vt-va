@@ -49,7 +49,11 @@ export default function EmpresasPage() {
   }
 
   async function excluir(id: string) {
-    await supabase.from('empresas').delete().eq('id', id)
+    const { error } = await supabase.from('empresas').delete().eq('id', id)
+    if (error) {
+      alert('Não foi possível excluir esta empresa. Verifique se há unidades/funcionários vinculados.')
+      return
+    }
     await carregar()
   }
 

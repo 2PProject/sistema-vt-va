@@ -128,10 +128,14 @@ export async function garantirFeriadosAno(ano: number): Promise<void> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const lista: any[] = await res.json()
     if (!Array.isArray(lista) || lista.length === 0) return
-    await supabase.from('feriados').upsert(
-      lista.map((f) => ({ data: f.date, descricao: f.name })),
-      { onConflict: 'data' }
-    )
+    // A tabela feriados não tem UNIQUE em `data`, então onConflict falharia.
+    // Como só chegamos aqui quando não há feriados no ano (count == 0), um
+    // insert simples basta — deduplicando por data por segurança.
+    const vistos = new Set<string>()
+    const novos = lista
+      .filter((f) => f.date && !vistos.has(f.date) && vistos.add(f.date))
+      .map((f) => ({ data: f.date, descricao: f.name }))
+    if (novos.length > 0) await supabase.from('feriados').insert(novos)
   } catch {
     // Falha silenciosa — não bloqueia o carregamento da página
   }
