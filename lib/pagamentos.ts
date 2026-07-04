@@ -1,4 +1,5 @@
 import { supabase, Empresa, Funcionario } from './supabase'
+import { listarFechamentos } from './fechamentoStatus'
 
 // ── Tipos ─────────────────────────────────────────────────────────────────────
 
@@ -405,7 +406,19 @@ export async function processarImportacaoSalarios(
   // Deduplica por funcionário (mantém a última linha) para não inserir 2x
   const byFunc = new Map<string, LinhaImportSalario>()
   for (const l of linhas) byFunc.set(l.funcionarioId, l)
-  const unicas = Array.from(byFunc.values())
+  let unicas = Array.from(byFunc.values())
+
+  // Não importa para empresas com a competência FECHADA
+  const [anoRef, mesRef] = mesReferencia.split('-').map(Number)
+  const fechados = await listarFechamentos(mesRef, anoRef)
+  const bloqueadas = unicas.filter((l) => fechados.get(l.empresaId) === true)
+  if (bloqueadas.length > 0) {
+    const nomes = Array.from(new Set(bloqueadas.map((l) => l.empresaNome)))
+    erros.push(`${bloqueadas.length} salário(s) não importado(s): competência FECHADA em ${nomes.join(', ')}. Reabra o mês para importar.`)
+    unicas = unicas.filter((l) => fechados.get(l.empresaId) !== true)
+  }
+  if (unicas.length === 0) return { gravados: 0, erros }
+
   const funcIds = unicas.map((l) => l.funcionarioId)
 
   // Reimportação limpa: remove os registros do mês desses funcionários e reinsere.

@@ -17,6 +17,19 @@ export async function listarFechamentos(mes: number, ano: number): Promise<Map<s
   return map
 }
 
+/** Conjunto de competências 'YYYY-MM' fechadas de uma empresa. */
+export async function fechadosDaEmpresa(empresaId: string): Promise<Set<string>> {
+  const set = new Set<string>()
+  if (!empresaId) return set
+  const { data } = await supabase
+    .from('pagamento_fechamentos')
+    .select('mes, ano, fechado')
+    .eq('empresa_id', empresaId).eq('fechado', true)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ;(data ?? []).forEach((r: any) => set.add(`${r.ano}-${String(r.mes).padStart(2, '0')}`))
+  return set
+}
+
 export async function isMesFechado(empresaId: string, mes: number, ano: number): Promise<boolean> {
   if (!empresaId) return false
   const { data } = await supabase

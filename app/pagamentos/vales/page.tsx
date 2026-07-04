@@ -14,6 +14,7 @@ import {
   statusParcelasVale,
   PagamentoVale,
 } from '../../../lib/pagamentos'
+import { fechadosDaEmpresa } from '../../../lib/fechamentoStatus'
 
 type FuncOpt = { id: string; nome: string; empresa_id: string; empresaNome: string }
 
@@ -179,6 +180,14 @@ export default function ValesPage() {
     const func = funcs.find(f => f.id === fFunc)
     if (!func) { setFErro('Profissional inválido.'); return }
 
+    // Bloqueia se o vale afeta algum mês FECHADO desta empresa
+    const fechadosSet = await fechadosDaEmpresa(func.empresa_id)
+    const compsAfetadas = competenciasParcelas(fMesInicio, fParcelas)
+    if (compsAfetadas.some(c => fechadosSet.has(c))) {
+      setFErro('Este vale afeta um mês FECHADO desta empresa. Reabra o mês para lançar/editar.')
+      return
+    }
+
     setSalvando(true); setFErro('')
     const payload = {
       funcionario_id: func.id,
@@ -198,6 +207,12 @@ export default function ValesPage() {
   }
 
   async function remover(v: PagamentoVale) {
+    const fechadosSet = await fechadosDaEmpresa(v.empresa_id)
+    const compsAfetadas = competenciasParcelas(v.mes_inicio, Math.max(1, v.parcelas ?? 1))
+    if (compsAfetadas.some(c => fechadosSet.has(c))) {
+      notify('Não é possível excluir: o vale afeta um mês fechado. Reabra o mês.', 'erro')
+      return
+    }
     if (!confirm(`Excluir o vale "${v.descricao}" de ${v.funcionarios?.nome ?? ''}?`)) return
     await excluirVale(v.id)
     notify('Vale/desconto excluído.', 'ok')
