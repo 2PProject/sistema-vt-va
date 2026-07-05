@@ -31,6 +31,7 @@ export default function FechamentoPage() {
   const [porEmpresa, setPorEmpresa] = useState(true)
   const [gerando, setGerando] = useState<string | null>(null)
   const [fechados, setFechados] = useState<Map<string, boolean>>(new Map())
+  const [fechEmpresa, setFechEmpresa] = useState('')
 
   const [msg, setMsg] = useState('')
   const [msgTipo, setMsgTipo] = useState<'ok' | 'erro'>('ok')
@@ -305,42 +306,52 @@ export default function FechamentoPage() {
           )}
         </div>
 
-        {/* Fechamento por empresa — status + ação individual (lista rolável) */}
-        {empresasNoFechamento.length > 0 && (
-          <div className="card">
-            <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-              <h2 className="text-sm font-semibold text-gray-700">Fechamento — {fmtMes(mesRef)}</h2>
-              <div className="flex items-center gap-3">
-                <span className="text-xs text-gray-400">{empresasNoFechamento.filter(e => fechados.get(e.id) === true).length}/{empresasNoFechamento.length} fechada(s)</span>
-                <button className="btn-secondary text-xs" onClick={() => alternarTodas(true)} disabled={gerando !== null}>Fechar todas</button>
-                <button className="btn-secondary text-xs" onClick={() => alternarTodas(false)} disabled={gerando !== null}>Reabrir todas</button>
+        {/* Fechamento do mês — um único fechamento por empresa (dropdown, escala) */}
+        {empresasNoFechamento.length > 0 && (() => {
+          const sel = fechEmpresa && empresasNoFechamento.some(e => e.id === fechEmpresa)
+            ? fechEmpresa : (empresasNoFechamento[0]?.id ?? '')
+          const fechadoSel = fechados.get(sel) === true
+          const nomeSel = empresasNoFechamento.find(e => e.id === sel)?.nome ?? ''
+          const totalFechadas = empresasNoFechamento.filter(e => fechados.get(e.id) === true).length
+          const todasFechadas = totalFechadas === empresasNoFechamento.length
+          return (
+            <div className="card">
+              <div className="flex items-start justify-between gap-3 mb-3">
+                <div>
+                  <h2 className="text-sm font-semibold text-gray-700">Fechamento de {fmtMes(mesRef)}</h2>
+                  <p className="text-xs text-gray-400 mt-0.5">Um único fechamento por empresa trava TUDO do mês: salário, vales e VT/VA. Reabra para editar.</p>
+                </div>
+                <span className={`shrink-0 text-xs font-semibold px-2 py-1 rounded ${todasFechadas ? 'bg-red-50 text-red-600' : 'bg-gray-100 text-gray-500'}`}>
+                  {totalFechadas}/{empresasNoFechamento.length} fechada(s)
+                </span>
+              </div>
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="flex-1 min-w-[240px]">
+                  <label className="label-field">Empresa</label>
+                  <select className="input-field" value={sel} onChange={e => setFechEmpresa(e.target.value)}>
+                    {empresasNoFechamento.map(e => (
+                      <option key={e.id} value={e.id}>{(fechados.get(e.id) ? '🔒 ' : '🔓 ') + e.nome}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex items-center gap-3 pb-0.5">
+                  <span className={`text-sm font-semibold ${fechadoSel ? 'text-red-600' : 'text-green-700'}`}>{fechadoSel ? '🔒 Fechado' : '🔓 Aberto'}</span>
+                  <button
+                    className={`text-sm font-medium px-4 py-2 rounded-lg text-white disabled:opacity-50 transition-colors ${fechadoSel ? 'bg-blue-600 hover:bg-blue-700' : 'bg-red-600 hover:bg-red-700'}`}
+                    onClick={() => alternarFechamento(sel, nomeSel, !fechadoSel)}
+                    disabled={!sel || gerando === 'fech:' + sel}
+                  >
+                    {gerando === 'fech:' + sel ? '...' : fechadoSel ? 'Reabrir empresa' : 'Fechar empresa'}
+                  </button>
+                </div>
+                <div className="flex gap-2 pb-0.5">
+                  <button className="btn-secondary text-sm" onClick={() => alternarTodas(true)} disabled={gerando !== null}>Fechar todas</button>
+                  <button className="btn-secondary text-sm" onClick={() => alternarTodas(false)} disabled={gerando !== null}>Reabrir todas</button>
+                </div>
               </div>
             </div>
-            <div className="border border-gray-100 rounded-lg overflow-hidden">
-              <div className="max-h-56 overflow-y-auto divide-y divide-gray-100">
-                {empresasNoFechamento.map(emp => {
-                  const f = fechados.get(emp.id) === true
-                  return (
-                    <div key={emp.id} className="flex items-center justify-between gap-3 px-4 py-2 hover:bg-gray-50">
-                      <span className="text-sm text-gray-800 truncate">{emp.nome}</span>
-                      <div className="flex items-center gap-3 shrink-0">
-                        <span className={`text-xs font-semibold ${f ? 'text-red-600' : 'text-green-700'}`}>{f ? '🔒 Fechado' : '🔓 Aberto'}</span>
-                        <button
-                          className={`text-xs font-medium px-3 py-1.5 rounded-lg text-white disabled:opacity-50 w-20 ${f ? 'bg-blue-600 hover:bg-blue-700' : 'bg-red-600 hover:bg-red-700'}`}
-                          onClick={() => alternarFechamento(emp.id, emp.nome, !f)}
-                          disabled={gerando === 'fech:' + emp.id || gerando === 'fech:todas'}
-                        >
-                          {gerando === 'fech:' + emp.id ? '...' : f ? 'Reabrir' : 'Fechar'}
-                        </button>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-            <p className="text-xs text-gray-400 mt-2">Um único fechamento por empresa trava tudo: salário e vales do mês + VT/VA do mês seguinte. Reabra para editar.</p>
-          </div>
-        )}
+          )
+        })()}
 
         {/* Aviso: VT/VA do mês seguinte não apurado */}
         {(() => {
