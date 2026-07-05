@@ -182,11 +182,11 @@ export default function RecibosPage() {
                     <tr className="bg-gray-50 border-b border-gray-200">
                       {modoTodas && <th className="table-header text-left">Empresa</th>}
                       <th className="table-header">Funcionário</th>
-                      <th className="table-header text-center">Dias Ef.</th>
-                      <th className="table-header text-right">VA</th>
-                      <th className="table-header text-right">VT</th>
+                      <th className="table-header text-right">VA/dia</th>
+                      <th className="table-header text-right">VT/dia</th>
                       <th className="table-header text-right">VT Sáb.</th>
-                      <th className="table-header text-right">Total</th>
+                      <th className="table-header text-center">Dias Ef.</th>
+                      <th className="table-header text-right">Total mês</th>
                       <th className="table-header text-right">Ação</th>
                     </tr>
                   </thead>
@@ -198,10 +198,10 @@ export default function RecibosPage() {
                           <div className="font-medium text-gray-900">{l.nome}</div>
                           <div className="text-xs text-gray-400">{l.funcao}</div>
                         </td>
+                        <td className="table-cell text-right text-sm">{l.valorVA > 0 ? formatarMoeda(l.valorVA) : <span className="text-gray-300">—</span>}</td>
+                        <td className="table-cell text-right text-sm">{l.valorVT > 0 ? formatarMoeda(l.valorVT) : <span className="text-gray-300">—</span>}</td>
+                        <td className="table-cell text-right text-sm">{l.valorVTSabado > 0 ? formatarMoeda(l.valorVTSabado) : <span className="text-gray-300">—</span>}</td>
                         <td className="table-cell text-center font-mono text-sm">{l.diasEfetivos}</td>
-                        <td className="table-cell text-right text-sm">{formatarMoeda(l.totalVA)}</td>
-                        <td className="table-cell text-right text-sm">{formatarMoeda(l.totalVT)}</td>
-                        <td className="table-cell text-right text-sm">{l.totalVTSabado > 0 ? formatarMoeda(l.totalVTSabado) : <span className="text-gray-300">—</span>}</td>
                         <td className="table-cell text-right font-semibold text-blue-700">{formatarMoeda(l.valorTotal)}</td>
                         <td className="table-cell text-right">
                           <button onClick={() => gerarPDF(l)} disabled={gerando === l.funcionario_id}

@@ -9,6 +9,36 @@ import { listarVales, descontoDoVale, statusParcelasVale } from './pagamentos'
 import type { DadosRecibo, DescontoRecibo } from '../services/gerarReciboPDF'
 import type { DadosReciboConsolidado } from '../services/gerarReciboValePDF'
 
+/**
+ * Valores de fallback: quando o cadastro estiver zerado, usa os valores da
+ * última competência apurada (VT/VT-sábado por funcionário, VA por unidade).
+ * Assim os meses futuros calculam mesmo sem os valores estarem no cadastro.
+ */
+type FallbackVTVA = {
+  vt: Map<string, { valor_vt: number; valor_vt_sabado: number }>
+  vaUnidade: Map<string, number>
+}
+async function carregarFallbackVTVA(): Promise<FallbackVTVA> {
+  const [{ data: cfRows }, { data: compRows }] = await Promise.all([
+    supabase.from('competencia_funcionario').select('funcionario_id, valor_vt, valor_vt_sabado, competencias(mes, ano)'),
+    supabase.from('competencias').select('unidade_id, valor_va, mes, ano'),
+  ])
+  const vt = new Map<string, { valor_vt: number; valor_vt_sabado: number }>()
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const cfSorted = (cfRows ?? []).map((r: any) => {
+    const c = Array.isArray(r.competencias) ? r.competencias[0] : r.competencias
+    return { fid: r.funcionario_id, vtv: r.valor_vt ?? 0, vts: r.valor_vt_sabado ?? 0, key: c ? c.ano * 100 + c.mes : 0 }
+  }).sort((a, b) => b.key - a.key)
+  for (const r of cfSorted) {
+    if (r.fid && !vt.has(r.fid) && (r.vtv > 0 || r.vts > 0)) vt.set(r.fid, { valor_vt: r.vtv, valor_vt_sabado: r.vts })
+  }
+  const vaUnidade = new Map<string, number>()
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const compSorted = (compRows ?? []).map((c: any) => ({ uid: c.unidade_id, va: c.valor_va ?? 0, key: c.ano * 100 + c.mes })).sort((a, b) => b.key - a.key)
+  for (const c of compSorted) { if (c.uid && !vaUnidade.has(c.uid) && c.va > 0) vaUnidade.set(c.uid, c.va) }
+  return { vt, vaUnidade }
+}
+
 export type LinhaFechamento = {
   registroId: string | null    // id do pagamento_registros (salário) — para editar/excluir
   funcionario_id: string
@@ -49,12 +79,13 @@ export async function consolidarFechamento(params: {
   await garantirFeriadosAno(vtvaAno)
   const vMesStr = String(vtvaMes).padStart(2, '0')
   const vUltimoDia = new Date(vtvaAno, vtvaMes, 0).getDate()
-  const [{ data: feriadosRows }, { data: empresasData }, { data: funcsData }] = await Promise.all([
+  const [{ data: feriadosRows }, { data: empresasData }, { data: funcsData }, fallback] = await Promise.all([
     // feriados do mês do VT/VA (mês seguinte)
     supabase.from('feriados').select('data')
       .gte('data', `${vtvaAno}-${vMesStr}-01`).lte('data', `${vtvaAno}-${vMesStr}-${String(vUltimoDia).padStart(2, '0')}`),
     supabase.from('empresas').select('*'),
     supabase.from('funcionarios').select('*, unidades(empresa_id)'),
+    carregarFallbackVTVA(),
   ])
   const feriadosDatas: string[] = (feriadosRows ?? []).map(f => f.data as string)
 
@@ -82,13 +113,14 @@ export async function consolidarFechamento(params: {
   const acrescMap = new Map<string, DescontoRecibo[]>()          // cf_id -> acréscimos
 
   await Promise.all(empresasParaBuscar.map(async (empId) => {
-    vaMap.set(empId, empMap.get(empId)?.valor_va ?? 0)
     const unidadeId = await getOrCreateDefaultUnidade(empId)
+    // VA: empresa (cadastro) → senão última competência da unidade
+    vaMap.set(empId, (empMap.get(empId)?.valor_va || 0) || (unidadeId ? (fallback.vaUnidade.get(unidadeId) ?? 0) : 0))
     if (!unidadeId) return
     const { data: comp } = await supabase.from('competencias').select('*')
       .eq('unidade_id', unidadeId).eq('mes', vtvaMes).eq('ano', vtvaAno).limit(1).maybeSingle()
     if (!comp) return
-    vaMap.set(empId, (comp as Competencia).valor_va ?? empMap.get(empId)?.valor_va ?? 0)
+    vaMap.set(empId, ((comp as Competencia).valor_va || 0) || (empMap.get(empId)?.valor_va || 0) || (fallback.vaUnidade.get(unidadeId) ?? 0))
     const { data: cfs } = await supabase.from('competencia_funcionario').select('*')
       .eq('competencia_id', (comp as Competencia).id)
     const cfIds: string[] = []
@@ -148,9 +180,10 @@ export async function consolidarFechamento(params: {
     let vtvaTotal = 0
     let reciboVTVA: DadosRecibo | null = null
     if (trabalhaNoMes(vtvaMes, vtvaAno, func.data_admissao, func.data_fim_aviso)) {
-      const valorVTSabadoBase = cf?.valor_vt_sabado ?? func.valor_vt_sabado ?? 0
+      const fbVT = fallback.vt.get(func.id)
+      const valorVTSabadoBase = cf?.valor_vt_sabado ?? (func.valor_vt_sabado || fbVT?.valor_vt_sabado || 0)
       const ehExcecao = valorVTSabadoBase > 0
-      const valorVT = cf?.valor_vt ?? func.valor_vt ?? 0
+      const valorVT = cf?.valor_vt ?? (func.valor_vt || fbVT?.valor_vt || 0)
       const valorVTSabado = ehExcecao ? valorVTSabadoBase : 0
       const descontos = cf ? (descMap.get(cf.id) ?? []) : []
       const acrescimos = cf ? (acrescMap.get(cf.id) ?? []) : []
@@ -276,20 +309,24 @@ export async function montarReciboVTVAAvulso(
     .gte('data', `${ano}-${mesStr}-01`).lte('data', `${ano}-${mesStr}-${String(ultimoDia).padStart(2, '0')}`)
   const feriadosDatas: string[] = (feriadosRows ?? []).map((r: { data: string }) => r.data)
 
-  // VA da competência (se houver), senão o VA da empresa
-  let compVA = emp?.valor_va ?? 0
+  const fallback = await carregarFallbackVTVA()
+  const fbVT = fallback.vt.get(funcionarioId)
+
+  // VA: empresa (cadastro) → competência do mês → última competência da unidade
+  let compVA = emp?.valor_va || 0
   if (empId) {
     const unidadeId = await getOrCreateDefaultUnidade(empId)
     if (unidadeId) {
+      if (!compVA) compVA = fallback.vaUnidade.get(unidadeId) ?? 0
       const { data: comp } = await supabase.from('competencias').select('valor_va')
         .eq('unidade_id', unidadeId).eq('mes', mes).eq('ano', ano).limit(1).maybeSingle()
-      if (comp) compVA = (comp as { valor_va: number }).valor_va ?? compVA
+      if (comp && ((comp as { valor_va: number }).valor_va || 0) > 0) compVA = (comp as { valor_va: number }).valor_va
     }
   }
 
-  const valorVTSabadoBase = f.valor_vt_sabado ?? 0
+  const valorVTSabadoBase = f.valor_vt_sabado || fbVT?.valor_vt_sabado || 0
   const ehExcecao = valorVTSabadoBase > 0
-  const valorVT = f.valor_vt ?? 0
+  const valorVT = f.valor_vt || fbVT?.valor_vt || 0
   const valorVTSabado = ehExcecao ? valorVTSabadoBase : 0
   const valorVA = resolverValorVA(f.valor_va, compVA)
   const diasUteis = calcularDiasUteisAuto(mes, ano, f.folga_semanal, feriadosDatas, f.data_admissao, f.data_fim_aviso)
@@ -314,6 +351,9 @@ export type LinhaReciboVTVA = {
   empresaNome: string
   nome: string
   funcao: string
+  valorVA: number         // valor por dia
+  valorVT: number         // valor por dia
+  valorVTSabado: number   // valor por sábado
   diasEfetivos: number
   totalVA: number
   totalVT: number
@@ -334,11 +374,12 @@ export async function listarRecibosVTVA(params: {
   await garantirFeriadosAno(ano)
   const mesStr = String(mes).padStart(2, '0')
   const ultimoDia = new Date(ano, mes, 0).getDate()
-  const [{ data: feriadosRows }, { data: empresasData }, { data: funcsData }] = await Promise.all([
+  const [{ data: feriadosRows }, { data: empresasData }, { data: funcsData }, fallback] = await Promise.all([
     supabase.from('feriados').select('data')
       .gte('data', `${ano}-${mesStr}-01`).lte('data', `${ano}-${mesStr}-${String(ultimoDia).padStart(2, '0')}`),
     supabase.from('empresas').select('*'),
     supabase.from('funcionarios').select('*, unidades(empresa_id)'),
+    carregarFallbackVTVA(),
   ])
   const feriadosDatas: string[] = (feriadosRows ?? []).map((f: { data: string }) => f.data)
   const empMap = new Map<string, Empresa>()
@@ -362,13 +403,13 @@ export async function listarRecibosVTVA(params: {
   const descMap = new Map<string, DescontoRecibo[]>()
   const acrescMap = new Map<string, DescontoRecibo[]>()
   await Promise.all(empresasParaBuscar.map(async (empId) => {
-    vaMap.set(empId, empMap.get(empId)?.valor_va ?? 0)
     const unidadeId = await getOrCreateDefaultUnidade(empId)
+    vaMap.set(empId, (empMap.get(empId)?.valor_va || 0) || (unidadeId ? (fallback.vaUnidade.get(unidadeId) ?? 0) : 0))
     if (!unidadeId) return
     const { data: comp } = await supabase.from('competencias').select('*')
       .eq('unidade_id', unidadeId).eq('mes', mes).eq('ano', ano).limit(1).maybeSingle()
     if (!comp) return
-    vaMap.set(empId, (comp as Competencia).valor_va ?? empMap.get(empId)?.valor_va ?? 0)
+    vaMap.set(empId, ((comp as Competencia).valor_va || 0) || (empMap.get(empId)?.valor_va || 0) || (fallback.vaUnidade.get(unidadeId) ?? 0))
     const { data: cfs } = await supabase.from('competencia_funcionario').select('*')
       .eq('competencia_id', (comp as Competencia).id)
     const cfIds: string[] = []
@@ -394,9 +435,10 @@ export async function listarRecibosVTVA(params: {
     if (!trabalhaNoMes(mes, ano, func.data_admissao, func.data_fim_aviso)) continue
     const emp = empMap.get(func.empresa_id)
     const cf = cfMap.get(func.id)
-    const valorVTSabadoBase = cf?.valor_vt_sabado ?? func.valor_vt_sabado ?? 0
+    const fbVT = fallback.vt.get(func.id)
+    const valorVTSabadoBase = cf?.valor_vt_sabado ?? (func.valor_vt_sabado || fbVT?.valor_vt_sabado || 0)
     const ehExcecao = valorVTSabadoBase > 0
-    const valorVT = cf?.valor_vt ?? func.valor_vt ?? 0
+    const valorVT = cf?.valor_vt ?? (func.valor_vt || fbVT?.valor_vt || 0)
     const valorVTSabado = ehExcecao ? valorVTSabadoBase : 0
     const descontos = cf ? (descMap.get(cf.id) ?? []) : []
     const acrescimos = cf ? (acrescMap.get(cf.id) ?? []) : []
@@ -415,6 +457,7 @@ export async function listarRecibosVTVA(params: {
     linhas.push({
       funcionario_id: func.id, empresa_id: func.empresa_id, empresaNome: emp?.razao_social ?? '—',
       nome: func.nome, funcao: func.funcao,
+      valorVA, valorVT, valorVTSabado,
       diasEfetivos: resultado.diasEfetivos, totalVA: resultado.totalVA, totalVT: resultado.totalVT,
       totalVTSabado: resultado.totalVTSabado, valorTotal: resultado.valorTotal, dados,
     })
