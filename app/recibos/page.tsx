@@ -12,6 +12,9 @@ import {
   garantirFeriadosAno,
 } from '../../lib/supabase'
 import { calcularVTVA, calcularDiasUteisAuto, trabalhaNoMes, formatarMoeda, resolverValorVA, contarSabadosEmDescontos, contarSabadosFeriado, MESES } from '../../utils/calculoVT'
+import { montarReciboVTVAAvulso } from '../../lib/fechamento'
+
+type FuncAvulso = { id: string; nome: string; empresa_id: string; empresaNome: string }
 
 type CFComFunc = CompetenciaFuncionario & { funcionarios: Funcionario }
 
@@ -36,6 +39,44 @@ export default function RecibosPage() {
   const [empresaId, setEmpresaId] = useState<string>(TODAS)
   const [mes, setMes] = useState(new Date().getMonth() + 1)
   const [ano, setAno] = useState(new Date().getFullYear())
+
+  // Recibo avulso (funcionário fora da apuração)
+  const [modalAvulso, setModalAvulso] = useState(false)
+  const [funcsAvulso, setFuncsAvulso] = useState<FuncAvulso[]>([])
+  const [avEmpresa, setAvEmpresa] = useState('')
+  const [avFunc, setAvFunc] = useState('')
+  const [avLoad, setAvLoad] = useState(false)
+  const [msgAvulso, setMsgAvulso] = useState('')
+
+  useEffect(() => {
+    supabase.from('funcionarios')
+      .select('id, nome, ativo, unidades(empresa_id, empresas(razao_social))')
+      .order('nome')
+      .then(({ data }) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const opts: FuncAvulso[] = (data ?? []).filter((f: any) => f.ativo !== false && (Array.isArray(f.unidades) ? f.unidades[0] : f.unidades)?.empresa_id)
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          .map((f: any) => {
+            const uni = Array.isArray(f.unidades) ? f.unidades[0] : f.unidades
+            const e = uni?.empresas ? (Array.isArray(uni.empresas) ? uni.empresas[0] : uni.empresas) : null
+            return { id: f.id, nome: f.nome, empresa_id: uni.empresa_id, empresaNome: e?.razao_social ?? '' }
+          })
+        setFuncsAvulso(opts)
+      })
+  }, [])
+
+  async function gerarAvulso() {
+    if (!avFunc) { setMsgAvulso('Selecione o funcionário.'); return }
+    setAvLoad(true); setMsgAvulso('')
+    try {
+      const dados = await montarReciboVTVAAvulso(avFunc, mes, ano)
+      if (!dados) { setMsgAvulso('Funcionário não encontrado.'); return }
+      const { gerarReciboPDF } = await import('../../services/gerarReciboPDF')
+      await gerarReciboPDF(dados)
+      setModalAvulso(false)
+    } catch (e) { console.error(e); setMsgAvulso('Erro ao gerar recibo.') }
+    finally { setAvLoad(false) }
+  }
 
   useEffect(() => {
     supabase.from('empresas').select('*').order('razao_social').then(({ data }) => {
@@ -307,9 +348,18 @@ export default function RecibosPage() {
   }, 0)
 
   const modoTodas = empresaId === TODAS
+  const avFuncs = avEmpresa ? funcsAvulso.filter(f => f.empresa_id === avEmpresa) : funcsAvulso
 
   return (
-    <LayoutAdmin title="Recibos PDF">
+    <LayoutAdmin
+      title="Recibos VT/VA"
+      actions={
+        <button className="btn-secondary flex items-center gap-2 text-sm" onClick={() => { setModalAvulso(true); setAvEmpresa(modoTodas ? '' : empresaId); setAvFunc(''); setMsgAvulso('') }}>
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+          Recibo avulso
+        </button>
+      }
+    >
       <div className="space-y-6">
         {/* Seletor */}
         <div className="card">
@@ -498,6 +548,42 @@ export default function RecibosPage() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
             </svg>
             <p className="text-sm">Selecione uma empresa (ou todas) e o período para visualizar e gerar recibos.</p>
+          </div>
+        )}
+
+        {/* Modal Recibo avulso */}
+        {modalAvulso && (
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={e => { if (e.target === e.currentTarget) setModalAvulso(false) }}>
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6">
+              <h2 className="text-lg font-bold text-gray-800 mb-1">Recibo avulso VT/VA</h2>
+              <p className="text-xs text-gray-500 mb-4">
+                Gera o recibo de <strong>{MESES[mes - 1]}/{ano}</strong> para um funcionário usando os valores do cadastro
+                (proporcional à admissão), sem depender da apuração salva. Útil para quem entrou fora do período.
+              </p>
+              {msgAvulso && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-2 rounded-lg text-sm mb-3">{msgAvulso}</div>}
+              <div className="space-y-4">
+                <div>
+                  <label className="label-field">Empresa</label>
+                  <select className="input-field" value={avEmpresa} onChange={e => { setAvEmpresa(e.target.value); setAvFunc('') }}>
+                    <option value="">Todas as empresas</option>
+                    {empresas.map(e => <option key={e.id} value={e.id}>{e.razao_social}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="label-field">Funcionário</label>
+                  <select className="input-field" value={avFunc} onChange={e => setAvFunc(e.target.value)}>
+                    <option value="">Selecione o funcionário</option>
+                    {avFuncs.map(f => <option key={f.id} value={f.id}>{f.nome}{avEmpresa ? '' : ` — ${f.empresaNome}`}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="flex gap-3 pt-5">
+                <button className="btn-primary flex-1" onClick={gerarAvulso} disabled={avLoad || !avFunc}>
+                  {avLoad ? 'Gerando...' : 'Gerar recibo'}
+                </button>
+                <button className="btn-secondary flex-1" onClick={() => setModalAvulso(false)}>Cancelar</button>
+              </div>
+            </div>
           </div>
         )}
       </div>
