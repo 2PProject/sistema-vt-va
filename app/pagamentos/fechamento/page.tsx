@@ -4,9 +4,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import LayoutAdmin from '../../../components/LayoutAdmin'
 import { supabase, Empresa } from '../../../lib/supabase'
 import { formatarMoeda, MESES } from '../../../utils/calculoVT'
-import { competenciaMesAnterior } from '../../../lib/pagamentos'
+import { competenciaMesAnterior, atualizarPagamentoLiquido } from '../../../lib/pagamentos'
 import { consolidarFechamento, montarCSVFechamento, montarReciboVTVAAvulso, LinhaFechamento } from '../../../lib/fechamento'
 import { listarFechamentos, definirFechamento } from '../../../lib/fechamentoStatus'
+import CampoMoeda from '../../../components/CampoMoeda'
 
 function fmtMes(mes: string) {
   const [a, m] = mes.split('-').map(Number)
@@ -32,6 +33,9 @@ export default function FechamentoPage() {
   const [gerando, setGerando] = useState<string | null>(null)
   const [fechados, setFechados] = useState<Map<string, boolean>>(new Map())
   const [fechEmpresa, setFechEmpresa] = useState('')
+  const [editId, setEditId] = useState<string | null>(null)
+  const [editValor, setEditValor] = useState(0)
+  const [salvandoEdit, setSalvandoEdit] = useState(false)
 
   const [msg, setMsg] = useState('')
   const [msgTipo, setMsgTipo] = useState<'ok' | 'erro'>('ok')
@@ -125,6 +129,23 @@ export default function FechamentoPage() {
     setTimeout(() => setMsg(''), 6000)
   }
 
+  function fechadaEmp(empresaId: string) { return fechados.get(empresaId) === true }
+
+  function iniciarEdicaoSalario(l: LinhaFechamento) {
+    if (!l.registroId) { notify('Salário não importado para este profissional.', 'erro'); return }
+    if (fechadaEmp(l.empresa_id)) { notify('Empresa FECHADA. Reabra para editar o salário.', 'erro'); return }
+    setEditId(l.registroId); setEditValor(l.liquido)
+  }
+  async function salvarEdicaoSalario(l: LinhaFechamento) {
+    if (!l.registroId) return
+    if (fechadaEmp(l.empresa_id)) { notify('Empresa FECHADA. Reabra para editar.', 'erro'); setEditId(null); return }
+    setSalvandoEdit(true)
+    const res = await atualizarPagamentoLiquido(l.registroId, editValor)
+    setSalvandoEdit(false)
+    if (!res.ok) { notify(res.erro ?? 'Erro ao salvar.', 'erro'); return }
+    setEditId(null); notify('Salário atualizado.', 'ok'); carregar()
+  }
+
   const filtradas = useMemo(() => {
     const q = busca.trim().toLowerCase()
     if (!q) return linhas
@@ -146,12 +167,17 @@ export default function FechamentoPage() {
       .sort((a, b) => a.nome.localeCompare(b.nome))
   }, [linhas])
 
+  // Só gera arquivos para empresas FECHADAS (após o fechamento)
+  const linhasGeraveis = useMemo(() => filtradas.filter(l => fechados.get(l.empresa_id) === true), [filtradas, fechados])
+  const podeGerar = linhasGeraveis.length > 0
+
   // Agrupa por empresa quando "Todas" + opção ligada
   function slug(s: string) { return (s || 'empresa').replace(/[^\w]+/g, '_').replace(/^_|_$/g, '').slice(0, 40) }
   function lotesPorEmpresa(): { nome: string; linhas: LinhaFechamento[] }[] {
-    if (empresaFiltro || !porEmpresa) return [{ nome: '', linhas: filtradas }]
+    // Sempre restringe às empresas fechadas
+    if (empresaFiltro || !porEmpresa) return [{ nome: '', linhas: linhasGeraveis }]
     const map = new Map<string, { nome: string; linhas: LinhaFechamento[] }>()
-    for (const l of filtradas) {
+    for (const l of linhasGeraveis) {
       let g = map.get(l.empresa_id)
       if (!g) { g = { nome: l.empresaNome, linhas: [] }; map.set(l.empresa_id, g) }
       g.linhas.push(l)
@@ -374,26 +400,31 @@ export default function FechamentoPage() {
           </div>
         </div>
 
-        {/* Ações do fechamento */}
+        {/* Ações do fechamento — só após fechar */}
         <div className="card">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-base font-semibold text-gray-800">
-              {fmtMes(mesRef)} — {filtradas.length} profissional(is)
-            </h2>
+            <div>
+              <h2 className="text-base font-semibold text-gray-800">
+                {fmtMes(mesRef)} — {filtradas.length} profissional(is)
+              </h2>
+              {!podeGerar
+                ? <p className="text-xs text-amber-600 mt-0.5">🔒 Feche a(s) empresa(s) acima para liberar a geração de recibos e CSV.</p>
+                : <p className="text-xs text-gray-400 mt-0.5">Gerando apenas as {linhasGeraveis.length} linha(s) de empresas fechadas.</p>}
+            </div>
             <div className="flex flex-wrap items-center gap-2">
-              <button className="btn-secondary text-sm" onClick={gerarTodosVTVA} disabled={gerando !== null || loading}>
+              <button className="btn-secondary text-sm" onClick={gerarTodosVTVA} disabled={gerando !== null || loading || !podeGerar}>
                 {gerando === '__vtva__' ? 'Gerando...' : 'Recibos VT/VA'}
               </button>
-              <button className="btn-secondary text-sm" onClick={gerarTodosVales} disabled={gerando !== null || loading}>
+              <button className="btn-secondary text-sm" onClick={gerarTodosVales} disabled={gerando !== null || loading || !podeGerar}>
                 {gerando === '__vales__' ? 'Gerando...' : 'Recibos de Vales'}
               </button>
-              <button className="btn-secondary text-sm" onClick={exportarCSV} disabled={gerando !== null || loading || filtradas.length === 0}>
+              <button className="btn-secondary text-sm" onClick={exportarCSV} disabled={gerando !== null || loading || !podeGerar}>
                 CSV Banco
               </button>
               <button
                 className="text-sm bg-green-600 text-white py-2 px-4 rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors font-medium"
                 onClick={gerarTudo}
-                disabled={gerando !== null || loading || filtradas.length === 0}
+                disabled={gerando !== null || loading || !podeGerar}
               >
                 {gerando === '__tudo__' ? 'Gerando...' : '✓ Gerar Tudo'}
               </button>
@@ -430,7 +461,24 @@ export default function FechamentoPage() {
                         <div className="font-medium text-gray-900">{l.nome}</div>
                         {l.funcao && <div className="text-xs text-gray-400">{l.funcao}</div>}
                       </td>
-                      <td className="table-cell text-right">{l.liquido > 0 ? formatarMoeda(l.liquido) : <span className="text-gray-300">—</span>}</td>
+                      <td className="table-cell text-right">
+                        {editId === l.registroId ? (
+                          <div className="flex items-center gap-1 justify-end">
+                            <div className="w-28"><CampoMoeda value={editValor} onChange={setEditValor} autoFocus /></div>
+                            <button onClick={() => salvarEdicaoSalario(l)} disabled={salvandoEdit} className="text-green-700 hover:text-green-900 text-sm font-bold disabled:opacity-50" title="Salvar">✓</button>
+                            <button onClick={() => setEditId(null)} className="text-gray-400 hover:text-gray-600 text-sm" title="Cancelar">✕</button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1.5 justify-end">
+                            <span>{l.liquido > 0 ? formatarMoeda(l.liquido) : <span className="text-gray-300">—</span>}</span>
+                            {l.registroId && !fechadaEmp(l.empresa_id) && (
+                              <button onClick={() => iniciarEdicaoSalario(l)} className="text-gray-300 hover:text-blue-600" title="Editar salário">
+                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </td>
                       <td className="table-cell text-right text-blue-700">{l.vtvaTotal > 0 ? formatarMoeda(l.vtvaTotal) : <span className="text-gray-300">—</span>}</td>
                       <td className="table-cell text-right text-amber-700">{l.descontoVales > 0 ? `- ${formatarMoeda(l.descontoVales)}` : <span className="text-gray-300">—</span>}</td>
                       <td className="table-cell text-right font-bold text-green-700">{formatarMoeda(l.totalPagar)}</td>

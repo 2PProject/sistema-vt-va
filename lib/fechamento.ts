@@ -10,6 +10,7 @@ import type { DadosRecibo, DescontoRecibo } from '../services/gerarReciboPDF'
 import type { DadosReciboConsolidado } from '../services/gerarReciboValePDF'
 
 export type LinhaFechamento = {
+  registroId: string | null    // id do pagamento_registros (salário) — para editar/excluir
   funcionario_id: string
   nome: string
   funcao: string
@@ -116,9 +117,9 @@ export async function consolidarFechamento(params: {
   let regQ = supabase.from('pagamento_registros').select('*').eq('mes_referencia', mesRef)
   if (empresaId) regQ = regQ.eq('empresa_id', empresaId)
   const { data: registros } = await regQ
-  const liquidoMap = new Map<string, number>()
-  ;(registros ?? []).forEach((r: { funcionario_id: string; valor_liquido: number }) =>
-    liquidoMap.set(r.funcionario_id, r.valor_liquido))
+  const liquidoMap = new Map<string, { id: string; valor: number }>()
+  ;(registros ?? []).forEach((r: { id: string; funcionario_id: string; valor_liquido: number }) =>
+    liquidoMap.set(r.funcionario_id, { id: r.id, valor: r.valor_liquido }))
 
   // Vales do mês
   const vales = await listarVales({ empresaId })
@@ -209,8 +210,10 @@ export async function consolidarFechamento(params: {
       }
     }
 
-    const liquido = liquidoMap.get(fid) ?? 0
+    const reg = liquidoMap.get(fid)
+    const liquido = reg?.valor ?? 0
     linhas.push({
+      registroId: reg?.id ?? null,
       funcionario_id: fid, nome: func.nome, funcao: func.funcao,
       empresa_id: func.empresa_id, empresaNome: emp?.razao_social ?? '—', empresaCnpj: emp?.cnpj ?? '',
       pix: func.pix ?? null,
