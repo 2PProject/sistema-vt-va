@@ -833,8 +833,16 @@ export default function CompetenciasPage() {
   // ─── JSX ─────────────────────────────────────────────────────────────────────
 
   return (
-    <LayoutAdmin title="Competências Mensais">
+    <LayoutAdmin title="Apuração VT/VA">
       <div className="space-y-6">
+
+        {/* Aviso de competência fechada */}
+        {mesFechado && !modoTodas && (
+          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm flex items-center gap-2">
+            <span className="text-lg">🔒</span>
+            <span><strong>Competência fechada.</strong> Reabra o mês em Fechamento do Mês para editar a apuração desta empresa.</span>
+          </div>
+        )}
 
         {/* ── Modal de descontos ── */}
         {modalIdx !== null && modalItem && (

@@ -23,6 +23,7 @@ export default function FechamentoPage() {
   const [porEmpresa, setPorEmpresa] = useState(true)
   const [gerando, setGerando] = useState<string | null>(null)
   const [fechados, setFechados] = useState<Map<string, boolean>>(new Map())
+  const [fechEmpresa, setFechEmpresa] = useState('')
 
   const [msg, setMsg] = useState('')
   const [msgTipo, setMsgTipo] = useState<'ok' | 'erro'>('ok')
@@ -54,6 +55,17 @@ export default function FechamentoPage() {
     if (!res.ok) { notify(`Erro ao ${fechar ? 'fechar' : 'reabrir'}: ${res.erro ?? ''}`, 'erro'); return }
     setFechados(prev => { const n = new Map(prev); n.set(empresaId, fechar); return n })
     notify(`${empresaNome}: competência ${fmtMes(mesRef)} ${fechar ? 'FECHADA' : 'REABERTA'}.`, 'ok')
+  }
+
+  async function alternarTodas(fechar: boolean) {
+    const [ano, mes] = mesRef.split('-').map(Number)
+    const alvos = empresasNoFechamento.filter(e => (fechados.get(e.id) === true) !== fechar)
+    if (alvos.length === 0) { notify(`Todas as empresas já estão ${fechar ? 'fechadas' : 'abertas'}.`, 'ok'); return }
+    setGerando('fech:todas')
+    for (const e of alvos) await definirFechamento(e.id, mes, ano, fechar)
+    setGerando(null)
+    setFechados(prev => { const n = new Map(prev); alvos.forEach(e => n.set(e.id, fechar)); return n })
+    notify(`${alvos.length} empresa(s) ${fechar ? 'FECHADA(S)' : 'REABERTA(S)'} em ${fmtMes(mesRef)}.`, 'ok')
   }
 
   function notify(text: string, tipo: 'ok' | 'erro') {
@@ -252,37 +264,44 @@ export default function FechamentoPage() {
           </div>
         </div>
 
-        {/* Status do fechamento por empresa */}
-        {empresasNoFechamento.length > 0 && (
-          <div className="card">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-sm font-semibold text-gray-700">Status do fechamento — {fmtMes(mesRef)}</h2>
-              <span className="text-xs text-gray-400">Feche para travar a edição de VT/VA e descontos; reabra para editar.</span>
+        {/* Status do fechamento — dropdown por empresa (não cresce com o nº de empresas) */}
+        {empresasNoFechamento.length > 0 && (() => {
+          const sel = fechEmpresa && empresasNoFechamento.some(e => e.id === fechEmpresa)
+            ? fechEmpresa : (empresasNoFechamento[0]?.id ?? '')
+          const fechadoSel = fechados.get(sel) === true
+          const nomeSel = empresasNoFechamento.find(e => e.id === sel)?.nome ?? ''
+          const totalFechadas = empresasNoFechamento.filter(e => fechados.get(e.id) === true).length
+          return (
+            <div className="card">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-sm font-semibold text-gray-700">Fechamento — {fmtMes(mesRef)}</h2>
+                <span className="text-xs text-gray-400">{totalFechadas}/{empresasNoFechamento.length} empresa(s) fechada(s)</span>
+              </div>
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="flex-1 min-w-[220px]">
+                  <label className="label-field">Empresa</label>
+                  <select className="input-field" value={sel} onChange={e => setFechEmpresa(e.target.value)}>
+                    {empresasNoFechamento.map(e => (
+                      <option key={e.id} value={e.id}>{(fechados.get(e.id) ? '🔒 ' : '🔓 ') + e.nome}</option>
+                    ))}
+                  </select>
+                </div>
+                <button
+                  className={`text-sm font-medium px-4 py-2 rounded-lg text-white disabled:opacity-50 transition-colors ${fechadoSel ? 'bg-blue-600 hover:bg-blue-700' : 'bg-red-600 hover:bg-red-700'}`}
+                  onClick={() => alternarFechamento(sel, nomeSel, !fechadoSel)}
+                  disabled={!sel || gerando === 'fech:' + sel}
+                >
+                  {gerando === 'fech:' + sel ? '...' : fechadoSel ? '🔓 Reabrir' : '🔒 Fechar mês'}
+                </button>
+                <div className="flex gap-2">
+                  <button className="btn-secondary text-sm" onClick={() => alternarTodas(true)} disabled={gerando !== null}>Fechar todas</button>
+                  <button className="btn-secondary text-sm" onClick={() => alternarTodas(false)} disabled={gerando !== null}>Reabrir todas</button>
+                </div>
+              </div>
+              <p className="text-xs text-gray-400 mt-2">Fechar trava a edição de VT/VA, descontos, salário e vales daquela empresa/mês; reabrir libera.</p>
             </div>
-            <div className="flex flex-wrap gap-2">
-              {empresasNoFechamento.map(emp => {
-                const fechado = fechados.get(emp.id) === true
-                return (
-                  <div key={emp.id} className={`flex items-center gap-3 px-3 py-2 rounded-lg border ${fechado ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200'}`}>
-                    <div>
-                      <div className="text-sm font-medium text-gray-800">{emp.nome}</div>
-                      <div className={`text-xs font-semibold ${fechado ? 'text-red-600' : 'text-green-700'}`}>
-                        {fechado ? '🔒 FECHADO' : '🔓 Aberto'}
-                      </div>
-                    </div>
-                    <button
-                      className={`text-xs font-medium px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50 ${fechado ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-red-600 text-white hover:bg-red-700'}`}
-                      onClick={() => alternarFechamento(emp.id, emp.nome, !fechado)}
-                      disabled={gerando === 'fech:' + emp.id}
-                    >
-                      {gerando === 'fech:' + emp.id ? '...' : fechado ? 'Reabrir' : 'Fechar mês'}
-                    </button>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-        )}
+          )
+        })()}
 
         {/* Ações do fechamento */}
         <div className="card">

@@ -128,6 +128,7 @@ export async function consolidarFechamento(params: {
   for (const fid of ids) {
     const func = funcMap.get(fid)
     if (!func) continue
+    if (func.ativo === false) continue  // não traz demitidos para o fechamento
     if (empresaId && func.empresa_id !== empresaId) continue
     const emp = empMap.get(func.empresa_id)
     const cf = cfMap.get(fid)

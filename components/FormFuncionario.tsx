@@ -122,12 +122,13 @@ export default function FormFuncionario({
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
-          {error}
-        </div>
-      )}
+    <form onSubmit={handleSubmit} className="flex flex-col min-h-0 flex-1">
+      <div className="overflow-y-auto px-6 pb-4 space-y-4 flex-1 min-h-0">
+        {error && (
+          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
+            {error}
+          </div>
+        )}
 
       <div className="grid grid-cols-1 gap-4">
         {/* Nome */}
@@ -385,8 +386,9 @@ export default function FormFuncionario({
           )}
         </div>
       </div>
+      </div>
 
-      <div className="flex gap-3 pt-2">
+      <div className="flex gap-3 px-6 py-4 border-t border-gray-100 shrink-0 bg-white">
         <button type="submit" disabled={loading} className="btn-primary flex-1">
           {loading ? 'Salvando...' : funcionario ? 'Atualizar' : 'Cadastrar'}
         </button>

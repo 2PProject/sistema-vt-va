@@ -145,8 +145,8 @@ export default function FuncionariosPage() {
         {/* Modal */}
         {showForm && (
           <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg p-6">
-              <h2 className="text-lg font-bold text-gray-800 mb-5">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col">
+              <h2 className="text-lg font-bold text-gray-800 px-6 pt-6 pb-3 shrink-0">
                 {editando ? 'Editar Funcionário' : 'Novo Funcionário'}
               </h2>
               <FormFuncionario

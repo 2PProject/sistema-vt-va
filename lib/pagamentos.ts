@@ -47,6 +47,7 @@ export type DescontoAplicado = {
 
 /** Linha consolidada de pagamento para exibição/recibo. */
 export type LinhaPagamento = {
+  registroId: string
   funcionario_id: string
   empresa_id: string
   funcionarioNome: string
@@ -134,6 +135,15 @@ export async function excluirPagamento(id: string): Promise<void> {
   await supabase.from('pagamento_registros').delete().eq('id', id)
 }
 
+export async function atualizarPagamentoLiquido(id: string, valorLiquido: number): Promise<{ ok: boolean; erro?: string }> {
+  const { error } = await supabase
+    .from('pagamento_registros')
+    .update({ valor_liquido: valorLiquido, atualizado_em: new Date().toISOString() })
+    .eq('id', id)
+  if (error) return { ok: false, erro: error.message }
+  return { ok: true }
+}
+
 // ── Vales ─────────────────────────────────────────────────────────────────────
 
 export async function listarVales(params?: {
@@ -185,14 +195,14 @@ export async function consolidarPagamentos(params: {
   const [registros, vales, funcsRes, empresasRes] = await Promise.all([
     listarPagamentos({ mesReferencia, empresaId }),
     listarVales({ empresaId }),
-    supabase.from('funcionarios').select('id, nome, funcao, pix'),
+    supabase.from('funcionarios').select('id, nome, funcao, pix, ativo'),
     supabase.from('empresas').select('id, razao_social, cnpj'),
   ])
 
-  const funcMap = new Map<string, { nome: string; funcao: string; pix: string | null }>()
+  const funcMap = new Map<string, { nome: string; funcao: string; pix: string | null; ativo: boolean }>()
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ;(funcsRes.data ?? []).forEach((f: any) =>
-    funcMap.set(f.id, { nome: f.nome, funcao: f.funcao, pix: f.pix ?? null }))
+    funcMap.set(f.id, { nome: f.nome, funcao: f.funcao, pix: f.pix ?? null, ativo: f.ativo !== false }))
   const empMap = new Map<string, { razao_social: string; cnpj: string }>()
   ;(empresasRes.data ?? []).forEach((e: Pick<Empresa, 'id' | 'razao_social' | 'cnpj'>) =>
     empMap.set(e.id, { razao_social: e.razao_social, cnpj: e.cnpj }))
@@ -205,7 +215,10 @@ export async function consolidarPagamentos(params: {
     valesPorFunc.set(v.funcionario_id, arr)
   }
 
-  return registros.map((reg) => {
+  return registros
+    // Não traz demitidos (funcionário inativo) para o pagamento
+    .filter((reg) => funcMap.get(reg.funcionario_id)?.ativo !== false)
+    .map((reg) => {
     const func = funcMap.get(reg.funcionario_id)
     const emp = empMap.get(reg.empresa_id)
     const descontos: DescontoAplicado[] = []
@@ -215,6 +228,7 @@ export async function consolidarPagamentos(params: {
     }
     const totalDescontos = descontos.reduce((s, d) => s + d.valorParcela, 0)
     return {
+      registroId: reg.id,
       funcionario_id: reg.funcionario_id,
       empresa_id: reg.empresa_id,
       funcionarioNome: func?.nome ?? '—',
@@ -289,13 +303,14 @@ export async function importarPlanilhaSalarios(
     if (e.apelido) empByApelido.set(norm(e.apelido), { id: e.id, razao_social: e.razao_social })
   })
 
-  // Funcionários agrupados por empresa (para casamento tolerante de nome)
+  // Funcionários ATIVOS agrupados por empresa (não importa salário de demitidos)
   const { data: funcs } = await supabase
     .from('funcionarios')
-    .select('id, nome, unidades(empresa_id)')
+    .select('id, nome, ativo, unidades(empresa_id)')
   const funcsPorEmp = new Map<string, { id: string; nomeNorm: string }[]>()
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ;(funcs ?? []).forEach((f: any) => {
+    if (f.ativo === false) return
     const uni = Array.isArray(f.unidades) ? f.unidades[0] : f.unidades
     const empId = uni?.empresa_id
     if (!empId) return

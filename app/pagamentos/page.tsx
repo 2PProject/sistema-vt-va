@@ -10,9 +10,12 @@ import {
   importarPlanilhaSalarios,
   processarImportacaoSalarios,
   baixarModeloPlanilhaSalarios,
+  atualizarPagamentoLiquido,
+  excluirPagamento,
   LinhaPagamento,
   LinhaImportSalario,
 } from '../../lib/pagamentos'
+import { listarFechamentos } from '../../lib/fechamentoStatus'
 
 function fmtMes(mes: string) {
   const [a, m] = mes.split('-').map(Number)
@@ -30,6 +33,11 @@ export default function PagamentosPage() {
   const [msg, setMsg] = useState('')
   const [msgTipo, setMsgTipo] = useState<'ok' | 'erro'>('ok')
 
+  const [fechadosMap, setFechadosMap] = useState<Map<string, boolean>>(new Map())
+  const [editId, setEditId] = useState<string | null>(null)
+  const [editValor, setEditValor] = useState('')
+  const [salvandoEdit, setSalvandoEdit] = useState(false)
+
   // Import
   const [modalImport, setModalImport] = useState(false)
   const [importPreview, setImportPreview] = useState<LinhaImportSalario[]>([])
@@ -42,8 +50,14 @@ export default function PagamentosPage() {
 
   const carregar = useCallback(async () => {
     setLoading(true)
-    const data = await consolidarPagamentos({ mesReferencia: mesRef, empresaId: empresaFiltro || undefined })
+    const [ano, mes] = mesRef.split('-').map(Number)
+    const [data, status] = await Promise.all([
+      consolidarPagamentos({ mesReferencia: mesRef, empresaId: empresaFiltro || undefined }),
+      listarFechamentos(mes, ano),
+    ])
     setLinhas(data)
+    setFechadosMap(status)
+    setEditId(null)
     setLoading(false)
   }, [mesRef, empresaFiltro])
 
@@ -52,6 +66,33 @@ export default function PagamentosPage() {
   function notify(text: string, tipo: 'ok' | 'erro') {
     setMsg(text); setMsgTipo(tipo)
     setTimeout(() => setMsg(''), 6000)
+  }
+
+  function fechada(empresaId: string) { return fechadosMap.get(empresaId) === true }
+
+  function iniciarEdicao(l: LinhaPagamento) {
+    if (fechada(l.empresa_id)) { notify('Mês FECHADO para esta empresa. Reabra no Fechamento para editar.', 'erro'); return }
+    setEditId(l.registroId); setEditValor(String(l.valorLiquido))
+  }
+
+  async function salvarEdicao(l: LinhaPagamento) {
+    const v = parseFloat(editValor.replace(',', '.'))
+    if (isNaN(v) || v < 0) { notify('Valor inválido.', 'erro'); return }
+    setSalvandoEdit(true)
+    const res = await atualizarPagamentoLiquido(l.registroId, v)
+    setSalvandoEdit(false)
+    if (!res.ok) { notify(res.erro ?? 'Erro ao salvar.', 'erro'); return }
+    setEditId(null)
+    notify('Salário atualizado.', 'ok')
+    carregar()
+  }
+
+  async function excluir(l: LinhaPagamento) {
+    if (fechada(l.empresa_id)) { notify('Mês FECHADO para esta empresa. Reabra no Fechamento para excluir.', 'erro'); return }
+    if (!confirm(`Excluir o salário importado de ${l.funcionarioNome} (${fmtMes(mesRef)})?`)) return
+    await excluirPagamento(l.registroId)
+    notify('Salário removido.', 'ok')
+    carregar()
   }
 
   const filtradas = useMemo(() => {
@@ -170,6 +211,7 @@ export default function PagamentosPage() {
                     <th className="table-header text-center">Descontos</th>
                     <th className="table-header text-right">Total Desc.</th>
                     <th className="table-header text-right">A Pagar</th>
+                    <th className="table-header text-right">Ações</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
@@ -180,7 +222,11 @@ export default function PagamentosPage() {
                         <div className="font-medium text-gray-900">{l.funcionarioNome}</div>
                         {l.funcao && <div className="text-xs text-gray-400">{l.funcao}</div>}
                       </td>
-                      <td className="table-cell text-right">{formatarMoeda(l.valorLiquido)}</td>
+                      <td className="table-cell text-right">
+                        {editId === l.registroId
+                          ? <input type="number" step="0.01" min="0" className="input-field text-right" style={{ width: 110, padding: '4px 8px' }} value={editValor} onChange={e => setEditValor(e.target.value)} autoFocus />
+                          : formatarMoeda(l.valorLiquido)}
+                      </td>
                       <td className="table-cell text-center">
                         {l.descontos.length === 0 ? (
                           <span className="text-gray-300">—</span>
@@ -199,6 +245,19 @@ export default function PagamentosPage() {
                         {l.totalDescontos > 0 ? `- ${formatarMoeda(l.totalDescontos)}` : <span className="text-gray-300">—</span>}
                       </td>
                       <td className="table-cell text-right font-semibold text-green-700">{formatarMoeda(l.valorAPagar)}</td>
+                      <td className="table-cell text-right">
+                        {editId === l.registroId ? (
+                          <div className="flex gap-2 justify-end">
+                            <button onClick={() => salvarEdicao(l)} disabled={salvandoEdit} className="text-green-700 hover:text-green-900 text-xs font-medium disabled:opacity-50">Salvar</button>
+                            <button onClick={() => setEditId(null)} className="text-gray-500 hover:text-gray-700 text-xs font-medium">Cancelar</button>
+                          </div>
+                        ) : (
+                          <div className="flex gap-2 justify-end">
+                            <button onClick={() => iniciarEdicao(l)} className="text-blue-600 hover:text-blue-800 text-xs font-medium">Editar</button>
+                            <button onClick={() => excluir(l)} className="text-red-500 hover:text-red-700 text-xs font-medium">Excluir</button>
+                          </div>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -209,6 +268,7 @@ export default function PagamentosPage() {
                     <td />
                     <td className="table-cell text-right font-semibold text-amber-700">- {formatarMoeda(totais.descontos)}</td>
                     <td className="table-cell text-right font-bold text-green-700">{formatarMoeda(totais.pagar)}</td>
+                    <td />
                   </tr>
                 </tfoot>
               </table>
