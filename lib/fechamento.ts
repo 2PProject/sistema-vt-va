@@ -3,7 +3,7 @@ import {
   getOrCreateDefaultUnidade, garantirFeriadosAno,
 } from './supabase'
 import {
-  calcularVTVA, calcularDiasUteisAuto, trabalhaNoMes, resolverValorVA, contarSabadosEmDescontos, contarSabadosFeriado,
+  calcularVTVA, calcularDiasUteisAuto, trabalhaNoMes, resolverValorVA, contarSabadosEmDescontos, contarSabadosFeriado, calcularSabadosDesde,
 } from '../utils/calculoVT'
 import { listarVales, descontoDoVale, statusParcelasVale } from './pagamentos'
 import type { DadosRecibo, DescontoRecibo } from '../services/gerarReciboPDF'
@@ -241,4 +241,62 @@ export function montarCSVFechamento(linhas: LinhaFechamento[]): { csv: string; s
     rows.push(`${nome};;${l.pix ?? ''};${valor}`)
   }
   return { csv: [header, ...rows].join('\r\n'), semPix }
+}
+
+/**
+ * Gera os dados de um recibo de VT/VA "avulso" para um funcionário — usando os
+ * valores do cadastro (proporcional à admissão/aviso), sem depender de apuração
+ * salva nem do fechamento. Serve para gerar o recibo de um funcionário
+ * contratado após o fechamento do mês.
+ */
+export async function montarReciboVTVAAvulso(
+  funcionarioId: string, mes: number, ano: number
+): Promise<DadosRecibo | null> {
+  const { data: func } = await supabase
+    .from('funcionarios')
+    .select('*, unidades(empresa_id, empresas(razao_social, cnpj, valor_va))')
+    .eq('id', funcionarioId).limit(1).maybeSingle()
+  if (!func) return null
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const f = func as any
+  const uni = Array.isArray(f.unidades) ? f.unidades[0] : f.unidades
+  const emp = uni?.empresas ? (Array.isArray(uni.empresas) ? uni.empresas[0] : uni.empresas) : null
+  const empId = uni?.empresa_id
+
+  await garantirFeriadosAno(ano)
+  const mesStr = String(mes).padStart(2, '0')
+  const ultimoDia = new Date(ano, mes, 0).getDate()
+  const { data: feriadosRows } = await supabase.from('feriados').select('data')
+    .gte('data', `${ano}-${mesStr}-01`).lte('data', `${ano}-${mesStr}-${String(ultimoDia).padStart(2, '0')}`)
+  const feriadosDatas: string[] = (feriadosRows ?? []).map((r: { data: string }) => r.data)
+
+  // VA da competência (se houver), senão o VA da empresa
+  let compVA = emp?.valor_va ?? 0
+  if (empId) {
+    const unidadeId = await getOrCreateDefaultUnidade(empId)
+    if (unidadeId) {
+      const { data: comp } = await supabase.from('competencias').select('valor_va')
+        .eq('unidade_id', unidadeId).eq('mes', mes).eq('ano', ano).limit(1).maybeSingle()
+      if (comp) compVA = (comp as { valor_va: number }).valor_va ?? compVA
+    }
+  }
+
+  const valorVTSabadoBase = f.valor_vt_sabado ?? 0
+  const ehExcecao = valorVTSabadoBase > 0
+  const valorVT = f.valor_vt ?? 0
+  const valorVTSabado = ehExcecao ? valorVTSabadoBase : 0
+  const valorVA = resolverValorVA(f.valor_va, compVA)
+  const diasUteis = calcularDiasUteisAuto(mes, ano, f.folga_semanal, feriadosDatas, f.data_admissao, f.data_fim_aviso)
+  const diasSabadoBase = ehExcecao ? calcularSabadosDesde(mes, ano, f.data_admissao, f.data_fim_aviso) : 0
+  const diasSabado = Math.max(0, diasSabadoBase - contarSabadosFeriado(feriadosDatas))
+  const resultado = calcularVTVA({ diasUteis, diasFeriado: 0, diasSabado, diasDesconto: 0, valorVT, valorVTSabado, valorVA })
+
+  return {
+    razaoSocial: emp?.razao_social ?? '', cnpj: emp?.cnpj ?? '',
+    nomeFuncionario: f.nome, funcao: f.funcao, ctps: f.ctps ?? '', serie: f.serie ?? '',
+    mes, ano, diasUteis, diasEfetivos: resultado.diasEfetivos, diasSabado,
+    valorVT, valorVTSabado, valorVA, resultado,
+    dataAdmissao: f.data_admissao ?? null, dataFimAviso: f.data_fim_aviso ?? null,
+    descontos: [], acrescimos: [],
+  }
 }

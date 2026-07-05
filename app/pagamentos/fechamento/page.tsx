@@ -5,13 +5,21 @@ import LayoutAdmin from '../../../components/LayoutAdmin'
 import { supabase, Empresa } from '../../../lib/supabase'
 import { formatarMoeda, MESES } from '../../../utils/calculoVT'
 import { competenciaMesAnterior } from '../../../lib/pagamentos'
-import { consolidarFechamento, montarCSVFechamento, LinhaFechamento } from '../../../lib/fechamento'
+import { consolidarFechamento, montarCSVFechamento, montarReciboVTVAAvulso, LinhaFechamento } from '../../../lib/fechamento'
 import { listarFechamentos, definirFechamento } from '../../../lib/fechamentoStatus'
 
 function fmtMes(mes: string) {
   const [a, m] = mes.split('-').map(Number)
   return m ? `${MESES[m - 1]}/${a}` : mes
 }
+// Mês do VT/VA = mês seguinte ao do pagamento
+function proxCompetencia(mesRef: string): { mes: number; ano: number; label: string } {
+  const [a, m] = mesRef.split('-').map(Number)
+  const d = new Date(a, m, 1)
+  return { mes: d.getMonth() + 1, ano: d.getFullYear(), label: `${MESES[d.getMonth()]}/${d.getFullYear()}` }
+}
+
+type FuncAvulso = { id: string; nome: string; empresa_id: string; empresaNome: string }
 
 export default function FechamentoPage() {
   const [mesRef, setMesRef] = useState(competenciaMesAnterior())
@@ -26,6 +34,45 @@ export default function FechamentoPage() {
 
   const [msg, setMsg] = useState('')
   const [msgTipo, setMsgTipo] = useState<'ok' | 'erro'>('ok')
+
+  // Recibo avulso (funcionário novo, contratado após o fechamento)
+  const [modalAvulso, setModalAvulso] = useState(false)
+  const [funcsAvulso, setFuncsAvulso] = useState<FuncAvulso[]>([])
+  const [avEmpresa, setAvEmpresa] = useState('')
+  const [avFunc, setAvFunc] = useState('')
+  const [avLoad, setAvLoad] = useState(false)
+
+  useEffect(() => {
+    supabase.from('funcionarios')
+      .select('id, nome, ativo, unidades(empresa_id, empresas(razao_social))')
+      .order('nome')
+      .then(({ data }) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const opts: FuncAvulso[] = (data ?? []).filter((f: any) => f.ativo !== false && (Array.isArray(f.unidades) ? f.unidades[0] : f.unidades)?.empresa_id)
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          .map((f: any) => {
+            const uni = Array.isArray(f.unidades) ? f.unidades[0] : f.unidades
+            const e = uni?.empresas ? (Array.isArray(uni.empresas) ? uni.empresas[0] : uni.empresas) : null
+            return { id: f.id, nome: f.nome, empresa_id: uni.empresa_id, empresaNome: e?.razao_social ?? '' }
+          })
+        setFuncsAvulso(opts)
+      })
+  }, [])
+
+  async function gerarAvulso() {
+    if (!avFunc) { notify('Selecione o funcionário.', 'erro'); return }
+    const { mes, ano } = proxCompetencia(mesRef)
+    setAvLoad(true)
+    try {
+      const dados = await montarReciboVTVAAvulso(avFunc, mes, ano)
+      if (!dados) { notify('Funcionário não encontrado.', 'erro'); return }
+      const { gerarReciboPDF } = await import('../../../services/gerarReciboPDF')
+      await gerarReciboPDF(dados)
+      setModalAvulso(false)
+      notify('Recibo VT/VA gerado.', 'ok')
+    } catch (e) { console.error(e); notify('Erro ao gerar recibo.', 'erro') }
+    finally { setAvLoad(false) }
+  }
 
   useEffect(() => {
     supabase.from('empresas').select('*').order('razao_social').then(({ data }) => setEmpresas(data ?? []))
@@ -209,8 +256,18 @@ export default function FechamentoPage() {
     else notify(`CSV do banco gerado com sucesso${qtd}.`, 'ok')
   }
 
+  const avFuncs = avEmpresa ? funcsAvulso.filter(f => f.empresa_id === avEmpresa) : funcsAvulso
+
   return (
-    <LayoutAdmin title="Fechamento do Mês">
+    <LayoutAdmin
+      title="Fechamento do Mês"
+      actions={
+        <button className="btn-secondary flex items-center gap-2 text-sm" onClick={() => { setModalAvulso(true); setAvEmpresa(empresaFiltro); setAvFunc('') }}>
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+          Recibo avulso VT/VA
+        </button>
+      }
+    >
       <div className="space-y-6">
         {msg && (
           <div className={`px-4 py-3 rounded-lg text-sm flex justify-between items-center ${msgTipo === 'ok' ? 'bg-green-50 border border-green-200 text-green-700' : 'bg-red-50 border border-red-200 text-red-700'}`}>
@@ -432,6 +489,41 @@ export default function FechamentoPage() {
             )}
           </div>
         </div>
+
+        {/* Modal Recibo avulso VT/VA */}
+        {modalAvulso && (
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={e => { if (e.target === e.currentTarget) setModalAvulso(false) }}>
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6">
+              <h2 className="text-lg font-bold text-gray-800 mb-1">Recibo avulso VT/VA</h2>
+              <p className="text-xs text-gray-500 mb-4">
+                Para funcionário contratado após o fechamento. Gera o recibo de <strong>{proxCompetencia(mesRef).label}</strong> com
+                os valores do cadastro (proporcional à admissão), sem alterar nada do fechamento.
+              </p>
+              <div className="space-y-4">
+                <div>
+                  <label className="label-field">Empresa</label>
+                  <select className="input-field" value={avEmpresa} onChange={e => { setAvEmpresa(e.target.value); setAvFunc('') }}>
+                    <option value="">Todas as empresas</option>
+                    {empresas.map(e => <option key={e.id} value={e.id}>{e.razao_social}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="label-field">Funcionário</label>
+                  <select className="input-field" value={avFunc} onChange={e => setAvFunc(e.target.value)}>
+                    <option value="">Selecione o funcionário</option>
+                    {avFuncs.map(f => <option key={f.id} value={f.id}>{f.nome}{avEmpresa ? '' : ` — ${f.empresaNome}`}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="flex gap-3 pt-5">
+                <button className="btn-primary flex-1" onClick={gerarAvulso} disabled={avLoad || !avFunc}>
+                  {avLoad ? 'Gerando...' : 'Gerar recibo'}
+                </button>
+                <button className="btn-secondary flex-1" onClick={() => setModalAvulso(false)}>Cancelar</button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </LayoutAdmin>
   )
