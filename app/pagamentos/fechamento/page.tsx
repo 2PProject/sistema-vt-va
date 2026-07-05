@@ -285,6 +285,25 @@ export default function FechamentoPage() {
           </div>
         )}
 
+        {/* Aviso: VT/VA do mês seguinte não apurado */}
+        {(() => {
+          const [a, m] = mesRef.split('-').map(Number)
+          const d = new Date(a, m, 1) // mês seguinte
+          const prox = `${MESES[d.getMonth()]}/${d.getFullYear()}`
+          const semVtva = filtradas.filter(l => l.liquido > 0 && !l.vtvaApurado)
+          if (semVtva.length === 0) return null
+          return (
+            <div className="bg-amber-50 border border-amber-200 text-amber-800 px-4 py-3 rounded-lg text-sm flex items-start gap-2">
+              <span className="text-lg">⚠️</span>
+              <div>
+                <strong>VT/VA de {prox} não apurado</strong> para {semVtva.length} profissional(is) com salário.
+                Faça a <strong>Apuração VT/VA</strong> de {prox} (Inicializar mês) antes de gerar os recibos/pagamento —
+                senão o VT/VA sai zerado para eles.
+              </div>
+            </div>
+          )
+        })()}
+
         {/* Resumo */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div className="card">
@@ -362,7 +381,13 @@ export default function FechamentoPage() {
                         {l.funcao && <div className="text-xs text-gray-400">{l.funcao}</div>}
                       </td>
                       <td className="table-cell text-right">{l.liquido > 0 ? formatarMoeda(l.liquido) : <span className="text-gray-300">—</span>}</td>
-                      <td className="table-cell text-right text-blue-700">{l.vtvaTotal > 0 ? formatarMoeda(l.vtvaTotal) : <span className="text-gray-300">—</span>}</td>
+                      <td className="table-cell text-right text-blue-700">
+                        {l.vtvaTotal > 0
+                          ? formatarMoeda(l.vtvaTotal)
+                          : (l.liquido > 0 && !l.vtvaApurado)
+                            ? <span className="text-amber-600 text-xs" title="VT/VA do mês seguinte não apurado">⚠ não apurado</span>
+                            : <span className="text-gray-300">—</span>}
+                      </td>
                       <td className="table-cell text-right text-amber-700">{l.descontoVales > 0 ? `- ${formatarMoeda(l.descontoVales)}` : <span className="text-gray-300">—</span>}</td>
                       <td className="table-cell text-right font-bold text-green-700">{formatarMoeda(l.totalPagar)}</td>
                       <td className="table-cell text-center">

@@ -21,6 +21,7 @@ export type LinhaFechamento = {
   vtvaTotal: number
   descontoVales: number
   totalPagar: number
+  vtvaApurado: boolean          // VT/VA do mês seguinte já apurado (tem competência_funcionario)
   reciboVTVA: DadosRecibo | null
   reciboVales: DadosReciboConsolidado | null
 }
@@ -215,6 +216,7 @@ export async function consolidarFechamento(params: {
       pix: func.pix ?? null,
       liquido, vtvaTotal, descontoVales,
       totalPagar: Math.round((liquido + vtvaTotal - descontoVales) * 100) / 100,
+      vtvaApurado: reciboVTVA !== null,
       reciboVTVA, reciboVales,
     })
   }
