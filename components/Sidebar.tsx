@@ -65,8 +65,7 @@ const sections: { title: string; items: Item[] }[] = [
     title: 'VT / VA',
     items: [
       { href: '/valores-beneficios', label: 'Valores VT/VA', icon: ICON.valores },
-      { href: '/competencias', label: 'Apuração VT/VA', icon: ICON.competencia },
-      { href: '/descontos', label: 'Acréscimos / Descontos', icon: ICON.ajuste },
+      { href: '/descontos', label: 'Férias / Descontos', icon: ICON.ajuste },
       { href: '/recibos', label: 'Recibos VT/VA', icon: ICON.recibo },
     ],
   },

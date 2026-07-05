@@ -72,20 +72,22 @@ export async function consolidarFechamento(params: {
     funcMap.set(f.id, { ...f, empresa_id: empId })
   })
 
-  // Competências do mês (por unidade) + CF + descontos
+  // Competências do mês (por unidade) — usadas só para descontos (férias) e o
+  // VA do mês. O VT/VA é calculado do CADASTRO (não depende de "apuração").
   const empresasParaBuscar = empresaId ? [empresaId] : Array.from(empMap.keys())
-  const cfMap = new Map<string, CompetenciaFuncionario>()        // funcionario_id -> cf
-  const compMap = new Map<string, Competencia>()                 // competencia_id -> competencia
+  const cfMap = new Map<string, CompetenciaFuncionario>()        // funcionario_id -> cf (se houver descontos)
+  const vaMap = new Map<string, number>()                        // empresa_id -> valor_va do mês
   const descMap = new Map<string, DescontoRecibo[]>()            // cf_id -> descontos
   const acrescMap = new Map<string, DescontoRecibo[]>()          // cf_id -> acréscimos
 
   await Promise.all(empresasParaBuscar.map(async (empId) => {
+    vaMap.set(empId, empMap.get(empId)?.valor_va ?? 0)
     const unidadeId = await getOrCreateDefaultUnidade(empId)
     if (!unidadeId) return
     const { data: comp } = await supabase.from('competencias').select('*')
       .eq('unidade_id', unidadeId).eq('mes', vtvaMes).eq('ano', vtvaAno).limit(1).maybeSingle()
     if (!comp) return
-    compMap.set((comp as Competencia).id, comp as Competencia)
+    vaMap.set(empId, (comp as Competencia).valor_va ?? empMap.get(empId)?.valor_va ?? 0)
     const { data: cfs } = await supabase.from('competencia_funcionario').select('*')
       .eq('competencia_id', (comp as Competencia).id)
     const cfIds: string[] = []
@@ -139,26 +141,25 @@ export async function consolidarFechamento(params: {
     if (func.ativo === false) continue  // não traz demitidos para o fechamento
     if (empresaId && func.empresa_id !== empresaId) continue
     const emp = empMap.get(func.empresa_id)
-    const cf = cfMap.get(fid)
-    const comp = cf ? compMap.get(cf.competencia_id) : undefined
+    const cf = cfMap.get(fid)  // presente só se há férias/descontos lançados
 
-    // ── VT/VA ──
+    // ── VT/VA (calculado do cadastro; férias/descontos salvos são aplicados) ──
     let vtvaTotal = 0
     let reciboVTVA: DadosRecibo | null = null
-    if (cf && comp && trabalhaNoMes(vtvaMes, vtvaAno, func.data_admissao, func.data_fim_aviso)) {
-      const valorVTSabadoBase = cf.valor_vt_sabado ?? func.valor_vt_sabado ?? 0
+    if (trabalhaNoMes(vtvaMes, vtvaAno, func.data_admissao, func.data_fim_aviso)) {
+      const valorVTSabadoBase = cf?.valor_vt_sabado ?? func.valor_vt_sabado ?? 0
       const ehExcecao = valorVTSabadoBase > 0
-      const valorVT = cf.valor_vt ?? func.valor_vt ?? 0
+      const valorVT = cf?.valor_vt ?? func.valor_vt ?? 0
       const valorVTSabado = ehExcecao ? valorVTSabadoBase : 0
-      const descontos = descMap.get(cf.id) ?? []
-      const acrescimos = acrescMap.get(cf.id) ?? []
-      const diasSabadoBase = ehExcecao ? (cf.dias_sabado ?? 0) : 0
+      const descontos = cf ? (descMap.get(cf.id) ?? []) : []
+      const acrescimos = cf ? (acrescMap.get(cf.id) ?? []) : []
+      const diasSabadoBase = ehExcecao ? (cf?.dias_sabado ?? calcularSabadosDesde(vtvaMes, vtvaAno, func.data_admissao, func.data_fim_aviso)) : 0
       const diasSabado = Math.max(0, diasSabadoBase - contarSabadosEmDescontos(descontos, vtvaMes, vtvaAno) - contarSabadosFeriado(feriadosDatas))
-      const valorVA = resolverValorVA(func.valor_va, comp.valor_va)
+      const valorVA = resolverValorVA(func.valor_va, vaMap.get(func.empresa_id) ?? emp?.valor_va ?? 0)
       const diasUteisAuto = calcularDiasUteisAuto(vtvaMes, vtvaAno, func.folga_semanal, feriadosDatas, func.data_admissao, func.data_fim_aviso)
       const resultado = calcularVTVA({
         diasUteis: diasUteisAuto, diasFeriado: 0, diasSabado,
-        diasDesconto: cf.dias_desconto ?? 0, valorVT, valorVTSabado, valorVA,
+        diasDesconto: cf?.dias_desconto ?? 0, valorVT, valorVTSabado, valorVA,
       })
       vtvaTotal = resultado.valorTotal
       reciboVTVA = {
