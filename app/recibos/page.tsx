@@ -1,57 +1,39 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import LayoutAdmin from '../../components/LayoutAdmin'
-import {
-  supabase,
-  Competencia,
-  CompetenciaFuncionario,
-  Funcionario,
-  Empresa,
-  getOrCreateDefaultUnidade,
-  garantirFeriadosAno,
-} from '../../lib/supabase'
-import { calcularVTVA, calcularDiasUteisAuto, trabalhaNoMes, formatarMoeda, resolverValorVA, contarSabadosEmDescontos, contarSabadosFeriado, MESES } from '../../utils/calculoVT'
-import { montarReciboVTVAAvulso } from '../../lib/fechamento'
-
-type FuncAvulso = { id: string; nome: string; empresa_id: string; empresaNome: string }
-
-type CFComFunc = CompetenciaFuncionario & { funcionarios: Funcionario }
-
-type ItemRecibo = { tipo_nome: string; dias: number; data_inicio: string | null; data_fim: string | null }
-
-type RegistroCompleto = CFComFunc & {
-  competenciaObj: Competencia
-  empresaObj: Empresa
-  feriadosDatas: string[]
-  descontosRecibo: ItemRecibo[]
-  acrescimosRecibo: ItemRecibo[]
-}
+import { supabase, Empresa } from '../../lib/supabase'
+import { formatarMoeda, MESES } from '../../utils/calculoVT'
+import { listarRecibosVTVA, montarReciboVTVAAvulso, LinhaReciboVTVA } from '../../lib/fechamento'
 
 const TODAS = '__todas__'
+type FuncAvulso = { id: string; nome: string; empresa_id: string; empresaNome: string }
 
 export default function RecibosPage() {
   const [empresas, setEmpresas] = useState<Empresa[]>([])
-  const [registros, setRegistros] = useState<RegistroCompleto[]>([])
+  const [linhas, setLinhas] = useState<LinhaReciboVTVA[]>([])
   const [loading, setLoading] = useState(false)
   const [gerando, setGerando] = useState<string | null>(null)
 
   const [empresaId, setEmpresaId] = useState<string>(TODAS)
   const [mes, setMes] = useState(new Date().getMonth() + 1)
   const [ano, setAno] = useState(new Date().getFullYear())
+  const [busca, setBusca] = useState('')
 
-  // Recibo avulso (funcionário fora da apuração)
+  const [msg, setMsg] = useState('')
+
+  // Recibo avulso
   const [modalAvulso, setModalAvulso] = useState(false)
   const [funcsAvulso, setFuncsAvulso] = useState<FuncAvulso[]>([])
   const [avEmpresa, setAvEmpresa] = useState('')
   const [avFunc, setAvFunc] = useState('')
   const [avLoad, setAvLoad] = useState(false)
-  const [msgAvulso, setMsgAvulso] = useState('')
+  const [avMsg, setAvMsg] = useState('')
 
   useEffect(() => {
+    supabase.from('empresas').select('*').order('razao_social').then(({ data }) => setEmpresas(data ?? []))
     supabase.from('funcionarios')
-      .select('id, nome, ativo, unidades(empresa_id, empresas(razao_social))')
-      .order('nome')
+      .select('id, nome, ativo, unidades(empresa_id, empresas(razao_social))').order('nome')
       .then(({ data }) => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const opts: FuncAvulso[] = (data ?? []).filter((f: any) => f.ativo !== false && (Array.isArray(f.unidades) ? f.unidades[0] : f.unidades)?.empresa_id)
@@ -65,502 +47,191 @@ export default function RecibosPage() {
       })
   }, [])
 
-  async function gerarAvulso() {
-    if (!avFunc) { setMsgAvulso('Selecione o funcionário.'); return }
-    setAvLoad(true); setMsgAvulso('')
-    try {
-      const dados = await montarReciboVTVAAvulso(avFunc, mes, ano)
-      if (!dados) { setMsgAvulso('Funcionário não encontrado.'); return }
-      const { gerarReciboPDF } = await import('../../services/gerarReciboPDF')
-      await gerarReciboPDF(dados)
-      setModalAvulso(false)
-    } catch (e) { console.error(e); setMsgAvulso('Erro ao gerar recibo.') }
-    finally { setAvLoad(false) }
-  }
-
-  useEffect(() => {
-    supabase.from('empresas').select('*').order('razao_social').then(({ data }) => {
-      setEmpresas(data ?? [])
-    })
-  }, [])
-
-  const buscarDados = useCallback(async () => {
-    if (!empresaId) return
+  const carregar = useCallback(async () => {
     setLoading(true)
-    setRegistros([])
-
-    // Garante feriados importados e consulta direto da tabela
-    await garantirFeriadosAno(ano)
-    const mesStr = String(mes).padStart(2, '0')
-    const ultimoDia = new Date(ano, mes, 0).getDate()
-    const { data: feriadosRows } = await supabase
-      .from('feriados').select('data')
-      .gte('data', `${ano}-${mesStr}-01`)
-      .lte('data', `${ano}-${mesStr}-${String(ultimoDia).padStart(2, '0')}`)
-    const feriadosDatas: string[] = (feriadosRows ?? []).map(f => f.data as string)
-    const empresasParaBuscar: Empresa[] = empresaId === TODAS
-      ? empresas
-      : empresas.filter(e => e.id === empresaId)
-
-    const results = await Promise.all(empresasParaBuscar.map(async (emp) => {
-      const unidadeId = await getOrCreateDefaultUnidade(emp.id)
-      if (!unidadeId) return []
-
-      const { data: comp } = await supabase
-        .from('competencias')
-        .select('*')
-        .eq('unidade_id', unidadeId)
-        .eq('mes', mes)
-        .eq('ano', ano)
-        .limit(1)
-        .maybeSingle()
-
-      if (!comp) return []
-
-      const { data: cfs } = await supabase
-        .from('competencia_funcionario')
-        .select('*, funcionarios(*)')
-        .eq('competencia_id', comp.id)
-
-      const cfList = ((cfs as CFComFunc[]) ?? []).filter(cf =>
-        trabalhaNoMes(mes, ano, cf.funcionarios?.data_admissao, cf.funcionarios?.data_fim_aviso)
-      )
-
-      // Carrega descontos de todos os CFs de uma vez
-      const cfIds = cfList.map(cf => cf.id)
-      let descontosMap = new Map<string, ItemRecibo[]>()
-      let acrescimosMap = new Map<string, ItemRecibo[]>()
-      if (cfIds.length > 0) {
-        const { data: descontosRows } = await supabase
-          .from('competencia_funcionario_desconto')
-          .select('*, tipos_desconto(id, nome)')
-          .in('competencia_funcionario_id', cfIds)
-        for (const d of descontosRows ?? []) {
-          const isAcrescimo = (d.dias ?? 0) < 0
-          const item: ItemRecibo = {
-            tipo_nome: isAcrescimo
-              ? 'Feriado trabalhado'
-              : ((d.tipos_desconto as { nome: string } | null)?.nome ?? ''),
-            dias: Math.abs(d.dias ?? 0),
-            data_inicio: d.data_inicio ?? null,
-            data_fim: d.data_fim ?? null,
-          }
-          if (isAcrescimo) {
-            const arr = acrescimosMap.get(d.competencia_funcionario_id) ?? []
-            arr.push(item)
-            acrescimosMap.set(d.competencia_funcionario_id, arr)
-          } else {
-            const arr = descontosMap.get(d.competencia_funcionario_id) ?? []
-            arr.push(item)
-            descontosMap.set(d.competencia_funcionario_id, arr)
-          }
-        }
-      }
-
-      return cfList.map(cf => ({ ...cf, competenciaObj: comp as Competencia, empresaObj: emp, feriadosDatas, descontosRecibo: descontosMap.get(cf.id) ?? [], acrescimosRecibo: acrescimosMap.get(cf.id) ?? [] }))
-    }))
-
-    setRegistros(results.flat())
+    const data = await listarRecibosVTVA({ mes, ano, empresaId: empresaId === TODAS ? undefined : empresaId })
+    setLinhas(data)
     setLoading(false)
-  }, [empresaId, mes, ano, empresas])
+  }, [mes, ano, empresaId])
 
-  useEffect(() => {
-    if (empresaId) buscarDados()
-  }, [empresaId, mes, ano, buscarDados])
+  useEffect(() => { carregar() }, [carregar])
 
-  async function gerarPDF(reg: RegistroCompleto) {
-    setGerando(reg.funcionario_id)
+  function notify(t: string) { setMsg(t); setTimeout(() => setMsg(''), 5000) }
+
+  const filtradas = useMemo(() => {
+    const q = busca.trim().toLowerCase()
+    if (!q) return linhas
+    return linhas.filter(l => l.nome.toLowerCase().includes(q) || l.empresaNome.toLowerCase().includes(q))
+  }, [linhas, busca])
+
+  const totalGeral = filtradas.reduce((s, l) => s + l.valorTotal, 0)
+  const modoTodas = empresaId === TODAS
+  const avFuncs = avEmpresa ? funcsAvulso.filter(f => f.empresa_id === avEmpresa) : funcsAvulso
+
+  async function gerarPDF(l: LinhaReciboVTVA) {
+    setGerando(l.funcionario_id)
     try {
       const { gerarReciboPDF } = await import('../../services/gerarReciboPDF')
-      const valorVTSabadoBase = reg.valor_vt_sabado ?? reg.funcionarios?.valor_vt_sabado ?? 0
-      const ehExcecao = valorVTSabadoBase > 0
-      const valorVT = reg.valor_vt ?? reg.funcionarios?.valor_vt ?? 0
-      const valorVTSabado = ehExcecao ? valorVTSabadoBase : 0
-      const diasSabadoBase = ehExcecao ? (reg.dias_sabado ?? 0) : 0
-      const valorVA = resolverValorVA(reg.funcionarios?.valor_va, reg.competenciaObj.valor_va)
-      const diasUteisAuto = calcularDiasUteisAuto(mes, ano, reg.funcionarios?.folga_semanal, reg.feriadosDatas, reg.funcionarios?.data_admissao, reg.funcionarios?.data_fim_aviso)
-
-      // Re-busca descontos/acréscimos frescos do banco para garantir dados atualizados
-      const { data: descontosRows } = await supabase
-        .from('competencia_funcionario_desconto')
-        .select('*, tipos_desconto(id, nome)')
-        .eq('competencia_funcionario_id', reg.id)
-      const descontosRecibo: ItemRecibo[] = []
-      const acrescimosRecibo: ItemRecibo[] = []
-      for (const d of descontosRows ?? []) {
-        const isAcrescimo = (d.dias ?? 0) < 0
-        const item: ItemRecibo = {
-          tipo_nome: isAcrescimo ? 'Feriado trabalhado' : ((d.tipos_desconto as { nome: string } | null)?.nome ?? ''),
-          dias: Math.abs(d.dias ?? 0),
-          data_inicio: d.data_inicio ?? null,
-          data_fim: d.data_fim ?? null,
-        }
-        if (isAcrescimo) acrescimosRecibo.push(item)
-        else descontosRecibo.push(item)
-      }
-
-      // Re-busca dias_desconto atualizado
-      const { data: cfAtual } = await supabase
-        .from('competencia_funcionario').select('dias_desconto')
-        .eq('id', reg.id).maybeSingle()
-      const diasDesconto = (cfAtual as { dias_desconto: number } | null)?.dias_desconto ?? reg.dias_desconto
-
-      // Sábados em férias/faltas não são pagos
-      const diasSabado = Math.max(0, diasSabadoBase - contarSabadosEmDescontos(descontosRecibo, mes, ano) - contarSabadosFeriado(reg.feriadosDatas))
-
-      const resultado = calcularVTVA({
-        diasUteis: diasUteisAuto,
-        diasFeriado: 0,
-        diasSabado,
-        diasDesconto,
-        valorVT,
-        valorVTSabado,
-        valorVA,
-      })
-
-      await gerarReciboPDF({
-        razaoSocial: reg.empresaObj.razao_social,
-        cnpj: reg.empresaObj.cnpj ?? '',
-        nomeFuncionario: reg.funcionarios.nome,
-        funcao: reg.funcionarios.funcao,
-        ctps: reg.funcionarios.ctps ?? '',
-        serie: reg.funcionarios.serie ?? '',
-        mes,
-        ano,
-        diasUteis: diasUteisAuto,
-        diasEfetivos: resultado.diasEfetivos,
-        diasSabado,
-        valorVT,
-        valorVTSabado,
-        valorVA,
-        resultado,
-        dataAdmissao: reg.funcionarios?.data_admissao ?? null,
-        dataFimAviso: reg.funcionarios?.data_fim_aviso ?? null,
-        descontos: descontosRecibo,
-        acrescimos: acrescimosRecibo,
-      })
-    } catch (err) {
-      console.error('Erro ao gerar PDF:', err)
-      alert('Erro ao gerar PDF. Tente novamente.')
-    } finally {
-      setGerando(null)
-    }
+      await gerarReciboPDF(l.dados)
+    } catch (e) { console.error(e); notify('Erro ao gerar PDF.') }
+    finally { setGerando(null) }
   }
 
-  async function gerarTodosPDFs() {
-    if (registros.length === 0) return
+  async function gerarTodos() {
+    if (filtradas.length === 0) return
     setGerando('__todos__')
     try {
       const { gerarMultiplosPDFs } = await import('../../services/gerarReciboPDF')
-      const dadosList = registros.map(reg => {
-        const vtSabadoBase = reg.valor_vt_sabado ?? reg.funcionarios?.valor_vt_sabado ?? 0
-        const ehExcecao = vtSabadoBase > 0
-        const valorVT = reg.valor_vt ?? reg.funcionarios?.valor_vt ?? 0
-        const valorVTSabado = ehExcecao ? vtSabadoBase : 0
-        const diasSabado = ehExcecao ? Math.max(0, (reg.dias_sabado ?? 0) - contarSabadosEmDescontos(reg.descontosRecibo, mes, ano) - contarSabadosFeriado(reg.feriadosDatas)) : 0
-        const valorVA = resolverValorVA(reg.funcionarios?.valor_va, reg.competenciaObj.valor_va)
-        const diasUteisAuto = calcularDiasUteisAuto(mes, ano, reg.funcionarios?.folga_semanal, reg.feriadosDatas, reg.funcionarios?.data_admissao, reg.funcionarios?.data_fim_aviso)
-        const resultado = calcularVTVA({
-          diasUteis: diasUteisAuto, diasFeriado: 0, diasSabado,
-          diasDesconto: reg.dias_desconto,
-          valorVT, valorVTSabado, valorVA,
-        })
-        return {
-          razaoSocial: reg.empresaObj.razao_social,
-          cnpj: reg.empresaObj.cnpj ?? '',
-          nomeFuncionario: reg.funcionarios.nome,
-          funcao: reg.funcionarios.funcao,
-          ctps: reg.funcionarios.ctps ?? '',
-          serie: reg.funcionarios.serie ?? '',
-          mes, ano,
-          diasUteis: diasUteisAuto,
-          diasEfetivos: resultado.diasEfetivos,
-          diasSabado, valorVT, valorVTSabado, valorVA,
-          resultado,
-          dataAdmissao: reg.funcionarios?.data_admissao ?? null,
-          dataFimAviso: reg.funcionarios?.data_fim_aviso ?? null,
-          descontos: reg.descontosRecibo,
-          acrescimos: reg.acrescimosRecibo,
-        }
-      })
-      await gerarMultiplosPDFs(dadosList)
-    } catch (err) {
-      console.error('Erro ao gerar PDFs:', err)
-      alert('Erro ao gerar PDFs. Tente novamente.')
-    } finally {
-      setGerando(null)
-    }
+      await gerarMultiplosPDFs(filtradas.map(l => l.dados), `recibos_vtva_${ano}-${String(mes).padStart(2, '0')}.pdf`)
+    } catch (e) { console.error(e); notify('Erro ao gerar PDFs.') }
+    finally { setGerando(null) }
   }
 
   async function gerarXLSX() {
-    if (registros.length === 0) return
+    if (filtradas.length === 0) return
     setGerando('__xlsx__')
     try {
       const { utils, writeFile } = await import('xlsx')
-      const dados = registros.map(reg => {
-        const vtSabadoBase = reg.valor_vt_sabado ?? reg.funcionarios?.valor_vt_sabado ?? 0
-        const ehExcecao = vtSabadoBase > 0
-        const diasUteisAuto = calcularDiasUteisAuto(mes, ano, reg.funcionarios?.folga_semanal, reg.feriadosDatas, reg.funcionarios?.data_admissao, reg.funcionarios?.data_fim_aviso)
-        const r = calcularVTVA({
-          diasUteis: diasUteisAuto, diasFeriado: 0,
-          diasSabado: ehExcecao ? Math.max(0, (reg.dias_sabado ?? 0) - contarSabadosEmDescontos(reg.descontosRecibo, mes, ano) - contarSabadosFeriado(reg.feriadosDatas)) : 0,
-          diasDesconto: reg.dias_desconto,
-          valorVT: reg.valor_vt ?? reg.funcionarios?.valor_vt ?? 0,
-          valorVTSabado: ehExcecao ? vtSabadoBase : 0,
-          valorVA: resolverValorVA(reg.funcionarios?.valor_va, reg.competenciaObj.valor_va),
-        })
-        return {
-          'Empresa': reg.empresaObj.razao_social,
-          'Funcionário': reg.funcionarios.nome,
-          'Função': reg.funcionarios.funcao,
-          'Dias Efetivos': r.diasEfetivos,
-          'VA (R$)': r.totalVA,
-          'VT (R$)': r.totalVT,
-          'VT Sábado (R$)': r.totalVTSabado,
-          'Total (R$)': r.valorTotal,
-        }
-      })
-      const ws = utils.json_to_sheet(dados)
+      const dados = filtradas.map(l => ({
+        'Empresa': l.empresaNome, 'Funcionário': l.nome, 'Função': l.funcao,
+        'Dias Efetivos': l.diasEfetivos, 'VA (R$)': l.totalVA, 'VT (R$)': l.totalVT,
+        'VT Sábado (R$)': l.totalVTSabado, 'Total (R$)': l.valorTotal,
+      }))
       const wb = utils.book_new()
-      utils.book_append_sheet(wb, ws, `${MESES[mes - 1]} ${ano}`)
-      writeFile(wb, `recibos_${mes}_${ano}.xlsx`)
-    } catch (err) {
-      console.error('Erro ao gerar XLSX:', err)
-    } finally {
-      setGerando(null)
-    }
+      utils.book_append_sheet(wb, utils.json_to_sheet(dados), `${MESES[mes - 1]} ${ano}`)
+      writeFile(wb, `recibos_vtva_${mes}_${ano}.xlsx`)
+    } catch (e) { console.error(e); notify('Erro ao exportar.') }
+    finally { setGerando(null) }
   }
 
-  const totalGeral = registros.reduce((sum, reg) => {
-    const vtSabadoBase = reg.valor_vt_sabado ?? reg.funcionarios?.valor_vt_sabado ?? 0
-    const ehExcecao = vtSabadoBase > 0
-    const diasUteisAuto = calcularDiasUteisAuto(mes, ano, reg.funcionarios?.folga_semanal, reg.feriadosDatas, reg.funcionarios?.data_admissao, reg.funcionarios?.data_fim_aviso)
-    const r = calcularVTVA({
-      diasUteis: diasUteisAuto,
-      diasFeriado: 0,
-      diasSabado: ehExcecao ? Math.max(0, (reg.dias_sabado ?? 0) - contarSabadosEmDescontos(reg.descontosRecibo, mes, ano) - contarSabadosFeriado(reg.feriadosDatas)) : 0,
-      diasDesconto: reg.dias_desconto,
-      valorVT: reg.valor_vt ?? reg.funcionarios?.valor_vt ?? 0,
-      valorVTSabado: ehExcecao ? vtSabadoBase : 0,
-      valorVA: resolverValorVA(reg.funcionarios?.valor_va, reg.competenciaObj.valor_va),
-    })
-    return sum + r.valorTotal
-  }, 0)
-
-  const modoTodas = empresaId === TODAS
-  const avFuncs = avEmpresa ? funcsAvulso.filter(f => f.empresa_id === avEmpresa) : funcsAvulso
+  async function gerarAvulso() {
+    if (!avFunc) { setAvMsg('Selecione o funcionário.'); return }
+    setAvLoad(true); setAvMsg('')
+    try {
+      const dados = await montarReciboVTVAAvulso(avFunc, mes, ano)
+      if (!dados) { setAvMsg('Funcionário não encontrado.'); return }
+      const { gerarReciboPDF } = await import('../../services/gerarReciboPDF')
+      await gerarReciboPDF(dados)
+      setModalAvulso(false)
+    } catch (e) { console.error(e); setAvMsg('Erro ao gerar recibo.') }
+    finally { setAvLoad(false) }
+  }
 
   return (
     <LayoutAdmin
       title="Recibos VT/VA"
       actions={
-        <button className="btn-secondary flex items-center gap-2 text-sm" onClick={() => { setModalAvulso(true); setAvEmpresa(modoTodas ? '' : empresaId); setAvFunc(''); setMsgAvulso('') }}>
+        <button className="btn-secondary flex items-center gap-2 text-sm" onClick={() => { setModalAvulso(true); setAvEmpresa(modoTodas ? '' : empresaId); setAvFunc(''); setAvMsg('') }}>
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
           Recibo avulso
         </button>
       }
     >
       <div className="space-y-6">
-        {/* Seletor */}
+        {msg && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">{msg}</div>}
+
+        {/* Filtros */}
         <div className="card">
-          <h2 className="text-sm font-semibold text-gray-700 mb-4">Selecionar Competência</h2>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div className="md:col-span-2">
               <label className="label-field">Empresa</label>
-              <select value={empresaId} onChange={(e) => setEmpresaId(e.target.value)} className="input-field">
+              <select value={empresaId} onChange={e => setEmpresaId(e.target.value)} className="input-field">
                 <option value={TODAS}>— Todas as empresas —</option>
-                {empresas.map((emp) => (
-                  <option key={emp.id} value={emp.id}>{emp.razao_social}</option>
-                ))}
+                {empresas.map(emp => <option key={emp.id} value={emp.id}>{emp.razao_social}</option>)}
               </select>
             </div>
             <div>
               <label className="label-field">Mês</label>
-              <select value={mes} onChange={(e) => setMes(Number(e.target.value))} className="input-field">
-                {MESES.map((m, i) => (<option key={i + 1} value={i + 1}>{m}</option>))}
+              <select value={mes} onChange={e => setMes(Number(e.target.value))} className="input-field">
+                {MESES.map((m, i) => <option key={i + 1} value={i + 1}>{m}</option>)}
               </select>
             </div>
             <div>
               <label className="label-field">Ano</label>
-              <input type="number" value={ano} onChange={(e) => setAno(Number(e.target.value))} className="input-field" min={2020} max={2099} />
+              <input type="number" value={ano} onChange={e => setAno(Number(e.target.value))} className="input-field" min={2020} max={2099} />
             </div>
+          </div>
+          <div className="mt-4">
+            <input className="input-field" placeholder="Buscar funcionário ou empresa..." value={busca} onChange={e => setBusca(e.target.value)} />
           </div>
         </div>
 
-        {/* Resultados */}
-        {empresaId && (
-          <div className="card">
-            {loading ? (
-              <div className="text-center py-12 text-gray-400 text-sm">Buscando registros...</div>
-            ) : registros.length === 0 ? (
-              <div className="text-center py-12 text-gray-400 text-sm">
-                <svg className="w-10 h-10 mx-auto mb-3 opacity-40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                Nenhuma competência encontrada para este período.
-                <br />
-                <span className="text-xs">Cadastre as competências primeiro na página de Competências.</span>
+        <div className="card">
+          {loading ? (
+            <div className="text-center py-12 text-gray-400 text-sm">Calculando VT/VA...</div>
+          ) : filtradas.length === 0 ? (
+            <div className="text-center py-12 text-gray-400 text-sm">
+              Nenhum funcionário ativo para {MESES[mes - 1]}/{ano}.
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
+                <div>
+                  <h2 className="text-base font-semibold text-gray-800">{MESES[mes - 1]}/{ano} — {filtradas.length} funcionário(s)</h2>
+                  <p className="text-sm text-gray-500 mt-0.5">Total geral: <span className="font-semibold text-blue-600">{formatarMoeda(totalGeral)}</span></p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button onClick={gerarXLSX} className="btn-secondary text-sm" disabled={gerando !== null}>{gerando === '__xlsx__' ? 'Gerando...' : 'Exportar XLSX'}</button>
+                  <button onClick={gerarTodos} className="btn-primary text-sm" disabled={gerando !== null}>{gerando === '__todos__' ? 'Gerando...' : 'Gerar Todos os PDFs'}</button>
+                </div>
               </div>
-            ) : (
-              <>
-                <div className="flex items-center justify-between mb-5">
-                  <div>
-                    <h2 className="text-base font-semibold text-gray-800">
-                      {MESES[mes - 1]}/{ano} — {registros.length} funcionário(s)
-                      {modoTodas && <span className="ml-2 text-xs text-gray-400 font-normal">todas as empresas</span>}
-                    </h2>
-                    <p className="text-sm text-gray-500 mt-0.5">
-                      Total geral: <span className="font-semibold text-blue-600">{formatarMoeda(totalGeral)}</span>
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                  <button onClick={gerarXLSX} className="btn-secondary flex items-center gap-2 text-sm" disabled={gerando !== null}>
-                    {gerando === '__xlsx__' ? (
-                      <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
-                      </svg>
-                    ) : (
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18M10 3v18M14 3v18M5 3h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2z" />
-                      </svg>
-                    )}
-                    {gerando === '__xlsx__' ? 'Gerando...' : 'Exportar XLSX'}
-                  </button>
-                  <button onClick={gerarTodosPDFs} className="btn-primary flex items-center gap-2 text-sm" disabled={gerando !== null}>
-                    {gerando === '__todos__' && (
-                      <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
-                      </svg>
-                    )}
-                    {gerando !== '__todos__' && (
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                      </svg>
-                    )}
-                    {gerando === '__todos__' ? 'Gerando...' : 'Gerar Todos os PDFs'}
-                  </button>
-                  </div>
-                </div>
 
-                <div className="overflow-x-auto">
-                  <table className="w-full border-collapse">
-                    <thead>
-                      <tr className="bg-gray-50 border-b border-gray-200">
-                        {modoTodas && <th className="table-header text-left">Empresa</th>}
-                        <th className="table-header">Funcionário</th>
-                        <th className="table-header text-center">Dias Ef.</th>
-                        <th className="table-header text-right">VA</th>
-                        <th className="table-header text-right">VT</th>
-                        <th className="table-header text-right">VT Sáb.</th>
-                        <th className="table-header text-right">Total</th>
-                        <th className="table-header text-right">Ação</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100">
-                      {registros.map((reg) => {
-                        const vtSabadoBase = reg.valor_vt_sabado ?? reg.funcionarios?.valor_vt_sabado ?? 0
-                        const ehExcecao = vtSabadoBase > 0
-                        const diasUteisAuto = calcularDiasUteisAuto(mes, ano, reg.funcionarios?.folga_semanal, reg.feriadosDatas, reg.funcionarios?.data_admissao, reg.funcionarios?.data_fim_aviso)
-                        const r = calcularVTVA({
-                          diasUteis: diasUteisAuto,
-                          diasFeriado: 0,
-                          diasSabado: ehExcecao ? Math.max(0, (reg.dias_sabado ?? 0) - contarSabadosEmDescontos(reg.descontosRecibo, mes, ano) - contarSabadosFeriado(reg.feriadosDatas)) : 0,
-                          diasDesconto: reg.dias_desconto,
-                          valorVT: reg.valor_vt ?? reg.funcionarios?.valor_vt ?? 0,
-                          valorVTSabado: ehExcecao ? vtSabadoBase : 0,
-                          valorVA: resolverValorVA(reg.funcionarios?.valor_va, reg.competenciaObj.valor_va),
-                        })
-                        return (
-                          <tr key={`${reg.empresaObj.id}-${reg.funcionario_id}`} className="hover:bg-gray-50 transition-colors">
-                            {modoTodas && (
-                              <td className="table-cell text-xs text-gray-500">{reg.empresaObj.razao_social}</td>
-                            )}
-                            <td className="table-cell">
-                              <div className="font-medium text-gray-900">{reg.funcionarios.nome}</div>
-                              <div className="text-xs text-gray-400">{reg.funcionarios.funcao}</div>
-                            </td>
-                            <td className="table-cell text-center">
-                              <span className="font-mono text-sm">{r.diasEfetivos}</span>
-                              {reg.acrescimosRecibo.length > 0 && (
-                                <span className="ml-1.5 text-xs font-medium text-green-700 bg-green-100 px-1.5 py-0.5 rounded-full">
-                                  +{reg.acrescimosRecibo.reduce((s, a) => s + a.dias, 0)}d
-                                </span>
-                              )}
-                              {reg.descontosRecibo.length > 0 && (
-                                <span className="ml-1 text-xs font-medium text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded-full">
-                                  -{reg.descontosRecibo.reduce((s, d) => s + d.dias, 0)}d
-                                </span>
-                              )}
-                            </td>
-                            <td className="table-cell text-right text-sm">{formatarMoeda(r.totalVA)}</td>
-                            <td className="table-cell text-right text-sm">{formatarMoeda(r.totalVT)}</td>
-                            <td className="table-cell text-right text-sm">{r.totalVTSabado > 0 ? formatarMoeda(r.totalVTSabado) : <span className="text-gray-300">—</span>}</td>
-                            <td className="table-cell text-right font-semibold text-blue-700">{formatarMoeda(r.valorTotal)}</td>
-                            <td className="table-cell text-right">
-                              <button
-                                onClick={() => gerarPDF(reg)}
-                                disabled={gerando === reg.funcionario_id}
-                                className="inline-flex items-center gap-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
-                              >
-                                {gerando === reg.funcionario_id ? (
-                                  <>
-                                    <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
-                                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
-                                    </svg>
-                                    Gerando...
-                                  </>
-                                ) : (
-                                  <>
-                                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                                    </svg>
-                                    PDF
-                                  </>
-                                )}
-                              </button>
-                            </td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                    <tfoot>
-                      <tr className="border-t-2 border-gray-200 bg-gray-50">
-                        <td colSpan={modoTodas ? 6 : 5} className="table-cell text-right text-sm font-semibold text-gray-600">
-                          Total geral:
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse">
+                  <thead>
+                    <tr className="bg-gray-50 border-b border-gray-200">
+                      {modoTodas && <th className="table-header text-left">Empresa</th>}
+                      <th className="table-header">Funcionário</th>
+                      <th className="table-header text-center">Dias Ef.</th>
+                      <th className="table-header text-right">VA</th>
+                      <th className="table-header text-right">VT</th>
+                      <th className="table-header text-right">VT Sáb.</th>
+                      <th className="table-header text-right">Total</th>
+                      <th className="table-header text-right">Ação</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {filtradas.map(l => (
+                      <tr key={l.funcionario_id} className="hover:bg-gray-50 transition-colors">
+                        {modoTodas && <td className="table-cell text-xs text-gray-500">{l.empresaNome}</td>}
+                        <td className="table-cell">
+                          <div className="font-medium text-gray-900">{l.nome}</div>
+                          <div className="text-xs text-gray-400">{l.funcao}</div>
                         </td>
-                        <td className="table-cell text-right font-bold text-blue-700">{formatarMoeda(totalGeral)}</td>
-                        <td />
+                        <td className="table-cell text-center font-mono text-sm">{l.diasEfetivos}</td>
+                        <td className="table-cell text-right text-sm">{formatarMoeda(l.totalVA)}</td>
+                        <td className="table-cell text-right text-sm">{formatarMoeda(l.totalVT)}</td>
+                        <td className="table-cell text-right text-sm">{l.totalVTSabado > 0 ? formatarMoeda(l.totalVTSabado) : <span className="text-gray-300">—</span>}</td>
+                        <td className="table-cell text-right font-semibold text-blue-700">{formatarMoeda(l.valorTotal)}</td>
+                        <td className="table-cell text-right">
+                          <button onClick={() => gerarPDF(l)} disabled={gerando === l.funcionario_id}
+                            className="inline-flex items-center gap-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50">
+                            {gerando === l.funcionario_id ? 'Gerando...' : 'PDF'}
+                          </button>
+                        </td>
                       </tr>
-                    </tfoot>
-                  </table>
-                </div>
-              </>
-            )}
-          </div>
-        )}
-
-        {!empresaId && (
-          <div className="card text-center py-16 text-gray-400">
-            <svg className="w-12 h-12 mx-auto mb-4 opacity-40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-            </svg>
-            <p className="text-sm">Selecione uma empresa (ou todas) e o período para visualizar e gerar recibos.</p>
-          </div>
-        )}
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t-2 border-gray-200 bg-gray-50">
+                      <td colSpan={modoTodas ? 6 : 5} className="table-cell text-right text-sm font-semibold text-gray-600">Total geral:</td>
+                      <td className="table-cell text-right font-bold text-blue-700">{formatarMoeda(totalGeral)}</td>
+                      <td />
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
 
         {/* Modal Recibo avulso */}
         {modalAvulso && (
           <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={e => { if (e.target === e.currentTarget) setModalAvulso(false) }}>
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6">
               <h2 className="text-lg font-bold text-gray-800 mb-1">Recibo avulso VT/VA</h2>
-              <p className="text-xs text-gray-500 mb-4">
-                Gera o recibo de <strong>{MESES[mes - 1]}/{ano}</strong> para um funcionário usando os valores do cadastro
-                (proporcional à admissão), sem depender da apuração salva. Útil para quem entrou fora do período.
-              </p>
-              {msgAvulso && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-2 rounded-lg text-sm mb-3">{msgAvulso}</div>}
+              <p className="text-xs text-gray-500 mb-4">Gera o recibo de <strong>{MESES[mes - 1]}/{ano}</strong> de um funcionário específico (valores do cadastro, proporcional à admissão).</p>
+              {avMsg && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-2 rounded-lg text-sm mb-3">{avMsg}</div>}
               <div className="space-y-4">
                 <div>
                   <label className="label-field">Empresa</label>
@@ -578,9 +249,7 @@ export default function RecibosPage() {
                 </div>
               </div>
               <div className="flex gap-3 pt-5">
-                <button className="btn-primary flex-1" onClick={gerarAvulso} disabled={avLoad || !avFunc}>
-                  {avLoad ? 'Gerando...' : 'Gerar recibo'}
-                </button>
+                <button className="btn-primary flex-1" onClick={gerarAvulso} disabled={avLoad || !avFunc}>{avLoad ? 'Gerando...' : 'Gerar recibo'}</button>
                 <button className="btn-secondary flex-1" onClick={() => setModalAvulso(false)}>Cancelar</button>
               </div>
             </div>

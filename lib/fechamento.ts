@@ -301,3 +301,120 @@ export async function montarReciboVTVAAvulso(
     descontos: [], acrescimos: [],
   }
 }
+
+// ── Recibos de VT/VA de um mês (cálculo automático, sem depender de apuração) ──
+
+export type LinhaReciboVTVA = {
+  funcionario_id: string
+  empresa_id: string
+  empresaNome: string
+  nome: string
+  funcao: string
+  diasEfetivos: number
+  totalVA: number
+  totalVT: number
+  totalVTSabado: number
+  valorTotal: number
+  dados: DadosRecibo
+}
+
+/**
+ * Lista os recibos de VT/VA de um mês para TODOS os funcionários ativos que
+ * trabalham no mês, calculando do cadastro e aplicando as férias/descontos
+ * lançados quando existirem. Não depende de "apuração/inicializar".
+ */
+export async function listarRecibosVTVA(params: {
+  mes: number; ano: number; empresaId?: string
+}): Promise<LinhaReciboVTVA[]> {
+  const { mes, ano, empresaId } = params
+  await garantirFeriadosAno(ano)
+  const mesStr = String(mes).padStart(2, '0')
+  const ultimoDia = new Date(ano, mes, 0).getDate()
+  const [{ data: feriadosRows }, { data: empresasData }, { data: funcsData }] = await Promise.all([
+    supabase.from('feriados').select('data')
+      .gte('data', `${ano}-${mesStr}-01`).lte('data', `${ano}-${mesStr}-${String(ultimoDia).padStart(2, '0')}`),
+    supabase.from('empresas').select('*'),
+    supabase.from('funcionarios').select('*, unidades(empresa_id)'),
+  ])
+  const feriadosDatas: string[] = (feriadosRows ?? []).map((f: { data: string }) => f.data)
+  const empMap = new Map<string, Empresa>()
+  ;(empresasData ?? []).forEach((e: Empresa) => empMap.set(e.id, e))
+
+  type FuncFull = Funcionario & { empresa_id: string }
+  const funcs: FuncFull[] = []
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ;(funcsData ?? []).forEach((f: any) => {
+    if (f.ativo === false) return
+    const uni = Array.isArray(f.unidades) ? f.unidades[0] : f.unidades
+    const empId = uni?.empresa_id
+    if (!empId) return
+    if (empresaId && empId !== empresaId) return
+    funcs.push({ ...f, empresa_id: empId })
+  })
+
+  const empresasParaBuscar = empresaId ? [empresaId] : Array.from(empMap.keys())
+  const cfMap = new Map<string, CompetenciaFuncionario>()
+  const vaMap = new Map<string, number>()
+  const descMap = new Map<string, DescontoRecibo[]>()
+  const acrescMap = new Map<string, DescontoRecibo[]>()
+  await Promise.all(empresasParaBuscar.map(async (empId) => {
+    vaMap.set(empId, empMap.get(empId)?.valor_va ?? 0)
+    const unidadeId = await getOrCreateDefaultUnidade(empId)
+    if (!unidadeId) return
+    const { data: comp } = await supabase.from('competencias').select('*')
+      .eq('unidade_id', unidadeId).eq('mes', mes).eq('ano', ano).limit(1).maybeSingle()
+    if (!comp) return
+    vaMap.set(empId, (comp as Competencia).valor_va ?? empMap.get(empId)?.valor_va ?? 0)
+    const { data: cfs } = await supabase.from('competencia_funcionario').select('*')
+      .eq('competencia_id', (comp as Competencia).id)
+    const cfIds: string[] = []
+    ;(cfs ?? []).forEach((cf: CompetenciaFuncionario) => { cfMap.set(cf.funcionario_id, cf); cfIds.push(cf.id) })
+    if (cfIds.length > 0) {
+      const { data: descontosRows } = await supabase
+        .from('competencia_funcionario_desconto').select('*, tipos_desconto(id, nome)')
+        .in('competencia_funcionario_id', cfIds)
+      for (const d of descontosRows ?? []) {
+        const isAcrescimo = (d.dias ?? 0) < 0
+        const item: DescontoRecibo = {
+          tipo_nome: isAcrescimo ? 'Feriado trabalhado' : ((d.tipos_desconto as { nome: string } | null)?.nome ?? ''),
+          dias: Math.abs(d.dias ?? 0), data_inicio: d.data_inicio ?? null, data_fim: d.data_fim ?? null,
+        }
+        const bucket = isAcrescimo ? acrescMap : descMap
+        const arr = bucket.get(d.competencia_funcionario_id) ?? []; arr.push(item); bucket.set(d.competencia_funcionario_id, arr)
+      }
+    }
+  }))
+
+  const linhas: LinhaReciboVTVA[] = []
+  for (const func of funcs) {
+    if (!trabalhaNoMes(mes, ano, func.data_admissao, func.data_fim_aviso)) continue
+    const emp = empMap.get(func.empresa_id)
+    const cf = cfMap.get(func.id)
+    const valorVTSabadoBase = cf?.valor_vt_sabado ?? func.valor_vt_sabado ?? 0
+    const ehExcecao = valorVTSabadoBase > 0
+    const valorVT = cf?.valor_vt ?? func.valor_vt ?? 0
+    const valorVTSabado = ehExcecao ? valorVTSabadoBase : 0
+    const descontos = cf ? (descMap.get(cf.id) ?? []) : []
+    const acrescimos = cf ? (acrescMap.get(cf.id) ?? []) : []
+    const diasSabadoBase = ehExcecao ? (cf?.dias_sabado ?? calcularSabadosDesde(mes, ano, func.data_admissao, func.data_fim_aviso)) : 0
+    const diasSabado = Math.max(0, diasSabadoBase - contarSabadosEmDescontos(descontos, mes, ano) - contarSabadosFeriado(feriadosDatas))
+    const valorVA = resolverValorVA(func.valor_va, vaMap.get(func.empresa_id) ?? emp?.valor_va ?? 0)
+    const diasUteis = calcularDiasUteisAuto(mes, ano, func.folga_semanal, feriadosDatas, func.data_admissao, func.data_fim_aviso)
+    const resultado = calcularVTVA({ diasUteis, diasFeriado: 0, diasSabado, diasDesconto: cf?.dias_desconto ?? 0, valorVT, valorVTSabado, valorVA })
+    const dados: DadosRecibo = {
+      razaoSocial: emp?.razao_social ?? '', cnpj: emp?.cnpj ?? '',
+      nomeFuncionario: func.nome, funcao: func.funcao, ctps: func.ctps ?? '', serie: func.serie ?? '',
+      mes, ano, diasUteis, diasEfetivos: resultado.diasEfetivos, diasSabado,
+      valorVT, valorVTSabado, valorVA, resultado,
+      dataAdmissao: func.data_admissao ?? null, dataFimAviso: func.data_fim_aviso ?? null,
+      descontos, acrescimos,
+    }
+    linhas.push({
+      funcionario_id: func.id, empresa_id: func.empresa_id, empresaNome: emp?.razao_social ?? '—',
+      nome: func.nome, funcao: func.funcao,
+      diasEfetivos: resultado.diasEfetivos, totalVA: resultado.totalVA, totalVT: resultado.totalVT,
+      totalVTSabado: resultado.totalVTSabado, valorTotal: resultado.valorTotal, dados,
+    })
+  }
+  return linhas.sort((a, b) => a.empresaNome.localeCompare(b.empresaNome) || a.nome.localeCompare(b.nome))
+}
