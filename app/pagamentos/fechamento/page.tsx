@@ -66,7 +66,7 @@ export default function FechamentoPage() {
     setAvLoad(true)
     try {
       const dados = await montarReciboVTVAAvulso(avFunc, mes, ano)
-      if (!dados) { notify('Funcionário não encontrado.', 'erro'); return }
+      if (!dados) { notify('Não gerado: funcionário não encontrado ou não trabalha nesse mês (verifique a admissão).', 'erro'); return }
       const { gerarReciboPDF } = await import('../../../services/gerarReciboPDF')
       await gerarReciboPDF(dados)
       setModalAvulso(false)

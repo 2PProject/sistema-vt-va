@@ -109,7 +109,7 @@ export default function RecibosPage() {
     setAvLoad(true); setAvMsg('')
     try {
       const dados = await montarReciboVTVAAvulso(avFunc, mes, ano)
-      if (!dados) { setAvMsg('Funcionário não encontrado.'); return }
+      if (!dados) { setAvMsg('Não gerado: funcionário não encontrado ou não trabalha nesse mês (verifique a admissão).'); return }
       const { gerarReciboPDF } = await import('../../services/gerarReciboPDF')
       await gerarReciboPDF(dados)
       setModalAvulso(false)

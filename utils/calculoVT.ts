@@ -235,6 +235,52 @@ export function contarSabadosEmDescontos(
 }
 
 /**
+ * Sábados EFETIVAMENTE TRABALHADOS no mês (para o VT de sábado diferenciado):
+ * sábados dentro do período trabalhado (respeitando admissão/aviso) que NÃO são
+ * feriado e NÃO caem em período de desconto (férias/faltas). Contagem única —
+ * evita dupla subtração e recorta corretamente ao período trabalhado.
+ */
+export function calcularSabadosTrabalhados(
+  mes: number,
+  ano: number,
+  dataAdmissao: string | null | undefined,
+  dataFimAviso: string | null | undefined,
+  feriadosDatas: string[],
+  descontos: { dias: number; data_inicio: string | null; data_fim: string | null }[]
+): number {
+  const primeiroDia = new Date(ano, mes - 1, 1); primeiroDia.setHours(12, 0, 0, 0)
+  const ultimoDiaMes = new Date(ano, mes, 0); ultimoDiaMes.setHours(12, 0, 0, 0)
+
+  let start = primeiroDia
+  if (dataAdmissao) {
+    const adm = new Date(dataAdmissao + 'T12:00:00')
+    if (adm.getFullYear() === ano && adm.getMonth() + 1 === mes && adm > primeiroDia) start = adm
+  }
+  let end = ultimoDiaMes
+  if (dataFimAviso) {
+    const fim = new Date(dataFimAviso + 'T12:00:00')
+    if (fim.getFullYear() === ano && fim.getMonth() + 1 === mes && fim < ultimoDiaMes) end = fim
+  }
+
+  const feriadosSet = new Set(feriadosDatas ?? [])
+  const ranges = (descontos ?? [])
+    .filter(d => (d.dias ?? 0) > 0 && d.data_inicio)
+    .map(d => ({ s: new Date(d.data_inicio + 'T12:00:00'), e: new Date((d.data_fim || d.data_inicio) + 'T12:00:00') }))
+
+  let count = 0
+  const cur = new Date(start)
+  while (cur <= end) {
+    if (cur.getDay() === 6) {
+      const iso = `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, '0')}-${String(cur.getDate()).padStart(2, '0')}`
+      const emDesconto = ranges.some(r => cur >= r.s && cur <= r.e)
+      if (!feriadosSet.has(iso) && !emDesconto) count++
+    }
+    cur.setDate(cur.getDate() + 1)
+  }
+  return count
+}
+
+/**
  * Retorna sábados no mês respeitando data_admissao e data_fim_aviso.
  */
 export function calcularSabadosDesde(mes: number, ano: number, dataAdmissao?: string | null, dataFimAviso?: string | null): number {

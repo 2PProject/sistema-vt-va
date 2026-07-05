@@ -3,7 +3,7 @@ import {
   getOrCreateDefaultUnidade, garantirFeriadosAno,
 } from './supabase'
 import {
-  calcularVTVA, calcularDiasUteisAuto, trabalhaNoMes, resolverValorVA, contarSabadosEmDescontos, contarSabadosFeriado, calcularSabadosDesde,
+  calcularVTVA, calcularDiasUteisAuto, trabalhaNoMes, resolverValorVA, calcularSabadosTrabalhados,
 } from '../utils/calculoVT'
 import { listarVales, descontoDoVale, statusParcelasVale } from './pagamentos'
 import type { DadosRecibo, DescontoRecibo } from '../services/gerarReciboPDF'
@@ -153,8 +153,7 @@ export async function consolidarFechamento(params: {
       const valorVTSabado = ehExcecao ? valorVTSabadoBase : 0
       const descontos = cf ? (descMap.get(cf.id) ?? []) : []
       const acrescimos = cf ? (acrescMap.get(cf.id) ?? []) : []
-      const diasSabadoBase = ehExcecao ? (cf?.dias_sabado ?? calcularSabadosDesde(vtvaMes, vtvaAno, func.data_admissao, func.data_fim_aviso)) : 0
-      const diasSabado = Math.max(0, diasSabadoBase - contarSabadosEmDescontos(descontos, vtvaMes, vtvaAno) - contarSabadosFeriado(feriadosDatas))
+      const diasSabado = ehExcecao ? calcularSabadosTrabalhados(vtvaMes, vtvaAno, func.data_admissao, func.data_fim_aviso, feriadosDatas, descontos) : 0
       const valorVA = resolverValorVA(func.valor_va, vaMap.get(func.empresa_id) ?? emp?.valor_va ?? 0)
       const diasUteisAuto = calcularDiasUteisAuto(vtvaMes, vtvaAno, func.folga_semanal, feriadosDatas, func.data_admissao, func.data_fim_aviso)
       const resultado = calcularVTVA({
@@ -260,6 +259,9 @@ export async function montarReciboVTVAAvulso(
   if (!func) return null
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const f = func as any
+  // Não gera recibo para um mês em que o funcionário não trabalha (antes da
+  // admissão ou depois do fim do aviso prévio).
+  if (!trabalhaNoMes(mes, ano, f.data_admissao, f.data_fim_aviso)) return null
   const uni = Array.isArray(f.unidades) ? f.unidades[0] : f.unidades
   const emp = uni?.empresas ? (Array.isArray(uni.empresas) ? uni.empresas[0] : uni.empresas) : null
   const empId = uni?.empresa_id
@@ -288,8 +290,7 @@ export async function montarReciboVTVAAvulso(
   const valorVTSabado = ehExcecao ? valorVTSabadoBase : 0
   const valorVA = resolverValorVA(f.valor_va, compVA)
   const diasUteis = calcularDiasUteisAuto(mes, ano, f.folga_semanal, feriadosDatas, f.data_admissao, f.data_fim_aviso)
-  const diasSabadoBase = ehExcecao ? calcularSabadosDesde(mes, ano, f.data_admissao, f.data_fim_aviso) : 0
-  const diasSabado = Math.max(0, diasSabadoBase - contarSabadosFeriado(feriadosDatas))
+  const diasSabado = ehExcecao ? calcularSabadosTrabalhados(mes, ano, f.data_admissao, f.data_fim_aviso, feriadosDatas, []) : 0
   const resultado = calcularVTVA({ diasUteis, diasFeriado: 0, diasSabado, diasDesconto: 0, valorVT, valorVTSabado, valorVA })
 
   return {
@@ -396,8 +397,7 @@ export async function listarRecibosVTVA(params: {
     const valorVTSabado = ehExcecao ? valorVTSabadoBase : 0
     const descontos = cf ? (descMap.get(cf.id) ?? []) : []
     const acrescimos = cf ? (acrescMap.get(cf.id) ?? []) : []
-    const diasSabadoBase = ehExcecao ? (cf?.dias_sabado ?? calcularSabadosDesde(mes, ano, func.data_admissao, func.data_fim_aviso)) : 0
-    const diasSabado = Math.max(0, diasSabadoBase - contarSabadosEmDescontos(descontos, mes, ano) - contarSabadosFeriado(feriadosDatas))
+    const diasSabado = ehExcecao ? calcularSabadosTrabalhados(mes, ano, func.data_admissao, func.data_fim_aviso, feriadosDatas, descontos) : 0
     const valorVA = resolverValorVA(func.valor_va, vaMap.get(func.empresa_id) ?? emp?.valor_va ?? 0)
     const diasUteis = calcularDiasUteisAuto(mes, ano, func.folga_semanal, feriadosDatas, func.data_admissao, func.data_fim_aviso)
     const resultado = calcularVTVA({ diasUteis, diasFeriado: 0, diasSabado, diasDesconto: cf?.dias_desconto ?? 0, valorVT, valorVTSabado, valorVA })
