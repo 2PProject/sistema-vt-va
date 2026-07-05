@@ -62,10 +62,15 @@ export default function FechamentoPage() {
     const alvos = empresasNoFechamento.filter(e => (fechados.get(e.id) === true) !== fechar)
     if (alvos.length === 0) { notify(`Todas as empresas já estão ${fechar ? 'fechadas' : 'abertas'}.`, 'ok'); return }
     setGerando('fech:todas')
-    for (const e of alvos) await definirFechamento(e.id, mes, ano, fechar)
+    const okIds: string[] = []
+    for (const e of alvos) {
+      const res = await definirFechamento(e.id, mes, ano, fechar)
+      if (res.ok) okIds.push(e.id)
+    }
     setGerando(null)
-    setFechados(prev => { const n = new Map(prev); alvos.forEach(e => n.set(e.id, fechar)); return n })
-    notify(`${alvos.length} empresa(s) ${fechar ? 'FECHADA(S)' : 'REABERTA(S)'} em ${fmtMes(mesRef)}.`, 'ok')
+    setFechados(prev => { const n = new Map(prev); okIds.forEach(id => n.set(id, fechar)); return n })
+    const falhas = alvos.length - okIds.length
+    notify(`${okIds.length} empresa(s) ${fechar ? 'FECHADA(S)' : 'REABERTA(S)'} em ${fmtMes(mesRef)}.${falhas > 0 ? ` ${falhas} falhou(aram).` : ''}`, falhas > 0 ? 'erro' : 'ok')
   }
 
   function notify(text: string, tipo: 'ok' | 'erro') {

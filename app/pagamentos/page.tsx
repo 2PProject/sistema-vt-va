@@ -76,6 +76,7 @@ export default function PagamentosPage() {
   }
 
   async function salvarEdicao(l: LinhaPagamento) {
+    if (fechada(l.empresa_id)) { notify('Mês FECHADO para esta empresa. Reabra no Fechamento para editar.', 'erro'); setEditId(null); return }
     const v = parseFloat(editValor.replace(',', '.'))
     if (isNaN(v) || v < 0) { notify('Valor inválido.', 'erro'); return }
     setSalvandoEdit(true)
@@ -216,7 +217,7 @@ export default function PagamentosPage() {
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {filtradas.map((l) => (
-                    <tr key={l.funcionario_id} className="hover:bg-gray-50 transition-colors">
+                    <tr key={l.registroId} className="hover:bg-gray-50 transition-colors">
                       <td className="table-cell text-xs text-gray-500">{l.empresaNome}</td>
                       <td className="table-cell">
                         <div className="font-medium text-gray-900">{l.funcionarioNome}</div>
