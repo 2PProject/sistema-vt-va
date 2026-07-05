@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { Empresa } from '../lib/supabase'
+import CampoMoeda from './CampoMoeda'
 
 interface FormEmpresaProps {
   empresa?: Empresa | null
@@ -91,15 +92,7 @@ export default function FormEmpresa({ empresa, onSave, onCancel }: FormEmpresaPr
 
       <div>
         <label className="label-field">Valor VA padrão / dia útil (R$)</label>
-        <input
-          type="number"
-          value={valorVA}
-          onChange={(e) => setValorVA(Number(e.target.value))}
-          min={0}
-          step={0.01}
-          className="input-field"
-          placeholder="0,00"
-        />
+        <CampoMoeda value={valorVA} onChange={setValorVA} />
       </div>
 
       <div className="flex gap-3 pt-2">

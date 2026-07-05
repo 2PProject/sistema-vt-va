@@ -15,6 +15,7 @@ import {
   PagamentoVale,
 } from '../../../lib/pagamentos'
 import { fechadosDaEmpresa } from '../../../lib/fechamentoStatus'
+import CampoMoeda from '../../../components/CampoMoeda'
 
 type FuncOpt = { id: string; nome: string; empresa_id: string; empresaNome: string }
 
@@ -62,7 +63,7 @@ export default function ValesPage() {
   const [fFunc, setFFunc] = useState('')
   const [fData, setFData] = useState(hoje())
   const [fDescricao, setFDescricao] = useState('')
-  const [fValor, setFValor] = useState('')
+  const [fValor, setFValor] = useState(0)
   const [fParcelas, setFParcelas] = useState(1)
   const [fMesInicio, setFMesInicio] = useState(competenciaMesAnterior())
   const [fErro, setFErro] = useState('')
@@ -153,7 +154,7 @@ export default function ValesPage() {
 
   function abrirForm() {
     setEditId(null)
-    setFEmpresa(filtroEmpresa); setFFunc(''); setFData(hoje()); setFDescricao(''); setFValor(''); setFParcelas(1)
+    setFEmpresa(filtroEmpresa); setFFunc(''); setFData(hoje()); setFDescricao(''); setFValor(0); setFParcelas(1)
     setFMesInicio(competenciaMesAnterior()); setFErro(''); setShowForm(true)
   }
 
@@ -163,19 +164,19 @@ export default function ValesPage() {
     setFFunc(v.funcionario_id)
     setFData(v.data)
     setFDescricao(v.descricao)
-    setFValor(String(v.valor_total))
+    setFValor(v.valor_total)
     setFParcelas(Math.max(1, v.parcelas ?? 1))
     setFMesInicio(v.mes_inicio)
     setFErro(''); setShowForm(true)
   }
 
-  const valorNum = parseFloat(fValor.replace(',', '.'))
-  const valorParcela = !isNaN(valorNum) && fParcelas > 0 ? valorNum / fParcelas : 0
+  const valorNum = fValor
+  const valorParcela = fParcelas > 0 ? valorNum / fParcelas : 0
 
   async function salvar() {
     if (!fFunc) { setFErro('Selecione o profissional.'); return }
     if (!fDescricao.trim()) { setFErro('Informe a descrição.'); return }
-    if (isNaN(valorNum) || valorNum <= 0) { setFErro('Informe um valor válido.'); return }
+    if (valorNum <= 0) { setFErro('Informe um valor válido.'); return }
     if (fParcelas < 1) { setFErro('Número de parcelas inválido.'); return }
     const func = funcs.find(f => f.id === fFunc)
     if (!func) { setFErro('Profissional inválido.'); return }
@@ -433,7 +434,7 @@ export default function ValesPage() {
                   </div>
                   <div>
                     <label className="label-field">Valor total do desconto (R$)</label>
-                    <input type="number" step="0.01" min="0" className="input-field" value={fValor} onChange={e => setFValor(e.target.value)} placeholder="0,00" />
+                    <CampoMoeda value={fValor} onChange={setFValor} />
                   </div>
                 </div>
 

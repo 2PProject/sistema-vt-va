@@ -16,7 +16,7 @@ export default function FuncionariosPage() {
   const [empresaIdEditando, setEmpresaIdEditando] = useState<string>('')
   const [busca, setBusca] = useState('')
   const [filtroEmpresa, setFiltroEmpresa] = useState<string>('')
-  const [filtroStatus, setFiltroStatus] = useState<'todos' | 'ativo' | 'inativo'>('todos')
+  const [filtroStatus, setFiltroStatus] = useState<'todos' | 'ativo' | 'inativo'>('ativo')
 
   useEffect(() => {
     Promise.all([carregar(), carregarEmpresas(), carregarCargos()])
@@ -193,9 +193,9 @@ export default function FuncionariosPage() {
               onChange={(e) => setFiltroStatus(e.target.value as 'todos' | 'ativo' | 'inativo')}
               className="input-field sm:w-36"
             >
-              <option value="todos">Todos</option>
               <option value="ativo">Ativos</option>
               <option value="inativo">Inativos</option>
+              <option value="todos">Todos</option>
             </select>
           </div>
         </div>

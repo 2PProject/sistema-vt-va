@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { Funcionario, Empresa, Cargo } from '../lib/supabase'
 import { FOLGAS } from '../utils/calculoVT'
+import CampoMoeda from './CampoMoeda'
 
 interface FormFuncionarioProps {
   funcionario?: Funcionario | null
@@ -254,42 +255,18 @@ export default function FormFuncionario({
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="label-field">Valor VT / dia útil (R$)</label>
-            <input
-              type="number"
-              value={valorVT}
-              onChange={(e) => setValorVT(Number(e.target.value))}
-              min={0}
-              step={0.01}
-              className="input-field"
-              placeholder="0,00"
-            />
+            <CampoMoeda value={valorVT} onChange={setValorVT} />
           </div>
           <div>
             <label className="label-field">Valor VT / Sábado (R$)</label>
-            <input
-              type="number"
-              value={valorVTSabado}
-              onChange={(e) => setValorVTSabado(Number(e.target.value))}
-              min={0}
-              step={0.01}
-              className="input-field"
-              placeholder="0,00"
-            />
+            <CampoMoeda value={valorVTSabado} onChange={setValorVTSabado} />
           </div>
         </div>
 
         {/* Valor VA — exceção por funcionário */}
         <div>
           <label className="label-field">Valor VA / dia (R$) — exceção</label>
-          <input
-            type="number"
-            value={valorVA}
-            onChange={(e) => setValorVA(Number(e.target.value))}
-            min={0}
-            step={0.01}
-            className="input-field"
-            placeholder="0,00"
-          />
+          <CampoMoeda value={valorVA} onChange={setValorVA} />
           <p className="text-xs text-gray-400 mt-1">
             Opcional. Deixe <strong>0</strong> para usar o VA da empresa/competência.
             Informe um valor apenas em caso de exceção para este funcionário.

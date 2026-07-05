@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import LayoutAdmin from '../../components/LayoutAdmin'
 import { supabase, Empresa, Funcionario, getOrCreateDefaultUnidade } from '../../lib/supabase'
 import { formatarMoeda } from '../../utils/calculoVT'
+import CampoMoeda from '../../components/CampoMoeda'
 
 type FuncRow = {
   id: string
@@ -194,15 +195,9 @@ export default function ValoresBeneficiosPage() {
                 <div className="flex items-end gap-6">
                   <div>
                     <label className="label-field">Valor VA / dia útil (R$)</label>
-                    <input
-                      type="number"
-                      value={valorVA}
-                      onChange={(e) => setValorVA(Number(e.target.value))}
-                      min={0}
-                      step={0.01}
-                      className="input-field w-40 text-lg font-semibold"
-                      placeholder="0,00"
-                    />
+                    <div className="w-44">
+                      <CampoMoeda value={valorVA} onChange={setValorVA} className="text-lg font-semibold" />
+                    </div>
                   </div>
                   <div className="pb-1 text-sm text-gray-500">
                     Mensal estimado (22 dias): <span className="font-semibold text-blue-600">{formatarMoeda(22 * valorVA)}</span> por funcionário
@@ -260,14 +255,9 @@ export default function ValoresBeneficiosPage() {
                               <td className="table-cell text-center text-xs text-gray-500">{formatarMoeda(f.valorVAEmpresa)}</td>
                             )}
                             <td className="table-cell text-center">
-                              <input
-                                type="number"
-                                value={f.valor_vt}
-                                onChange={(e) => atualizarFunc(idx, 'valor_vt', Number(e.target.value))}
-                                min={0}
-                                step={0.01}
-                                className="w-28 border border-gray-300 rounded px-2 py-1.5 text-center text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
-                              />
+                              <div className="w-32 mx-auto">
+                                <CampoMoeda value={f.valor_vt} onChange={(v) => atualizarFunc(idx, 'valor_vt', v)} />
+                              </div>
                             </td>
                             <td className="table-cell text-center">
                               <div className="flex items-center justify-center gap-2">
@@ -278,15 +268,9 @@ export default function ValoresBeneficiosPage() {
                                   className="w-4 h-4 accent-blue-600 cursor-pointer"
                                 />
                                 {f.tem_sabado && (
-                                  <input
-                                    type="number"
-                                    value={f.valor_vt_sabado}
-                                    onChange={(e) => atualizarFunc(idx, 'valor_vt_sabado', Number(e.target.value))}
-                                    min={0}
-                                    step={0.01}
-                                    className="w-24 border border-blue-300 rounded px-2 py-1.5 text-center text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
-                                    placeholder="0,00"
-                                  />
+                                  <div className="w-28">
+                                    <CampoMoeda value={f.valor_vt_sabado} onChange={(v) => atualizarFunc(idx, 'valor_vt_sabado', v)} />
+                                  </div>
                                 )}
                               </div>
                             </td>
