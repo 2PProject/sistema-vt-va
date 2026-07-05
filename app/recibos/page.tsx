@@ -132,7 +132,16 @@ export default function RecibosPage() {
 
         {/* Filtros */}
         <div className="card">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div>
+              <label className="label-field">Mês / Ano</label>
+              <input
+                type="month"
+                className="input-field"
+                value={`${ano}-${String(mes).padStart(2, '0')}`}
+                onChange={e => { const [a, m] = e.target.value.split('-').map(Number); if (a && m) { setAno(a); setMes(m) } }}
+              />
+            </div>
             <div className="md:col-span-2">
               <label className="label-field">Empresa</label>
               <select value={empresaId} onChange={e => setEmpresaId(e.target.value)} className="input-field">
@@ -141,18 +150,9 @@ export default function RecibosPage() {
               </select>
             </div>
             <div>
-              <label className="label-field">Mês</label>
-              <select value={mes} onChange={e => setMes(Number(e.target.value))} className="input-field">
-                {MESES.map((m, i) => <option key={i + 1} value={i + 1}>{m}</option>)}
-              </select>
+              <label className="label-field">Buscar</label>
+              <input className="input-field" placeholder="Funcionário ou empresa..." value={busca} onChange={e => setBusca(e.target.value)} />
             </div>
-            <div>
-              <label className="label-field">Ano</label>
-              <input type="number" value={ano} onChange={e => setAno(Number(e.target.value))} className="input-field" min={2020} max={2099} />
-            </div>
-          </div>
-          <div className="mt-4">
-            <input className="input-field" placeholder="Buscar funcionário ou empresa..." value={busca} onChange={e => setBusca(e.target.value)} />
           </div>
         </div>
 
