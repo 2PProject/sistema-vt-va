@@ -135,13 +135,18 @@ export default function CompetenciasPage() {
 
   const modoTodas = empresaId === TODAS
 
+  // A apuração de VT/VA do mês M alimenta o PAGAMENTO do mês anterior (M-1).
+  // Então ela fica travada quando o fechamento de M-1 está fechado.
+  const pagMes = mes === 1 ? 12 : mes - 1
+  const pagAno = mes === 1 ? ano - 1 : ano
+
   useEffect(() => {
     if (modoTodas) { setMesFechado(false); return }
-    isMesFechado(empresaId, mes, ano).then(setMesFechado)
-  }, [empresaId, mes, ano, modoTodas])
+    isMesFechado(empresaId, pagMes, pagAno).then(setMesFechado)
+  }, [empresaId, pagMes, pagAno, modoTodas])
 
-  // Empresas fechadas na competência (usado para travar os salvamentos em massa)
-  useEffect(() => { listarFechamentos(mes, ano).then(setFechadosMap) }, [mes, ano])
+  // Empresas com o fechamento do pagamento fechado (trava os salvamentos em massa)
+  useEffect(() => { listarFechamentos(pagMes, pagAno).then(setFechadosMap) }, [pagMes, pagAno])
   function empresaFechada(empId: string | undefined): boolean {
     return !!empId && fechadosMap.get(empId) === true
   }
@@ -676,7 +681,9 @@ export default function CompetenciasPage() {
     const sabadosDoMes = calcularSabadosDoMes(mes, ano)
 
     await Promise.all(empresas.map(async (emp) => {
-      if (empresaFechada(emp.id)) return  // competência fechada — não inicializa
+      // Inicializar é "add-only": só cria apuração para funcionários que ainda
+      // não têm (não altera os já apurados), então roda mesmo com o mês fechado
+      // — permite gerar o VT/VA de um funcionário novo após o fechamento.
       const unidadeId = await getOrCreateDefaultUnidade(emp.id)
       if (!unidadeId) return
 
@@ -836,11 +843,14 @@ export default function CompetenciasPage() {
     <LayoutAdmin title="Apuração VT/VA">
       <div className="space-y-6">
 
-        {/* Aviso de competência fechada */}
+        {/* Aviso de apuração travada (fechamento do pagamento do mês anterior) */}
         {mesFechado && !modoTodas && (
-          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm flex items-center gap-2">
-            <span className="text-lg">🔒</span>
-            <span><strong>Competência fechada.</strong> Reabra o mês em Fechamento do Mês para editar a apuração desta empresa.</span>
+          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
+            <div className="flex items-center gap-2">
+              <span className="text-lg">🔒</span>
+              <span><strong>Apuração travada.</strong> O pagamento de {MESES[pagMes - 1]}/{pagAno} está fechado (este VT/VA é do pagamento dele). Reabra em Fechamento do Mês para editar.</span>
+            </div>
+            <p className="mt-1 pl-7 text-xs text-red-500">Funcionário novo? Em <strong>Todas as empresas</strong> use <strong>Inicializar mês</strong> — ele apenas adiciona quem ainda não foi apurado (não altera os fechados) e o recibo dele pode ser gerado no Fechamento.</p>
           </div>
         )}
 

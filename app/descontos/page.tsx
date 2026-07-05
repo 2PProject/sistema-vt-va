@@ -141,12 +141,17 @@ export default function DescontosPage() {
   const [mesFechado, setMesFechado] = useState(false)
   const [fechadosMap, setFechadosMap] = useState<Map<string, boolean>>(new Map())
 
+  // A apuração/descontos de VT/VA do mês M alimenta o PAGAMENTO do mês anterior;
+  // fica travada quando o fechamento de M-1 está fechado.
+  const pagMes = mes === 1 ? 12 : mes - 1
+  const pagAno = mes === 1 ? ano - 1 : ano
+
   useEffect(() => {
     if (!selecionado) { setMesFechado(false); return }
-    isMesFechado(selecionado.empresa.id, mes, ano).then(setMesFechado)
-  }, [selecionado, mes, ano])
+    isMesFechado(selecionado.empresa.id, pagMes, pagAno).then(setMesFechado)
+  }, [selecionado, pagMes, pagAno])
 
-  useEffect(() => { listarFechamentos(mes, ano).then(setFechadosMap) }, [mes, ano])
+  useEffect(() => { listarFechamentos(pagMes, pagAno).then(setFechadosMap) }, [pagMes, pagAno])
 
   // Bulk feriado view
   const [feriadosBulk, setFeriadosBulk] = useState<Array<{ data: string; descricao: string }>>([])
@@ -1308,7 +1313,7 @@ export default function DescontosPage() {
 
               {mesFechado && (
                 <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-2 rounded-lg text-sm mb-3">
-                  🔒 Competência fechada — reabra o mês no Fechamento para editar.
+                  🔒 Travado — o pagamento de {MESES[pagMes - 1]}/{pagAno} está fechado (este VT/VA é dele). Reabra em Fechamento do Mês.
                 </div>
               )}
               {/* Botões de ação */}

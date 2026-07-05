@@ -38,12 +38,19 @@ export async function consolidarFechamento(params: {
   const { mes, ano, empresaId } = params
   const mesRef = `${ano}-${String(mes).padStart(2, '0')}`
 
-  await garantirFeriadosAno(ano)
-  const mesStr = String(mes).padStart(2, '0')
-  const ultimoDia = new Date(ano, mes, 0).getDate()
+  // Lógica de pagamento: o pagamento da competência (ex.: Junho) usa o salário
+  // e os vales de Junho, mas o VT/VA do MÊS SEGUINTE (Julho), pois o benefício
+  // é adiantado para o mês que se inicia.
+  const vtvaMes = mes === 12 ? 1 : mes + 1
+  const vtvaAno = mes === 12 ? ano + 1 : ano
+
+  await garantirFeriadosAno(vtvaAno)
+  const vMesStr = String(vtvaMes).padStart(2, '0')
+  const vUltimoDia = new Date(vtvaAno, vtvaMes, 0).getDate()
   const [{ data: feriadosRows }, { data: empresasData }, { data: funcsData }] = await Promise.all([
+    // feriados do mês do VT/VA (mês seguinte)
     supabase.from('feriados').select('data')
-      .gte('data', `${ano}-${mesStr}-01`).lte('data', `${ano}-${mesStr}-${String(ultimoDia).padStart(2, '0')}`),
+      .gte('data', `${vtvaAno}-${vMesStr}-01`).lte('data', `${vtvaAno}-${vMesStr}-${String(vUltimoDia).padStart(2, '0')}`),
     supabase.from('empresas').select('*'),
     supabase.from('funcionarios').select('*, unidades(empresa_id)'),
   ])
@@ -75,7 +82,7 @@ export async function consolidarFechamento(params: {
     const unidadeId = await getOrCreateDefaultUnidade(empId)
     if (!unidadeId) return
     const { data: comp } = await supabase.from('competencias').select('*')
-      .eq('unidade_id', unidadeId).eq('mes', mes).eq('ano', ano).limit(1).maybeSingle()
+      .eq('unidade_id', unidadeId).eq('mes', vtvaMes).eq('ano', vtvaAno).limit(1).maybeSingle()
     if (!comp) return
     compMap.set((comp as Competencia).id, comp as Competencia)
     const { data: cfs } = await supabase.from('competencia_funcionario').select('*')
@@ -137,7 +144,7 @@ export async function consolidarFechamento(params: {
     // ── VT/VA ──
     let vtvaTotal = 0
     let reciboVTVA: DadosRecibo | null = null
-    if (cf && comp && trabalhaNoMes(mes, ano, func.data_admissao, func.data_fim_aviso)) {
+    if (cf && comp && trabalhaNoMes(vtvaMes, vtvaAno, func.data_admissao, func.data_fim_aviso)) {
       const valorVTSabadoBase = cf.valor_vt_sabado ?? func.valor_vt_sabado ?? 0
       const ehExcecao = valorVTSabadoBase > 0
       const valorVT = cf.valor_vt ?? func.valor_vt ?? 0
@@ -145,9 +152,9 @@ export async function consolidarFechamento(params: {
       const descontos = descMap.get(cf.id) ?? []
       const acrescimos = acrescMap.get(cf.id) ?? []
       const diasSabadoBase = ehExcecao ? (cf.dias_sabado ?? 0) : 0
-      const diasSabado = Math.max(0, diasSabadoBase - contarSabadosEmDescontos(descontos, mes, ano) - contarSabadosFeriado(feriadosDatas))
+      const diasSabado = Math.max(0, diasSabadoBase - contarSabadosEmDescontos(descontos, vtvaMes, vtvaAno) - contarSabadosFeriado(feriadosDatas))
       const valorVA = resolverValorVA(func.valor_va, comp.valor_va)
-      const diasUteisAuto = calcularDiasUteisAuto(mes, ano, func.folga_semanal, feriadosDatas, func.data_admissao, func.data_fim_aviso)
+      const diasUteisAuto = calcularDiasUteisAuto(vtvaMes, vtvaAno, func.folga_semanal, feriadosDatas, func.data_admissao, func.data_fim_aviso)
       const resultado = calcularVTVA({
         diasUteis: diasUteisAuto, diasFeriado: 0, diasSabado,
         diasDesconto: cf.dias_desconto ?? 0, valorVT, valorVTSabado, valorVA,
@@ -156,7 +163,7 @@ export async function consolidarFechamento(params: {
       reciboVTVA = {
         razaoSocial: emp?.razao_social ?? '', cnpj: emp?.cnpj ?? '',
         nomeFuncionario: func.nome, funcao: func.funcao, ctps: func.ctps ?? '', serie: func.serie ?? '',
-        mes, ano, diasUteis: diasUteisAuto, diasEfetivos: resultado.diasEfetivos, diasSabado,
+        mes: vtvaMes, ano: vtvaAno, diasUteis: diasUteisAuto, diasEfetivos: resultado.diasEfetivos, diasSabado,
         valorVT, valorVTSabado, valorVA, resultado,
         dataAdmissao: func.data_admissao ?? null, dataFimAviso: func.data_fim_aviso ?? null,
         descontos, acrescimos,
