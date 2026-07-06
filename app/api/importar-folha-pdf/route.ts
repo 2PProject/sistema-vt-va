@@ -1,38 +1,154 @@
-import Anthropic from '@anthropic-ai/sdk'
+// Lê uma folha de pagamento em PDF e extrai (nome + valor líquido) de cada
+// profissional usando IA. Prioriza o Google Gemini (plano GRATUITO — chave em
+// https://aistudio.google.com/apikey) e, se preferir, cai para a Anthropic.
+// A chave fica SÓ no servidor, nunca no navegador.
 
-// Roda no Node (usa a chave da IA no servidor — nunca no navegador).
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-const MAX_BYTES = 25 * 1024 * 1024 // 25 MB — bem abaixo do limite de 32 MB da API
+const MAX_BYTES = 12 * 1024 * 1024 // 12 MB (limite seguro para envio "inline" ao Gemini)
 
-// Schema de extração: a IA devolve exatamente esta forma.
-const SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    funcionarios: {
-      type: 'array',
-      items: {
-        type: 'object',
-        additionalProperties: false,
+type FuncExtraido = { nome: string; valorLiquido: number; unidade: string }
+
+const PROMPT =
+  'Este PDF é uma folha de pagamento brasileira. Extraia, para CADA profissional listado, ' +
+  'o nome completo e o VALOR LÍQUIDO a receber (o "líquido a pagar" / "valor líquido" / "total líquido" — ' +
+  'NÃO o salário bruto, NÃO os proventos, NÃO os descontos). Valores no formato brasileiro ' +
+  '(ex.: "1.234,56") devem virar o número 1234.56. Ignore linhas de totais/somatórios gerais e ' +
+  'cabeçalhos. Se a empresa/unidade de um profissional estiver visível, informe-a em "unidade"; ' +
+  'caso contrário deixe "unidade" como string vazia. Retorne apenas os dados no formato solicitado.'
+
+function normalizar(brutos: unknown): FuncExtraido[] {
+  const arr = Array.isArray(brutos) ? brutos : []
+  return arr
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .map((f: any) => ({
+      nome: String(f?.nome ?? '').trim(),
+      valorLiquido: Number(f?.valorLiquido) || 0,
+      unidade: String(f?.unidade ?? '').trim(),
+    }))
+    .filter((f) => f.nome && f.valorLiquido > 0)
+}
+
+// ── Google Gemini (gratuito) ─────────────────────────────────────────────
+async function extrairComGemini(base64: string, apiKey: string): Promise<FuncExtraido[]> {
+  const model = process.env.GEMINI_MODEL || 'gemini-2.0-flash'
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`
+
+  const body = {
+    contents: [
+      {
+        parts: [
+          { inline_data: { mime_type: 'application/pdf', data: base64 } },
+          { text: PROMPT },
+        ],
+      },
+    ],
+    generationConfig: {
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: 'OBJECT',
         properties: {
-          nome: { type: 'string', description: 'Nome completo do profissional, como aparece na folha.' },
-          valorLiquido: { type: 'number', description: 'Valor LÍQUIDO a receber (líquido a pagar), em reais. Apenas o número.' },
-          unidade: { type: 'string', description: 'Empresa/unidade/filial do profissional se aparecer na folha; senão string vazia.' },
+          funcionarios: {
+            type: 'ARRAY',
+            items: {
+              type: 'OBJECT',
+              properties: {
+                nome: { type: 'STRING' },
+                valorLiquido: { type: 'NUMBER' },
+                unidade: { type: 'STRING' },
+              },
+              required: ['nome', 'valorLiquido', 'unidade'],
+            },
+          },
         },
-        required: ['nome', 'valorLiquido', 'unidade'],
+        required: ['funcionarios'],
       },
     },
-  },
-  required: ['funcionarios'],
-} as const
+  }
+
+  const resp = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+
+  if (!resp.ok) {
+    const detalhe = await resp.text().catch(() => '')
+    throw new Error(`Gemini HTTP ${resp.status}${detalhe ? ': ' + detalhe.slice(0, 180) : ''}`)
+  }
+
+  const data = await resp.json()
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const texto: string | undefined = data?.candidates?.[0]?.content?.parts
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ?.map((p: any) => p?.text ?? '')
+    .join('')
+  if (!texto) throw new Error('Gemini não retornou dados.')
+
+  const parsed = JSON.parse(texto)
+  return normalizar(parsed?.funcionarios)
+}
+
+// ── Anthropic (opcional / pago) ──────────────────────────────────────────
+async function extrairComAnthropic(base64: string, apiKey: string): Promise<FuncExtraido[]> {
+  const { default: Anthropic } = await import('@anthropic-ai/sdk')
+  const client = new Anthropic({ apiKey })
+  const response = await client.messages.create({
+    model: 'claude-opus-4-8',
+    max_tokens: 16000,
+    output_config: {
+      format: {
+        type: 'json_schema',
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            funcionarios: {
+              type: 'array',
+              items: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                  nome: { type: 'string' },
+                  valorLiquido: { type: 'number' },
+                  unidade: { type: 'string' },
+                },
+                required: ['nome', 'valorLiquido', 'unidade'],
+              },
+            },
+          },
+          required: ['funcionarios'],
+        },
+      },
+    },
+    messages: [
+      {
+        role: 'user',
+        content: [
+          { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } },
+          { type: 'text', text: PROMPT },
+        ],
+      },
+    ],
+  })
+  if (response.stop_reason === 'refusal') throw new Error('A IA recusou processar este documento.')
+  const bloco = response.content.find((b) => b.type === 'text')
+  const texto = bloco && 'text' in bloco ? (bloco as { text: string }).text : undefined
+  if (!texto) throw new Error('A IA não retornou dados legíveis.')
+  return normalizar(JSON.parse(texto)?.funcionarios)
+}
 
 export async function POST(req: Request) {
-  const apiKey = process.env.ANTHROPIC_API_KEY
-  if (!apiKey) {
+  const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY
+  const anthropicKey = process.env.ANTHROPIC_API_KEY
+  if (!geminiKey && !anthropicKey) {
     return Response.json(
-      { erro: 'Leitura por IA indisponível: defina a variável de ambiente ANTHROPIC_API_KEY no servidor.' },
+      {
+        erro:
+          'Leitura por IA indisponível. Configure uma chave GRATUITA do Google Gemini na variável de ambiente ' +
+          'GEMINI_API_KEY (obtenha em https://aistudio.google.com/apikey). Alternativa paga: ANTHROPIC_API_KEY.',
+      },
       { status: 503 },
     )
   }
@@ -53,67 +169,17 @@ export async function POST(req: Request) {
   const buffer = Buffer.from(await arquivo.arrayBuffer())
   if (buffer.length === 0) return Response.json({ erro: 'Arquivo vazio.' }, { status: 400 })
   if (buffer.length > MAX_BYTES) {
-    return Response.json({ erro: 'PDF muito grande (máx. 25 MB).' }, { status: 413 })
+    return Response.json({ erro: 'PDF muito grande (máx. 12 MB).' }, { status: 413 })
   }
   const base64 = buffer.toString('base64')
 
-  const client = new Anthropic({ apiKey })
-
   try {
-    const response = await client.messages.create({
-      model: 'claude-opus-4-8',
-      max_tokens: 16000,
-      output_config: { format: { type: 'json_schema', schema: SCHEMA } },
-      messages: [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'document',
-              source: { type: 'base64', media_type: 'application/pdf', data: base64 },
-            },
-            {
-              type: 'text',
-              text:
-                'Este PDF é uma folha de pagamento brasileira. Extraia, para CADA profissional listado, ' +
-                'o nome completo e o VALOR LÍQUIDO a receber (o "líquido a pagar" / "valor líquido" / "total líquido" — ' +
-                'NÃO o salário bruto, NÃO os proventos, NÃO os descontos). Valores no formato brasileiro ' +
-                '(ex.: "1.234,56") devem virar o número 1234.56. Ignore linhas de totais/somatórios gerais e ' +
-                'cabeçalhos. Se a empresa/unidade de um profissional estiver visível, informe-a em "unidade"; ' +
-                'caso contrário deixe "unidade" como string vazia. Retorne apenas os dados no formato solicitado.',
-            },
-          ],
-        },
-      ],
-    })
-
-    if (response.stop_reason === 'refusal') {
-      return Response.json({ erro: 'A IA recusou processar este documento.' }, { status: 422 })
-    }
-
-    const texto = response.content.find((b): b is Anthropic.TextBlock => b.type === 'text')?.text
-    if (!texto) {
-      return Response.json({ erro: 'A IA não retornou dados legíveis.' }, { status: 502 })
-    }
-
-    let parsed: { funcionarios?: { nome: string; valorLiquido: number; unidade?: string }[] }
-    try {
-      parsed = JSON.parse(texto)
-    } catch {
-      return Response.json({ erro: 'Resposta da IA em formato inesperado.' }, { status: 502 })
-    }
-
-    const funcionarios = (parsed.funcionarios ?? [])
-      .map((f) => ({
-        nome: String(f?.nome ?? '').trim(),
-        valorLiquido: Number(f?.valorLiquido) || 0,
-        unidade: String(f?.unidade ?? '').trim(),
-      }))
-      .filter((f) => f.nome && f.valorLiquido > 0)
-
+    const funcionarios = geminiKey
+      ? await extrairComGemini(base64, geminiKey)
+      : await extrairComAnthropic(base64, anthropicKey as string)
     return Response.json({ funcionarios })
   } catch (e) {
-    const msg = e instanceof Anthropic.APIError ? `Erro da IA (${e.status}).` : 'Falha ao processar o PDF.'
+    const msg = e instanceof Error ? e.message : 'Falha ao processar o PDF.'
     return Response.json({ erro: msg }, { status: 502 })
   }
 }
