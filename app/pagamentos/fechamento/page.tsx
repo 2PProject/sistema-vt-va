@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import LayoutAdmin from '../../../components/LayoutAdmin'
 import { supabase, Empresa } from '../../../lib/supabase'
 import { formatarMoeda, MESES } from '../../../utils/calculoVT'
-import { competenciaMesAnterior, atualizarPagamentoLiquido } from '../../../lib/pagamentos'
+import { competenciaMesAnterior, atualizarPagamentoLiquido, importarFolhaPdf, processarImportacaoSalarios, LinhaImportSalario } from '../../../lib/pagamentos'
 import { consolidarFechamento, montarCSVFechamento, montarReciboVTVAAvulso, LinhaFechamento } from '../../../lib/fechamento'
 import { listarFechamentos, definirFechamento } from '../../../lib/fechamentoStatus'
 import CampoMoeda from '../../../components/CampoMoeda'
@@ -46,6 +46,31 @@ export default function FechamentoPage() {
   const [avEmpresa, setAvEmpresa] = useState('')
   const [avFunc, setAvFunc] = useState('')
   const [avLoad, setAvLoad] = useState(false)
+
+  // Importar folha (PDF via IA) direto no fechamento
+  const [modalPdf, setModalPdf] = useState(false)
+  const [pdfEmpresa, setPdfEmpresa] = useState('')
+  const [pdfPreview, setPdfPreview] = useState<LinhaImportSalario[]>([])
+  const [pdfErros, setPdfErros] = useState<string[]>([])
+  const [pdfLoad, setPdfLoad] = useState(false)
+
+  async function handlePdf(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]; if (!file) return
+    setPdfLoad(true); setPdfPreview([]); setPdfErros([])
+    const { linhas, erros } = await importarFolhaPdf(file, pdfEmpresa || undefined)
+    setPdfPreview(linhas); setPdfErros(erros); setPdfLoad(false)
+    e.target.value = ''
+  }
+
+  async function executarImportPdf() {
+    if (pdfPreview.length === 0) return
+    setPdfLoad(true)
+    const { gravados, erros } = await processarImportacaoSalarios(pdfPreview, mesRef)
+    setPdfLoad(false)
+    if (erros.length) setPdfErros(erros)
+    notify(`${gravados} salário(s) importado(s) para ${fmtMes(mesRef)}.`, erros.length && !gravados ? 'erro' : 'ok')
+    if (gravados > 0) { setModalPdf(false); setPdfPreview([]); setPdfErros([]); carregar() }
+  }
 
   useEffect(() => {
     supabase.from('funcionarios')
@@ -289,10 +314,16 @@ export default function FechamentoPage() {
     <LayoutAdmin
       title="Fechamento do Mês"
       actions={
-        <button className="btn-secondary flex items-center gap-2 text-sm" onClick={() => { setModalAvulso(true); setAvEmpresa(empresaFiltro); setAvFunc('') }}>
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
-          Recibo avulso VT/VA
-        </button>
+        <div className="flex items-center gap-2">
+          <button className="btn-secondary flex items-center gap-2 text-sm" onClick={() => { setModalPdf(true); setPdfEmpresa(empresaFiltro); setPdfPreview([]); setPdfErros([]) }}>
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
+            Importar folha (PDF)
+          </button>
+          <button className="btn-secondary flex items-center gap-2 text-sm" onClick={() => { setModalAvulso(true); setAvEmpresa(empresaFiltro); setAvFunc('') }}>
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+            Recibo avulso VT/VA
+          </button>
+        </div>
       }
     >
       <div className="space-y-6">
@@ -524,6 +555,71 @@ export default function FechamentoPage() {
             )}
           </div>
         </div>
+
+        {/* Modal Importar folha (PDF via IA) */}
+        {modalPdf && (
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={e => { if (e.target === e.currentTarget) { setModalPdf(false); setPdfPreview([]); setPdfErros([]) } }}>
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl p-6 max-h-[90vh] overflow-auto">
+              <h2 className="text-lg font-bold text-gray-800 mb-1">Importar folha (PDF) — {fmtMes(mesRef)}</h2>
+              <div className="bg-blue-50 border border-blue-200 text-blue-800 text-xs rounded-lg p-3 my-3">
+                Envie a <strong>folha de pagamento em PDF</strong>. A IA lê o documento e extrai o <strong>valor líquido</strong> de cada profissional.
+                Confira a prévia antes de importar. Competência aplicada: <strong>{fmtMes(mesRef)}</strong>. Empresas já fechadas são ignoradas.
+              </div>
+              <div className="mb-3">
+                <label className="label-field">Empresa (quando o PDF não identifica a unidade)</label>
+                <select className="input-field" value={pdfEmpresa} onChange={e => setPdfEmpresa(e.target.value)} disabled={pdfLoad}>
+                  <option value="">Detectar pelo próprio PDF</option>
+                  {empresas.map(e => <option key={e.id} value={e.id}>{e.razao_social}</option>)}
+                </select>
+              </div>
+              <div className="mb-4">
+                <input type="file" accept="application/pdf,.pdf" onChange={handlePdf} disabled={pdfLoad} className="input-field w-full" />
+              </div>
+
+              {pdfLoad && <div className="text-sm text-gray-400 mb-3">A IA está lendo o PDF... isso pode levar alguns segundos.</div>}
+
+              {pdfErros.length > 0 && (
+                <div className="bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-lg p-3 mb-4">
+                  <strong>Avisos / não encontrados ({pdfErros.length}):</strong>
+                  <ul className="mt-1 list-disc pl-5 max-h-40 overflow-auto">
+                    {pdfErros.map((er, i) => <li key={i}>{er}</li>)}
+                  </ul>
+                </div>
+              )}
+
+              {pdfPreview.length > 0 && (
+                <div className="mb-4">
+                  <div className="text-sm font-semibold mb-2">{pdfPreview.length} registro(s) prontos para importar</div>
+                  <div className="border border-gray-200 rounded-lg max-h-60 overflow-auto">
+                    <table className="w-full text-xs">
+                      <thead><tr className="bg-gray-50 sticky top-0">
+                        <th className="table-header">Profissional</th>
+                        <th className="table-header">Empresa</th>
+                        <th className="table-header text-right">Líquido</th>
+                      </tr></thead>
+                      <tbody>
+                        {pdfPreview.map((l, i) => (
+                          <tr key={i} className="border-t border-gray-100">
+                            <td className="table-cell">{l.funcionarioNome}</td>
+                            <td className="table-cell">{l.empresaNome}</td>
+                            <td className="table-cell text-right">{formatarMoeda(l.valorLiquido)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex gap-3 pt-2">
+                <button className="btn-primary flex-1" onClick={executarImportPdf} disabled={pdfLoad || pdfPreview.length === 0}>
+                  {pdfLoad ? 'Importando...' : `Importar ${pdfPreview.length} registro(s)`}
+                </button>
+                <button className="btn-secondary flex-1" onClick={() => { setModalPdf(false); setPdfPreview([]); setPdfErros([]) }}>Fechar</button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Modal Recibo avulso VT/VA */}
         {modalAvulso && (
