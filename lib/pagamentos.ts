@@ -277,31 +277,41 @@ function parseValorBR(raw: unknown): number {
   return parseFloat(s)
 }
 
+/** Linha "crua" de importação, antes de casar empresa/funcionário. */
+export type LinhaBrutaImport = {
+  nome: string
+  ident: string          // CNPJ/apelido/unidade informado (pode vir vazio)
+  valor: number
+  pix?: string
+  ref?: string           // rótulo de origem (aba, página, etc.) usado nas mensagens de erro
+}
+
 /**
- * Lê a planilha de salário líquido. Cada linha deve conter:
- *   - Nome do profissional (funcionário já cadastrado)
- *   - CNPJ ou Apelido da empresa
- *   - Valor líquido a receber
- * Casa a empresa por CNPJ ou apelido e o funcionário pelo nome dentro da empresa.
+ * Casa linhas cruas contra o cadastro: resolve a empresa (por CNPJ ou apelido,
+ * ou o `defaultEmpresaId` quando a linha não traz identificador) e o funcionário
+ * pelo nome dentro da empresa. É o núcleo compartilhado pelas importações de
+ * planilha (.xlsx) e de folha em PDF, garantindo o MESMO critério de casamento.
  */
-export async function importarPlanilhaSalarios(
-  arquivo: File
+export async function casarLinhasImport(
+  brutas: LinhaBrutaImport[],
+  defaultEmpresaId?: string
 ): Promise<{ linhas: LinhaImportSalario[]; erros: string[] }> {
-  const XLSX = await import('xlsx')
-  const buffer = await arquivo.arrayBuffer()
-  const wb = XLSX.read(buffer, { type: 'array' })
   const linhas: LinhaImportSalario[] = []
   const erros: string[] = []
 
-  // Empresas indexadas por CNPJ e por apelido
+  // Empresas indexadas por CNPJ, por apelido e por id
   const { data: empresas } = await supabase.from('empresas').select('id, razao_social, cnpj, apelido')
   const empByCnpj = new Map<string, { id: string; razao_social: string }>()
   const empByApelido = new Map<string, { id: string; razao_social: string }>()
+  const empById = new Map<string, { id: string; razao_social: string }>()
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ;(empresas ?? []).forEach((e: any) => {
-    if (e.cnpj) empByCnpj.set(soDigitos(e.cnpj), { id: e.id, razao_social: e.razao_social })
-    if (e.apelido) empByApelido.set(norm(e.apelido), { id: e.id, razao_social: e.razao_social })
+    const ref = { id: e.id, razao_social: e.razao_social }
+    empById.set(e.id, ref)
+    if (e.cnpj) empByCnpj.set(soDigitos(e.cnpj), ref)
+    if (e.apelido) empByApelido.set(norm(e.apelido), ref)
   })
+  const empresaPadrao = defaultEmpresaId ? empById.get(defaultEmpresaId) : undefined
 
   // Funcionários ATIVOS agrupados por empresa (não importa salário de demitidos)
   const { data: funcs } = await supabase
@@ -334,14 +344,70 @@ export async function importarPlanilhaSalarios(
     return {}
   }
 
+  for (const b of brutas) {
+    const nome = (b.nome ?? '').trim()
+    const ident = (b.ident ?? '').trim()
+    const onde = b.ref ? ` (${b.ref})` : ''
+    if (!nome) continue // linha em branco
+
+    // Resolve empresa: identificador da linha, senão a empresa padrão
+    let empresa = empresaPadrao
+    if (ident) {
+      empresa = empByCnpj.get(soDigitos(ident)) ?? empByApelido.get(norm(ident)) ?? empresa
+    }
+    if (!empresa) {
+      erros.push(`${nome}${onde}: empresa não identificada (informe CNPJ/apelido válido ou selecione a empresa).`)
+      continue
+    }
+    if (isNaN(b.valor) || b.valor <= 0) {
+      erros.push(`${nome}${onde}: valor líquido inválido.`)
+      continue
+    }
+
+    const resolvido = resolverFuncionario(empresa.id, nome)
+    if (resolvido.ambiguo) {
+      erros.push(`${nome}${onde}: mais de um funcionário corresponde na empresa ${empresa.razao_social}. Use o nome completo.`)
+      continue
+    }
+    if (!resolvido.id) {
+      erros.push(`${nome}${onde}: funcionário não encontrado na empresa ${empresa.razao_social}.`)
+      continue
+    }
+
+    linhas.push({
+      funcionarioNome: nome,
+      identificadorEmpresa: ident || empresa.razao_social,
+      empresaId: empresa.id,
+      empresaNome: empresa.razao_social,
+      funcionarioId: resolvido.id,
+      valorLiquido: b.valor,
+      pix: b.pix || undefined,
+    })
+  }
+
+  return { linhas, erros }
+}
+
+/**
+ * Lê a planilha de salário líquido. Cada linha deve conter:
+ *   - Nome do profissional (funcionário já cadastrado)
+ *   - CNPJ ou Apelido da empresa
+ *   - Valor líquido a receber
+ * Casa a empresa por CNPJ ou apelido e o funcionário pelo nome dentro da empresa.
+ */
+export async function importarPlanilhaSalarios(
+  arquivo: File
+): Promise<{ linhas: LinhaImportSalario[]; erros: string[] }> {
+  const XLSX = await import('xlsx')
+  const buffer = await arquivo.arrayBuffer()
+  const wb = XLSX.read(buffer, { type: 'array' })
+  const brutas: LinhaBrutaImport[] = []
+
   for (const sheetName of wb.SheetNames) {
     const ws = wb.Sheets[sheetName]
     const rowsRaw: Record<string, unknown>[] = XLSX.utils.sheet_to_json(ws, { defval: '' })
     const rows = rowsRaw.map((row) =>
       Object.fromEntries(Object.entries(row).map(([k, v]) => [k.trim(), v])))
-
-    // Se o nome da aba casar com uma empresa (apelido/CNPJ), usa como padrão
-    const empresaDaAba = empByApelido.get(norm(sheetName)) ?? empByCnpj.get(soDigitos(sheetName))
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i]
@@ -352,48 +418,57 @@ export async function importarPlanilhaSalarios(
       ).trim()
       const valorRaw = row['Valor líquido'] ?? row['Valor liquido'] ?? row['Líquido'] ?? row['Liquido'] ??
         row['Valor'] ?? row['valor'] ?? row['VALOR'] ?? 0
-      const valor = parseValorBR(valorRaw)
       const pix = String(row['PIX'] ?? row['Pix'] ?? row['pix'] ?? row['Chave Pix'] ?? row['Chave PIX'] ?? '').trim()
 
       if (!nome) continue // linha em branco
-
-      // Resolve empresa: identificador da linha, senão a aba
-      let empresa = empresaDaAba
-      if (ident) {
-        empresa = empByCnpj.get(soDigitos(ident)) ?? empByApelido.get(norm(ident)) ?? empresa
-      }
-      if (!empresa) {
-        erros.push(`Linha ${i + 2} (${sheetName}): empresa não identificada para "${nome}" (informe CNPJ/apelido válido).`)
-        continue
-      }
-      if (isNaN(valor) || valor <= 0) {
-        erros.push(`Linha ${i + 2} (${sheetName}): valor líquido inválido para "${nome}".`)
-        continue
-      }
-
-      const resolvido = resolverFuncionario(empresa.id, nome)
-      if (resolvido.ambiguo) {
-        erros.push(`Linha ${i + 2} (${sheetName}): mais de um funcionário corresponde a "${nome}" na empresa ${empresa.razao_social}. Use o nome completo.`)
-        continue
-      }
-      if (!resolvido.id) {
-        erros.push(`Linha ${i + 2} (${sheetName}): funcionário "${nome}" não encontrado na empresa ${empresa.razao_social}.`)
-        continue
-      }
-
-      linhas.push({
-        funcionarioNome: nome,
-        identificadorEmpresa: ident || sheetName,
-        empresaId: empresa.id,
-        empresaNome: empresa.razao_social,
-        funcionarioId: resolvido.id,
-        valorLiquido: valor,
-        pix: pix || undefined,
-      })
+      // A aba serve de identificador padrão quando a linha não traz empresa
+      brutas.push({ nome, ident: ident || sheetName, valor: parseValorBR(valorRaw), pix, ref: `linha ${i + 2}, ${sheetName}` })
     }
   }
 
-  return { linhas, erros }
+  return casarLinhasImport(brutas)
+}
+
+/**
+ * Envia uma folha de pagamento em PDF para a rota /api/importar-folha-pdf,
+ * onde uma IA extrai (nome + valor líquido) de cada profissional. Em seguida
+ * casa com o cadastro pelo MESMO critério da planilha. `defaultEmpresaId` é
+ * usado quando o PDF não deixa clara a empresa de cada linha.
+ */
+export async function importarFolhaPdf(
+  arquivo: File,
+  defaultEmpresaId?: string
+): Promise<{ linhas: LinhaImportSalario[]; erros: string[] }> {
+  const form = new FormData()
+  form.append('arquivo', arquivo)
+
+  let resp: Response
+  try {
+    resp = await fetch('/api/importar-folha-pdf', { method: 'POST', body: form })
+  } catch {
+    return { linhas: [], erros: ['Falha de rede ao contatar o serviço de leitura de PDF.'] }
+  }
+
+  const data = await resp.json().catch(() => null) as
+    | { funcionarios?: { nome: string; valorLiquido: number; unidade?: string }[]; erro?: string }
+    | null
+
+  if (!resp.ok || !data) {
+    return { linhas: [], erros: [data?.erro ?? `Não foi possível ler o PDF (HTTP ${resp.status}).`] }
+  }
+  const extraidos = data.funcionarios ?? []
+  if (extraidos.length === 0) {
+    return { linhas: [], erros: ['A IA não encontrou nenhum profissional com valor líquido no PDF.'] }
+  }
+
+  const brutas: LinhaBrutaImport[] = extraidos.map((f) => ({
+    nome: f.nome,
+    ident: (f.unidade ?? '').trim(),
+    valor: Number(f.valorLiquido) || 0,
+    ref: 'PDF',
+  }))
+
+  return casarLinhasImport(brutas, defaultEmpresaId)
 }
 
 /** Gera e baixa um modelo (.xlsx) da planilha de salário líquido. */

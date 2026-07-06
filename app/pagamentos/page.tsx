@@ -8,6 +8,7 @@ import {
   competenciaMesAnterior,
   consolidarPagamentos,
   importarPlanilhaSalarios,
+  importarFolhaPdf,
   processarImportacaoSalarios,
   baixarModeloPlanilhaSalarios,
   atualizarPagamentoLiquido,
@@ -40,6 +41,8 @@ export default function PagamentosPage() {
 
   // Import
   const [modalImport, setModalImport] = useState(false)
+  const [importModo, setImportModo] = useState<'planilha' | 'pdf'>('planilha')
+  const [pdfEmpresa, setPdfEmpresa] = useState('')
   const [importPreview, setImportPreview] = useState<LinhaImportSalario[]>([])
   const [importErros, setImportErros] = useState<string[]>([])
   const [importLoad, setImportLoad] = useState(false)
@@ -114,6 +117,14 @@ export default function PagamentosPage() {
     const file = e.target.files?.[0]; if (!file) return
     setImportLoad(true); setImportPreview([]); setImportErros([])
     const { linhas: ls, erros } = await importarPlanilhaSalarios(file)
+    setImportPreview(ls); setImportErros(erros); setImportLoad(false)
+    e.target.value = ''
+  }
+
+  async function handlePdf(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]; if (!file) return
+    setImportLoad(true); setImportPreview([]); setImportErros([])
+    const { linhas: ls, erros } = await importarFolhaPdf(file, pdfEmpresa || undefined)
     setImportPreview(ls); setImportErros(erros); setImportLoad(false)
     e.target.value = ''
   }
@@ -282,22 +293,60 @@ export default function PagamentosPage() {
           <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={e => { if (e.target === e.currentTarget) { setModalImport(false); setImportPreview([]); setImportErros([]) } }}>
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl p-6 max-h-[90vh] overflow-auto">
               <h2 className="text-lg font-bold text-gray-800 mb-4">Importar Salário Líquido — {fmtMes(mesRef)}</h2>
-              <div className="bg-blue-50 border border-blue-200 text-blue-800 text-xs rounded-lg p-3 mb-4">
-                Colunas: <strong>Unidade</strong> (apelido da empresa, ou CNPJ), <strong>Nome</strong> do profissional e <strong>Valor</strong> líquido.
-                Opcional: <strong>PIX</strong> — quando presente, atualiza a chave Pix do cadastro.
-                O profissional é casado pelo nome dentro da empresa. Competência aplicada: <strong>{fmtMes(mesRef)}</strong> (selecione acima antes de importar).
-              </div>
-              <div className="flex items-center justify-between gap-3 mb-4">
-                <input type="file" accept=".xlsx,.xls" onChange={handleFile} disabled={importLoad} className="input-field flex-1" />
-                <button type="button" onClick={() => baixarModeloPlanilhaSalarios()} className="btn-secondary text-sm whitespace-nowrap flex items-center gap-2">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                  </svg>
-                  Baixar modelo
+
+              {/* Seletor de método */}
+              <div className="inline-flex rounded-lg border border-gray-200 p-0.5 mb-4">
+                <button type="button" onClick={() => { setImportModo('planilha'); setImportPreview([]); setImportErros([]) }}
+                  className={`px-4 py-1.5 text-sm rounded-md font-medium transition-colors ${importModo === 'planilha' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}>
+                  Planilha (.xlsx)
+                </button>
+                <button type="button" onClick={() => { setImportModo('pdf'); setImportPreview([]); setImportErros([]) }}
+                  className={`px-4 py-1.5 text-sm rounded-md font-medium transition-colors ${importModo === 'pdf' ? 'bg-blue-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}>
+                  Folha em PDF (IA)
                 </button>
               </div>
 
-              {importLoad && <div className="text-sm text-gray-400 mb-3">Processando...</div>}
+              {importModo === 'planilha' ? (
+                <>
+                  <div className="bg-blue-50 border border-blue-200 text-blue-800 text-xs rounded-lg p-3 mb-4">
+                    Colunas: <strong>Unidade</strong> (apelido da empresa, ou CNPJ), <strong>Nome</strong> do profissional e <strong>Valor</strong> líquido.
+                    Opcional: <strong>PIX</strong> — quando presente, atualiza a chave Pix do cadastro.
+                    O profissional é casado pelo nome dentro da empresa. Competência aplicada: <strong>{fmtMes(mesRef)}</strong> (selecione acima antes de importar).
+                  </div>
+                  <div className="flex items-center justify-between gap-3 mb-4">
+                    <input type="file" accept=".xlsx,.xls" onChange={handleFile} disabled={importLoad} className="input-field flex-1" />
+                    <button type="button" onClick={() => baixarModeloPlanilhaSalarios()} className="btn-secondary text-sm whitespace-nowrap flex items-center gap-2">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                      Baixar modelo
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="bg-blue-50 border border-blue-200 text-blue-800 text-xs rounded-lg p-3 mb-4">
+                    Envie a <strong>folha de pagamento em PDF</strong>. A IA lê o documento e extrai o <strong>valor líquido</strong> de cada profissional.
+                    Confira sempre a prévia antes de importar. Competência aplicada: <strong>{fmtMes(mesRef)}</strong>.
+                  </div>
+                  <div className="mb-3">
+                    <label className="label-field">Empresa (quando o PDF não identifica a unidade)</label>
+                    <select className="input-field" value={pdfEmpresa} onChange={e => setPdfEmpresa(e.target.value)} disabled={importLoad}>
+                      <option value="">Detectar pelo próprio PDF</option>
+                      {empresas.map(e => <option key={e.id} value={e.id}>{e.razao_social}</option>)}
+                    </select>
+                  </div>
+                  <div className="mb-4">
+                    <input type="file" accept="application/pdf,.pdf" onChange={handlePdf} disabled={importLoad} className="input-field w-full" />
+                  </div>
+                </>
+              )}
+
+              {importLoad && (
+                <div className="text-sm text-gray-400 mb-3">
+                  {importModo === 'pdf' ? 'A IA está lendo o PDF... isso pode levar alguns segundos.' : 'Processando...'}
+                </div>
+              )}
 
               {importErros.length > 0 && (
                 <div className="bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-lg p-3 mb-4">
