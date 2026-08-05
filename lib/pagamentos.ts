@@ -471,14 +471,47 @@ export async function importarFolhaPdf(
   return casarLinhasImport(brutas, defaultEmpresaId)
 }
 
-/** Gera e baixa um modelo (.xlsx) da planilha de salário líquido. */
-export async function baixarModeloPlanilhaSalarios(): Promise<void> {
+/**
+ * Gera e baixa o modelo (.xlsx) de salário líquido JÁ PREENCHIDO com os
+ * funcionários ativos (Apelido da empresa + Nome), deixando só a coluna Valor
+ * em branco para o usuário digitar. Se `empresaId` for informado, traz apenas
+ * os funcionários daquela empresa.
+ */
+export async function baixarModeloPlanilhaSalarios(empresaId?: string): Promise<void> {
   const XLSX = await import('xlsx')
-  const linhas = [
-    ['Apelido', 'Nome', 'Valor'],
-    ['apelido-da-empresa', 'Nome do Profissional', 1500.00],
-    ['apelido-da-empresa', 'Outro Profissional', 2300.50],
-  ]
+
+  const { data: funcs } = await supabase
+    .from('funcionarios')
+    .select('nome, ativo, unidades(empresa_id, empresas(apelido, razao_social, cnpj))')
+    .order('nome')
+
+  const corpo: (string | number)[][] = []
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ;(funcs ?? []).forEach((f: any) => {
+    if (f.ativo === false) return
+    const uni = Array.isArray(f.unidades) ? f.unidades[0] : f.unidades
+    const empId = uni?.empresa_id
+    if (!empId) return
+    if (empresaId && empId !== empresaId) return
+    const emp = uni?.empresas ? (Array.isArray(uni.empresas) ? uni.empresas[0] : uni.empresas) : null
+    // A importação casa a empresa por apelido ou CNPJ — preferimos o apelido.
+    const ident = (emp?.apelido || emp?.cnpj || emp?.razao_social || '').toString()
+    corpo.push([ident, f.nome, ''])
+  })
+
+  // Ordena por empresa e depois por nome, para facilitar a conferência
+  corpo.sort((a, b) =>
+    String(a[0]).localeCompare(String(b[0])) || String(a[1]).localeCompare(String(b[1])))
+
+  // Sem funcionários: cai no modelo de exemplo (apenas ilustrativo)
+  const linhas = corpo.length > 0
+    ? [['Apelido', 'Nome', 'Valor'], ...corpo]
+    : [
+        ['Apelido', 'Nome', 'Valor'],
+        ['apelido-da-empresa', 'Nome do Profissional', 1500.00],
+        ['apelido-da-empresa', 'Outro Profissional', 2300.50],
+      ]
+
   const ws = XLSX.utils.aoa_to_sheet(linhas)
   ws['!cols'] = [{ wch: 22 }, { wch: 32 }, { wch: 14 }]
   const wb = XLSX.utils.book_new()

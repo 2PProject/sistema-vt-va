@@ -309,17 +309,17 @@ export default function PagamentosPage() {
               {importModo === 'planilha' ? (
                 <>
                   <div className="bg-blue-50 border border-blue-200 text-blue-800 text-xs rounded-lg p-3 mb-4">
-                    Colunas: <strong>Unidade</strong> (apelido da empresa, ou CNPJ), <strong>Nome</strong> do profissional e <strong>Valor</strong> líquido.
-                    Opcional: <strong>PIX</strong> — quando presente, atualiza a chave Pix do cadastro.
-                    O profissional é casado pelo nome dentro da empresa. Competência aplicada: <strong>{fmtMes(mesRef)}</strong> (selecione acima antes de importar).
+                    Baixe o modelo — ele já vem <strong>preenchido com os funcionários</strong> ({empresaFiltro ? 'da empresa selecionada' : 'de todas as empresas'}); basta digitar a coluna <strong>Valor</strong> e importar de volta.
+                    Colunas: <strong>Apelido</strong> (empresa), <strong>Nome</strong> e <strong>Valor</strong> líquido. Opcional: <strong>PIX</strong> (atualiza a chave Pix do cadastro).
+                    Competência aplicada: <strong>{fmtMes(mesRef)}</strong>.
                   </div>
                   <div className="flex items-center justify-between gap-3 mb-4">
                     <input type="file" accept=".xlsx,.xls" onChange={handleFile} disabled={importLoad} className="input-field flex-1" />
-                    <button type="button" onClick={() => baixarModeloPlanilhaSalarios()} className="btn-secondary text-sm whitespace-nowrap flex items-center gap-2">
+                    <button type="button" onClick={() => baixarModeloPlanilhaSalarios(empresaFiltro || undefined)} className="btn-secondary text-sm whitespace-nowrap flex items-center gap-2">
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                       </svg>
-                      Baixar modelo
+                      Baixar modelo preenchido
                     </button>
                   </div>
                 </>
