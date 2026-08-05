@@ -152,7 +152,7 @@ export async function listarVales(params?: {
 }): Promise<PagamentoVale[]> {
   let q = supabase
     .from('pagamento_vales')
-    .select('*, funcionarios(id, nome, funcao), empresas(id, razao_social, cnpj)')
+    .select('*, funcionarios(id, nome, funcao), empresas(id, apelido, razao_social, cnpj)')
     .order('data', { ascending: false })
   if (params?.empresaId) q = q.eq('empresa_id', params.empresaId)
   if (params?.funcionarioId) q = q.eq('funcionario_id', params.funcionarioId)

@@ -1,6 +1,7 @@
 import { formatarMoeda, MESES } from '../utils/calculoVT'
 
 export type DadosReciboVale = {
+  empresaApelido?: string
   empresaNome: string
   empresaCnpj: string
   funcionarioNome: string
@@ -41,7 +42,7 @@ function desenharRecibo(doc: any, d: DadosReciboVale, startY: number, via: strin
   doc.setFontSize(9)
 
   doc.setFont('helvetica', 'bold'); doc.text('EMPRESA:', 12, y)
-  doc.setFont('helvetica', 'normal'); doc.text(d.empresaNome, 35, y)
+  doc.setFont('helvetica', 'normal'); doc.text(d.empresaApelido ? `${d.empresaApelido} — ${d.empresaNome}` : d.empresaNome, 35, y)
   y += 6
   doc.setFont('helvetica', 'bold'); doc.text('CNPJ:', 12, y)
   doc.setFont('helvetica', 'normal'); doc.text(d.empresaCnpj || '—', 35, y)
@@ -163,6 +164,7 @@ export type ValeConsolidadoItem = {
 }
 
 export type DadosReciboConsolidado = {
+  empresaApelido?: string
   empresaNome: string
   empresaCnpj: string
   funcionarioNome: string
@@ -185,7 +187,7 @@ function desenharConsolidado(doc: any, d: DadosReciboConsolidado) {
 
   doc.setTextColor(0, 0, 0); doc.setFontSize(9)
   doc.setFont('helvetica', 'bold'); doc.text('EMPRESA:', 12, y)
-  doc.setFont('helvetica', 'normal'); doc.text(d.empresaNome, 35, y)
+  doc.setFont('helvetica', 'normal'); doc.text(d.empresaApelido ? `${d.empresaApelido} — ${d.empresaNome}` : d.empresaNome, 35, y)
   y += 6
   doc.setFont('helvetica', 'bold'); doc.text('CNPJ:', 12, y)
   doc.setFont('helvetica', 'normal'); doc.text(d.empresaCnpj || '—', 35, y)

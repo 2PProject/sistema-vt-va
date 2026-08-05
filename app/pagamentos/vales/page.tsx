@@ -226,6 +226,7 @@ export default function ValesPage() {
       const { gerarReciboValePDF } = await import('../../../services/gerarReciboValePDF')
       const parcelas = Math.max(1, v.parcelas ?? 1)
       await gerarReciboValePDF({
+        empresaApelido: v.empresas?.apelido ?? '',
         empresaNome: v.empresas?.razao_social ?? '',
         empresaCnpj: v.empresas?.cnpj ?? '',
         funcionarioNome: v.funcionarios?.nome ?? '',

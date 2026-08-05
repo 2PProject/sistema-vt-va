@@ -204,7 +204,7 @@ export async function consolidarFechamento(params: {
       })
       vtvaTotal = resultado.valorTotal
       reciboVTVA = {
-        razaoSocial: emp?.razao_social ?? '', cnpj: emp?.cnpj ?? '',
+        apelido: emp?.apelido ?? '', razaoSocial: emp?.razao_social ?? '', cnpj: emp?.cnpj ?? '',
         nomeFuncionario: func.nome, funcao: func.funcao, ctps: func.ctps ?? '', serie: func.serie ?? '',
         mes: vtvaMes, ano: vtvaAno, diasUteis: diasUteisAuto, diasEfetivos: resultado.diasEfetivos, diasSabado,
         valorVT, valorVTSabado, valorVA, resultado,
@@ -244,7 +244,7 @@ export async function consolidarFechamento(params: {
       }
       saldo = Math.round(saldo * 100) / 100
       reciboVales = {
-        empresaNome: emp?.razao_social ?? '', empresaCnpj: emp?.cnpj ?? '',
+        empresaApelido: emp?.apelido ?? '', empresaNome: emp?.razao_social ?? '', empresaCnpj: emp?.cnpj ?? '',
         funcionarioNome: func.nome, funcao: func.funcao, refCompetencia: mesRef,
         vales: valesItens, totalDescontadoNoMes: descontoVales,
         saldoDevedor: Math.round(saldo * 100) / 100,
@@ -298,7 +298,7 @@ export async function montarReciboVTVAAvulso(
 ): Promise<DadosRecibo | null> {
   const { data: func } = await supabase
     .from('funcionarios')
-    .select('*, unidades(empresa_id, empresas(razao_social, cnpj, valor_va))')
+    .select('*, unidades(empresa_id, empresas(apelido, razao_social, cnpj, valor_va))')
     .eq('id', funcionarioId).limit(1).maybeSingle()
   if (!func) return null
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -342,7 +342,7 @@ export async function montarReciboVTVAAvulso(
   const resultado = calcularVTVA({ diasUteis, diasFeriado: 0, diasSabado, diasDesconto: 0, valorVT, valorVTSabado, valorVA })
 
   return {
-    razaoSocial: emp?.razao_social ?? '', cnpj: emp?.cnpj ?? '',
+    apelido: emp?.apelido ?? '', razaoSocial: emp?.razao_social ?? '', cnpj: emp?.cnpj ?? '',
     nomeFuncionario: f.nome, funcao: f.funcao, ctps: f.ctps ?? '', serie: f.serie ?? '',
     mes, ano, diasUteis, diasEfetivos: resultado.diasEfetivos, diasSabado,
     valorVT, valorVTSabado, valorVA, resultado,
@@ -455,7 +455,7 @@ export async function listarRecibosVTVA(params: {
     const diasUteis = calcularDiasUteisAuto(mes, ano, func.folga_semanal, feriadosDatas, func.data_admissao, func.data_fim_aviso)
     const resultado = calcularVTVA({ diasUteis, diasFeriado: 0, diasSabado, diasDesconto: cf?.dias_desconto ?? 0, valorVT, valorVTSabado, valorVA })
     const dados: DadosRecibo = {
-      razaoSocial: emp?.razao_social ?? '', cnpj: emp?.cnpj ?? '',
+      apelido: emp?.apelido ?? '', razaoSocial: emp?.razao_social ?? '', cnpj: emp?.cnpj ?? '',
       nomeFuncionario: func.nome, funcao: func.funcao, ctps: func.ctps ?? '', serie: func.serie ?? '',
       mes, ano, diasUteis, diasEfetivos: resultado.diasEfetivos, diasSabado,
       valorVT, valorVTSabado, valorVA, resultado,

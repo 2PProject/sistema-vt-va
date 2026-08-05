@@ -8,6 +8,7 @@ export type DescontoRecibo = {
 }
 
 export type DadosRecibo = {
+  apelido?: string
   razaoSocial: string
   cnpj: string
   nomeFuncionario: string
@@ -47,7 +48,7 @@ function desenharVia(doc: any, dados: DadosRecibo, mesNome: string, referencia: 
   doc.setFont('helvetica', 'bold')
   doc.text('EMPRESA:', 12, y)
   doc.setFont('helvetica', 'normal')
-  doc.text(dados.razaoSocial, 35, y)
+  doc.text(dados.apelido ? `${dados.apelido} — ${dados.razaoSocial}` : dados.razaoSocial, 35, y)
   y += 6
 
   doc.setFont('helvetica', 'bold')
