@@ -199,12 +199,19 @@ export default function FechamentoPage() {
   // Agrupa por empresa quando "Todas" + opção ligada
   function slug(s: string) { return (s || 'empresa').replace(/[^\w]+/g, '_').replace(/^_|_$/g, '').slice(0, 40) }
   function lotesPorEmpresa(): { nome: string; linhas: LinhaFechamento[] }[] {
-    // Sempre restringe às empresas fechadas
-    if (empresaFiltro || !porEmpresa) return [{ nome: '', linhas: linhasGeraveis }]
+    // Sempre restringe às empresas fechadas. O "nome" é usado no NOME DO ARQUIVO
+    // gerado — usamos o apelido da empresa (recai na razão social se faltar).
+    if (empresaFiltro || !porEmpresa) {
+      // Um único lote; se for uma empresa só, leva o apelido dela no arquivo.
+      const nomeUnico = empresaFiltro
+        ? (linhasGeraveis[0]?.empresaApelido || linhasGeraveis[0]?.empresaNome || '')
+        : ''
+      return [{ nome: nomeUnico, linhas: linhasGeraveis }]
+    }
     const map = new Map<string, { nome: string; linhas: LinhaFechamento[] }>()
     for (const l of linhasGeraveis) {
       let g = map.get(l.empresa_id)
-      if (!g) { g = { nome: l.empresaNome, linhas: [] }; map.set(l.empresa_id, g) }
+      if (!g) { g = { nome: l.empresaApelido || l.empresaNome, linhas: [] }; map.set(l.empresa_id, g) }
       g.linhas.push(l)
     }
     return Array.from(map.values())

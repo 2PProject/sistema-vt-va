@@ -30,6 +30,11 @@ export type DadosRecibo = {
   acrescimos?: DescontoRecibo[]
 }
 
+/** Normaliza o apelido para uso em nome de arquivo. */
+function slugEmp(s: string): string {
+  return (s || '').replace(/[^\w]+/g, '_').replace(/^_|_$/g, '').slice(0, 40)
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function desenharVia(doc: any, dados: DadosRecibo, mesNome: string, referencia: string, startY: number, via: string) {
   let y = startY
@@ -48,7 +53,7 @@ function desenharVia(doc: any, dados: DadosRecibo, mesNome: string, referencia: 
   doc.setFont('helvetica', 'bold')
   doc.text('EMPRESA:', 12, y)
   doc.setFont('helvetica', 'normal')
-  doc.text(dados.apelido || dados.razaoSocial, 35, y)
+  doc.text(dados.razaoSocial, 35, y)
   y += 6
 
   doc.setFont('helvetica', 'bold')
@@ -281,7 +286,8 @@ export async function gerarReciboPDF(dados: DadosRecibo): Promise<void> {
   doc.setLineDashPattern([], 0)
   desenharVia(doc, dados, mesNome, referencia, 148, '2ª VIA — FUNCIONÁRIO')
 
-  const nomeArquivo = `recibo_${dados.nomeFuncionario.replace(/\s+/g, '_')}_${dados.mes}_${dados.ano}.pdf`
+  const emp = dados.apelido ? slugEmp(dados.apelido) + '_' : ''
+  const nomeArquivo = `recibo_${emp}${dados.nomeFuncionario.replace(/\s+/g, '_')}_${dados.mes}_${dados.ano}.pdf`
   doc.save(nomeArquivo)
 }
 
@@ -304,5 +310,6 @@ export async function gerarMultiplosPDFs(dadosList: DadosRecibo[], nomeArquivo?:
   })
 
   const first = dadosList[0]
-  doc.save(nomeArquivo ?? `recibos_${first.mes}_${first.ano}.pdf`)
+  const empF = first.apelido ? slugEmp(first.apelido) + '_' : ''
+  doc.save(nomeArquivo ?? `recibos_${empF}${first.mes}_${first.ano}.pdf`)
 }

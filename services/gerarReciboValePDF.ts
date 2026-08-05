@@ -15,6 +15,10 @@ export type DadosReciboVale = {
   mesFim: string          // 'YYYY-MM'
 }
 
+/** Normaliza o apelido para uso em nome de arquivo. */
+function slugEmp(s?: string): string {
+  return (s || '').replace(/[^\w]+/g, '_').replace(/^_|_$/g, '').slice(0, 40)
+}
 function fmtData(iso: string): string {
   if (!iso) return ''
   const [a, m, d] = iso.split('-')
@@ -42,7 +46,7 @@ function desenharRecibo(doc: any, d: DadosReciboVale, startY: number, via: strin
   doc.setFontSize(9)
 
   doc.setFont('helvetica', 'bold'); doc.text('EMPRESA:', 12, y)
-  doc.setFont('helvetica', 'normal'); doc.text(d.empresaApelido || d.empresaNome, 35, y)
+  doc.setFont('helvetica', 'normal'); doc.text(d.empresaNome, 35, y)
   y += 6
   doc.setFont('helvetica', 'bold'); doc.text('CNPJ:', 12, y)
   doc.setFont('helvetica', 'normal'); doc.text(d.empresaCnpj || '—', 35, y)
@@ -136,7 +140,8 @@ export async function gerarReciboValePDF(dados: DadosReciboVale): Promise<void> 
   const { default: jsPDF } = await import('jspdf')
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
   desenharValeCompleto(doc, dados)
-  doc.save(`recibo_vale_${dados.funcionarioNome.replace(/\s+/g, '_')}_${dados.data}.pdf`)
+  const emp = dados.empresaApelido ? slugEmp(dados.empresaApelido) + '_' : ''
+  doc.save(`recibo_vale_${emp}${dados.funcionarioNome.replace(/\s+/g, '_')}_${dados.data}.pdf`)
 }
 
 /** Um único PDF com vários recibos de vale (um por página). */
@@ -148,7 +153,8 @@ export async function gerarMultiplosRecibosVale(lista: DadosReciboVale[]): Promi
     if (i > 0) doc.addPage()
     desenharValeCompleto(doc, dados)
   })
-  doc.save('recibos_vales.pdf')
+  const emp = slugEmp(lista[0]?.empresaApelido)
+  doc.save(`recibos_vales${emp ? '_' + emp : ''}.pdf`)
 }
 
 // ── Recibo de DESCONTO DE VALES da competência (para assinar no fechamento) ────
@@ -187,7 +193,7 @@ function desenharConsolidado(doc: any, d: DadosReciboConsolidado) {
 
   doc.setTextColor(0, 0, 0); doc.setFontSize(9)
   doc.setFont('helvetica', 'bold'); doc.text('EMPRESA:', 12, y)
-  doc.setFont('helvetica', 'normal'); doc.text(d.empresaApelido || d.empresaNome, 35, y)
+  doc.setFont('helvetica', 'normal'); doc.text(d.empresaNome, 35, y)
   y += 6
   doc.setFont('helvetica', 'bold'); doc.text('CNPJ:', 12, y)
   doc.setFont('helvetica', 'normal'); doc.text(d.empresaCnpj || '—', 35, y)
@@ -262,7 +268,8 @@ export async function gerarReciboConsolidadoPDF(dados: DadosReciboConsolidado): 
   const { default: jsPDF } = await import('jspdf')
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
   desenharConsolidado(doc, dados)
-  doc.save(`recibo_vales_${dados.funcionarioNome.replace(/\s+/g, '_')}_${dados.refCompetencia}.pdf`)
+  const emp = dados.empresaApelido ? slugEmp(dados.empresaApelido) + '_' : ''
+  doc.save(`recibo_vales_${emp}${dados.funcionarioNome.replace(/\s+/g, '_')}_${dados.refCompetencia}.pdf`)
 }
 
 /** Um PDF com um recibo consolidado por profissional (um por página). */
@@ -274,5 +281,6 @@ export async function gerarMultiplosConsolidados(lista: DadosReciboConsolidado[]
     if (i > 0) doc.addPage()
     desenharConsolidado(doc, dados)
   })
-  doc.save(nomeArquivo ?? 'recibos_vales_consolidados.pdf')
+  const emp = slugEmp(lista[0]?.empresaApelido)
+  doc.save(nomeArquivo ?? `recibos_vales_consolidados${emp ? '_' + emp : ''}.pdf`)
 }

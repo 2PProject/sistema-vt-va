@@ -516,7 +516,13 @@ export async function baixarModeloPlanilhaSalarios(empresaId?: string): Promise<
   ws['!cols'] = [{ wch: 22 }, { wch: 32 }, { wch: 14 }]
   const wb = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(wb, ws, 'Salarios')
-  XLSX.writeFile(wb, 'modelo_pagamentos.xlsx')
+
+  // Nome do arquivo leva o apelido quando é uma empresa só (1ª coluna = apelido)
+  const slug = (s: string) => s.replace(/[^\w]+/g, '_').replace(/^_|_$/g, '').slice(0, 40)
+  const nomeArq = empresaId && corpo.length > 0
+    ? `modelo_pagamentos_${slug(String(corpo[0][0]))}.xlsx`
+    : 'modelo_pagamentos.xlsx'
+  XLSX.writeFile(wb, nomeArq)
 }
 
 export async function processarImportacaoSalarios(

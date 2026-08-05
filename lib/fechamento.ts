@@ -46,6 +46,7 @@ export type LinhaFechamento = {
   funcao: string
   empresa_id: string
   empresaNome: string
+  empresaApelido: string
   empresaCnpj: string
   pix: string | null
   liquido: number
@@ -256,7 +257,7 @@ export async function consolidarFechamento(params: {
     linhas.push({
       registroId: reg?.id ?? null,
       funcionario_id: fid, nome: func.nome, funcao: func.funcao,
-      empresa_id: func.empresa_id, empresaNome: emp?.razao_social ?? '—', empresaCnpj: emp?.cnpj ?? '',
+      empresa_id: func.empresa_id, empresaNome: emp?.razao_social ?? '—', empresaApelido: emp?.apelido ?? '', empresaCnpj: emp?.cnpj ?? '',
       pix: func.pix ?? null,
       liquido, vtvaTotal, descontoVales,
       totalPagar: Math.round((liquido + vtvaTotal - descontoVales) * 100) / 100,
