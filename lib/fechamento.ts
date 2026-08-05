@@ -161,10 +161,18 @@ export async function consolidarFechamento(params: {
     arr.push(v); valesPorFunc.set(v.funcionario_id, arr)
   }
 
-  // Universo: quem tem líquido OU competência (VT/VA) no mês
+  // Universo: quem tem salário, vales OU VT/VA no mês. Como o VT/VA agora vem do
+  // CADASTRO (não depende de "competência/apuração" lançada), todo funcionário
+  // ATIVO que trabalha no mês do VT/VA entra no fechamento — assim toda empresa
+  // com gente ativa aparece, mesmo sem salário importado ou competência.
   const idsSet = new Set<string>()
   Array.from(liquidoMap.keys()).forEach(k => idsSet.add(k))
   Array.from(cfMap.keys()).forEach(k => idsSet.add(k))
+  Array.from(valesPorFunc.keys()).forEach(k => idsSet.add(k))
+  for (const [fid, func] of funcMap) {
+    if (func.ativo === false) continue
+    if (trabalhaNoMes(vtvaMes, vtvaAno, func.data_admissao, func.data_fim_aviso)) idsSet.add(fid)
+  }
   const ids = Array.from(idsSet)
 
   const linhas: LinhaFechamento[] = []
