@@ -62,20 +62,32 @@ function tag(xml: string, ...nomes: string[]): string | undefined {
   return undefined
 }
 
-/** Descompacta (gzip+base64) e extrai os campos essenciais do XML da NFS-e. */
-function parseArquivoXml(arquivo: string): { chave: string; prestadorDoc: string; numero: string; data: string; valor: number } | null {
+/**
+ * Descompacta (gzip+base64) e extrai os campos essenciais do XML da NFS-e
+ * nacional. Caminhos oficiais (Anexo I — Leiaute DPS/NFS-e):
+ *   emitente/prestador: NFSe/infNFSe/emit/{CNPJ|CPF}
+ *   número:             NFSe/infNFSe/nNFSe
+ *   data de emissão:    NFSe/infNFSe/dhProc
+ *   competência:        NFSe/infNFSe/DPS/infDPS/dCompet
+ *   valor líquido:      NFSe/infNFSe/valores/vLiq  (fallback: .../vServ)
+ *   chave de acesso:    atributo Id de infNFSe
+ */
+function parseArquivoXml(arquivo: string): { chave: string; prestadorDoc: string; numero: string; data: string; competencia: string; valor: number } | null {
   let xml = ''
   try { xml = zlib.gunzipSync(Buffer.from(arquivo, 'base64')).toString('utf8') }
   catch { try { xml = Buffer.from(arquivo, 'base64').toString('utf8') } catch { return null } }
   if (!xml.includes('<')) return null
-  // Emitente/prestador: bloco <emit>/<prest>/<infNFSe> → CNPJ ou CPF
-  const bloco = (xml.match(/<[\w:]*(?:emit|prest|prestador)[^>]*>[\s\S]*?<\/[\w:]*(?:emit|prest|prestador)>/i)?.[0]) || xml
-  const doc = (tag(bloco, 'CNPJ', 'CPF') || tag(xml, 'CNPJ', 'CPF') || '').replace(/\D/g, '')
-  const chave = (xml.match(/Id="[A-Za-z]*([0-9]{40,60})"/)?.[1]) || tag(xml, 'chNFSe', 'ChaveAcesso') || ''
-  const numero = tag(xml, 'nNFSe', 'numero', 'Numero') || ''
-  const data = (tag(xml, 'dhProc', 'dhEmi', 'dataEmissao', 'DataEmissao', 'competencia') || '').slice(0, 10)
-  const valor = parseFloat(tag(xml, 'vLiq', 'vServ', 'vLiquido', 'valorLiquido', 'ValorServicos') || '0') || 0
-  return { chave, prestadorDoc: doc, numero, data, valor }
+  // Emitente da NFS-e (o profissional que emitiu a nota recebida pelo salão).
+  const emit = xml.match(/<[\w:]*emit[^>]*>[\s\S]*?<\/[\w:]*emit>/i)?.[0]
+    || xml.match(/<[\w:]*prest[^>]*>[\s\S]*?<\/[\w:]*prest>/i)?.[0] || xml
+  const doc = (tag(emit, 'CNPJ', 'CPF') || tag(xml, 'CNPJ', 'CPF') || '').replace(/\D/g, '')
+  const chave = (xml.match(/<[\w:]*infNFSe[^>]*\bId="([^"]+)"/i)?.[1] || tag(xml, 'chNFSe') || '').replace(/\s/g, '')
+  const numero = tag(xml, 'nNFSe', 'nDFSe', 'numero', 'Numero') || ''
+  const data = (tag(xml, 'dhProc', 'dhEmi') || '').slice(0, 10)
+  const dCompet = (tag(xml, 'dCompet', 'competencia') || '').slice(0, 10)
+  const competencia = (dCompet || data).slice(0, 7)
+  const valor = parseFloat(tag(xml, 'vLiq', 'vServ', 'vServPrest') || '0') || 0
+  return { chave, prestadorDoc: doc, numero, data, competencia, valor }
 }
 
 /** Converte um item do LoteDFe em NotaADN. */
@@ -91,14 +103,24 @@ function itemParaNota(item: any): NotaADN | null {
     chave: p.chave || String(pick(item, 'ChaveAcesso', 'chaveAcesso') ?? ''),
     prestadorDoc: p.prestadorDoc, numero: p.numero,
     dataEmissao: p.data, valor: p.valor,
-    competencia: p.data ? p.data.slice(0, 7) : undefined,
+    competencia: p.competencia || undefined,
   }
 }
 
-/** Uma chamada crua GET /DFe/{nsu} — usada pelo teste de conexão. */
-export async function chamarDFe(agent: https.Agent, cnpj: string, nsu: number): Promise<{ status: number; corpo: string; url: string }> {
+/** "Sem documentos" no ADN é sinalizado por códigos E2xxx (não é erro real). */
+export function semDocumentos(status: number, corpo: string): boolean {
+  if (status === 404) return true
+  return /E2(215|230|305|306|020|040|070)\b|Nenhum documento/i.test(corpo || '')
+}
+
+/**
+ * Uma chamada crua GET /contribuintes/DFe/{nsu} — distribui os DF-e em que o
+ * titular do certificado figura como ator (prestador/tomador/intermediário).
+ * O `cnpj` só é enviado quando se deseja consultar OUTRO CNPJ da mesma raiz.
+ */
+export async function chamarDFe(agent: https.Agent, cnpj: string, nsu: number, cnpjDiferente = false): Promise<{ status: number; corpo: string; url: string }> {
   const url = new URL(`${baseADN()}/contribuintes/DFe/${Math.max(0, nsu)}`)
-  if (cnpj) url.searchParams.set('cnpj', cnpj)
+  if (cnpjDiferente && cnpj) url.searchParams.set('cnpj', cnpj)
   const { status, corpo } = await httpsGet(url, agent)
   return { status, corpo, url: url.toString() }
 }
@@ -112,7 +134,7 @@ export async function consultarADN(params: { agent: https.Agent; cnpj: string; u
   const notas: NotaADN[] = []
   for (let i = 0; i < 40; i++) {           // trava de segurança (até ~2000 docs)
     const { status, corpo } = await chamarDFe(params.agent, params.cnpj, nsu)
-    if (status === 404) break              // sem novos documentos
+    if (semDocumentos(status, corpo)) break // sem novos documentos (E2215/E2230/404)
     if (status >= 400) throw new Error(`ADN HTTP ${status}`)
     const data = JSON.parse(corpo || 'null')
     const lote: unknown[] = pick(data, 'LoteDFe', 'loteDFe', 'documentos', 'DFe') ?? []

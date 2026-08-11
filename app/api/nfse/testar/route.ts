@@ -3,7 +3,7 @@
 // escolhida e devolve um diagnóstico claro, sem gravar nada. Serve para o admin
 // validar, na hora, se o certificado + senha estão corretos e o ambiente responde.
 import { getAdminClient, decrypt } from '../../../../lib/salao/server'
-import { agenteMTLS, chamarDFe, baseADN } from '../../../../lib/salao/adn'
+import { agenteMTLS, chamarDFe, baseADN, semDocumentos } from '../../../../lib/salao/adn'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -44,7 +44,7 @@ export async function POST(req: Request) {
       try { const d = JSON.parse(corpo || 'null'); const lote = d?.LoteDFe ?? d?.loteDFe ?? d?.documentos ?? []; qtd = Array.isArray(lote) ? lote.length : 0 } catch { /* */ }
       return Response.json({ ok: true, status, mensagem: `Conectado ao gov.br! Certificado aceito. ${qtd} documento(s) a partir do NSU ${nsu}.`, ambiente: baseADN(), amostra })
     }
-    if (status === 404) return Response.json({ ok: true, status, mensagem: `Conectado! Certificado aceito. Sem documentos novos (NSU ${nsu} em dia).`, ambiente: baseADN() })
+    if (semDocumentos(status, corpo)) return Response.json({ ok: true, status, mensagem: `Conectado! Certificado aceito. Sem documentos novos (NSU ${nsu} em dia).`, ambiente: baseADN() })
     if (status === 403) return Response.json({ ok: false, status, mensagem: 'Conexão TLS OK, mas acesso negado (403). Verifique o credenciamento da empresa no ambiente e se o CNPJ do certificado tem a mesma raiz.', ambiente: baseADN(), amostra })
     return Response.json({ ok: false, status, mensagem: `Conectou, mas o ADN respondeu HTTP ${status}.`, ambiente: baseADN(), amostra })
   } catch (e) {
