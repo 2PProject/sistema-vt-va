@@ -3,6 +3,9 @@
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { supabase } from '../lib/supabase'
+// #region MÓDULO SALÃO — remover este import ao desinstalar o módulo
+import { SALAO_ENABLED } from '../lib/salao/config'
+// #endregion MÓDULO SALÃO
 
 type Item = { href: string; label: string; icon: React.ReactNode }
 
@@ -46,6 +49,9 @@ const ICON = {
   vale: (
     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" /></svg>
   ),
+  salao: (
+    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+  ),
 }
 
 const dashboard: Item = { href: '/dashboard', label: 'Dashboard', icon: ICON.dashboard }
@@ -79,6 +85,22 @@ const sections: { title: string; items: Item[] }[] = [
     ],
   },
 ]
+
+// #region MÓDULO SALÃO — bloco isolado; remover tudo entre estes marcadores
+// para desinstalar o módulo do menu. (Ver docs/MODULO_SALAO.md)
+const secoesSalao: { title: string; items: Item[] }[] = SALAO_ENABLED ? [
+  {
+    title: 'Salão (NFS-e)',
+    items: [
+      { href: '/salao', label: 'Painel NFS-e', icon: ICON.salao },
+      { href: '/salao/importar', label: 'Importar Planilha', icon: ICON.pagamento },
+      { href: '/salao/profissionais', label: 'Profissionais', icon: ICON.func },
+      { href: '/salao/certificados', label: 'Certificados', icon: ICON.cargo },
+      { href: '/salao/relatorios', label: 'Relatórios', icon: ICON.recibo },
+    ],
+  },
+] : []
+// #endregion MÓDULO SALÃO
 
 export default function Sidebar() {
   const pathname = usePathname()
@@ -117,7 +139,7 @@ export default function Sidebar() {
       <nav className="flex-1 p-3 overflow-y-auto">
         <ul className="space-y-1">{link(dashboard)}</ul>
 
-        {sections.map((sec) => (
+        {[...sections, ...secoesSalao].map((sec) => (
           <div key={sec.title} className="mt-5">
             <p className="px-3 mb-1.5 text-[10px] font-bold uppercase tracking-wider text-blue-400">{sec.title}</p>
             <ul className="space-y-1">{sec.items.map(link)}</ul>
