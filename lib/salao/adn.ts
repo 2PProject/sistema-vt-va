@@ -10,6 +10,7 @@ export type NotaADN = {
   nsu: number
   chave: string
   prestadorDoc: string   // CPF/CNPJ do emitente/prestador (só dígitos)
+  prestadorNome: string  // xNome do emitente
   numero: string
   dataEmissao: string    // 'YYYY-MM-DD'
   valor: number
@@ -72,7 +73,7 @@ function tag(xml: string, ...nomes: string[]): string | undefined {
  *   valor líquido:      NFSe/infNFSe/valores/vLiq  (fallback: .../vServ)
  *   chave de acesso:    atributo Id de infNFSe
  */
-function parseArquivoXml(arquivo: string): { chave: string; prestadorDoc: string; numero: string; data: string; competencia: string; valor: number } | null {
+function parseArquivoXml(arquivo: string): { chave: string; prestadorDoc: string; prestadorNome: string; numero: string; data: string; competencia: string; valor: number } | null {
   let xml = ''
   try { xml = zlib.gunzipSync(Buffer.from(arquivo, 'base64')).toString('utf8') }
   catch { try { xml = Buffer.from(arquivo, 'base64').toString('utf8') } catch { return null } }
@@ -81,13 +82,14 @@ function parseArquivoXml(arquivo: string): { chave: string; prestadorDoc: string
   const emit = xml.match(/<[\w:]*emit[^>]*>[\s\S]*?<\/[\w:]*emit>/i)?.[0]
     || xml.match(/<[\w:]*prest[^>]*>[\s\S]*?<\/[\w:]*prest>/i)?.[0] || xml
   const doc = (tag(emit, 'CNPJ', 'CPF') || tag(xml, 'CNPJ', 'CPF') || '').replace(/\D/g, '')
+  const nome = tag(emit, 'xNome') || tag(xml, 'xNome') || ''
   const chave = (xml.match(/<[\w:]*infNFSe[^>]*\bId="([^"]+)"/i)?.[1] || tag(xml, 'chNFSe') || '').replace(/\s/g, '')
   const numero = tag(xml, 'nNFSe', 'nDFSe', 'numero', 'Numero') || ''
   const data = (tag(xml, 'dhProc', 'dhEmi') || '').slice(0, 10)
   const dCompet = (tag(xml, 'dCompet', 'competencia') || '').slice(0, 10)
   const competencia = (dCompet || data).slice(0, 7)
   const valor = parseFloat(tag(xml, 'vLiq', 'vServ', 'vServPrest') || '0') || 0
-  return { chave, prestadorDoc: doc, numero, data, competencia, valor }
+  return { chave, prestadorDoc: doc, prestadorNome: nome, numero, data, competencia, valor }
 }
 
 /** Converte um item do LoteDFe em NotaADN. */
@@ -101,7 +103,7 @@ function itemParaNota(item: any): NotaADN | null {
   return {
     nsu,
     chave: p.chave || String(pick(item, 'ChaveAcesso', 'chaveAcesso') ?? ''),
-    prestadorDoc: p.prestadorDoc, numero: p.numero,
+    prestadorDoc: p.prestadorDoc, prestadorNome: p.prestadorNome, numero: p.numero,
     dataEmissao: p.data, valor: p.valor,
     competencia: p.competencia || undefined,
   }

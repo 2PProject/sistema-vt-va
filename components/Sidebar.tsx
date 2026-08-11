@@ -93,6 +93,7 @@ const secoesSalao: { title: string; items: Item[] }[] = SALAO_ENABLED ? [
     title: 'Salão (NFS-e)',
     items: [
       { href: '/salao', label: 'Painel NFS-e', icon: ICON.salao },
+      { href: '/salao/notas', label: 'Notas Recebidas', icon: ICON.recibo },
       { href: '/salao/importar', label: 'Importar Planilha', icon: ICON.pagamento },
       { href: '/salao/profissionais', label: 'Profissionais', icon: ICON.func },
       { href: '/salao/certificados', label: 'Certificados', icon: ICON.cargo },

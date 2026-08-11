@@ -1,6 +1,7 @@
 // Sincronização manual de NFS-e com o gov.br (ADN) — SERVER-ONLY, runtime Node.
-// Para cada empresa com certificado: mTLS → consulta desde o último NSU → cruza
-// pelas CPF/CNPJ dos prestadores → atualiza status e guarda o novo NSU.
+// Para cada empresa com certificado: mTLS → consulta desde o último NSU → GRAVA
+// as notas recebidas em salon_notas → guarda o novo NSU. A consulta de período
+// é feita depois, sobre as notas já armazenadas.
 // (Um cron futuro no Vercel Pro pode apontar para esta mesma rota, sem mudanças.)
 import { getAdminClient, decrypt } from '../../../../lib/salao/server'
 import { agenteMTLS, consultarADN, baseADN } from '../../../../lib/salao/adn'
@@ -38,41 +39,26 @@ export async function POST(req: Request) {
       const agent = agenteMTLS(cert.cert_pfx_b64, decrypt(cert.cert_senha_enc))
       const { notas, ultimoNsu: novoNsu } = await consultarADN({ agent, cnpj: cert.cert_cnpj ?? '', ultimoNsu })
 
-      let atualizados = 0
-      for (const nota of notas) {
-        const { data: prof } = await admin.from('salon_professionals')
-          .select('id').eq('empresa_id', cert.empresa_id).eq('documento', nota.prestadorDoc).maybeSingle()
-        if (!prof) continue
-        // Casa a comissão: por competência se houver; senão a pendente mais antiga.
-        let alvo
-        if (nota.competencia) {
-          const { data } = await admin.from('salon_comissoes').select('id')
-            .eq('empresa_id', cert.empresa_id).eq('profissional_id', prof.id).eq('mes_ref', nota.competencia).maybeSingle()
-          alvo = data
-        }
-        if (!alvo) {
-          const { data } = await admin.from('salon_comissoes').select('id')
-            .eq('empresa_id', cert.empresa_id).eq('profissional_id', prof.id).is('nf_numero', null)
-            .order('mes_ref', { ascending: true }).limit(1).maybeSingle()
-          alvo = data
-        }
-        if (!alvo) continue
-        await admin.from('salon_comissoes').update({
-          nf_numero: nota.numero, nf_data: nota.dataEmissao || null, nf_valor: nota.valor,
-          nf_origem: 'adn', status: 'recebida', confirmado_em: new Date().toISOString(),
-        }).eq('id', alvo.id)
-        await admin.from('salon_comissoes_log').insert({
-          comissao_id: alvo.id, acao: 'sync_adn', detalhe: `NF ${nota.numero} (NSU ${nota.nsu})`, usuario: 'gov.br',
-        })
-        atualizados++
+      // Grava as notas recebidas (idempotente por empresa_id + nsu)
+      let gravadas = 0
+      if (notas.length > 0) {
+        const payload = notas.map((n) => ({
+          empresa_id: cert.empresa_id, nsu: n.nsu, chave: n.chave || null,
+          documento: n.prestadorDoc, emitente_nome: n.prestadorNome || null,
+          numero: n.numero || null, valor: n.valor, data_emissao: n.dataEmissao || null,
+          competencia: n.competencia || null,
+        }))
+        const { error, count } = await admin.from('salon_notas').upsert(payload, { onConflict: 'empresa_id,nsu', count: 'exact' })
+        if (error) throw new Error(error.message)
+        gravadas = count ?? payload.length
       }
 
       await admin.from('salon_nfse_sync').upsert({
         empresa_id: cert.empresa_id, ultimo_nsu: novoNsu, ultima_sync: new Date().toISOString(),
       })
       notasEncontradas += notas.length
-      registrosAtualizados += atualizados
-      porEmpresa.push({ empresa_id: cert.empresa_id, notas: notas.length, atualizados })
+      registrosAtualizados += gravadas
+      porEmpresa.push({ empresa_id: cert.empresa_id, notas: notas.length, atualizados: gravadas })
     } catch (e) {
       porEmpresa.push({ empresa_id: cert.empresa_id, notas: 0, atualizados: 0, erro: e instanceof Error ? e.message : 'falha' })
     }
