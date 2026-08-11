@@ -39,6 +39,19 @@ export type ResumoSync = {
   empresas?: { empresa_id: string; notas: number; atualizados: number; erro?: string }[]
 }
 
+export type ResultadoTeste = { ok: boolean; status?: number; mensagem: string; ambiente?: string; amostra?: string; erro?: string }
+
+/** Testa a conexão mTLS real com o gov.br para UMA empresa (não grava nada). */
+export async function testarConexao(empresaId: string): Promise<ResultadoTeste> {
+  const resp = await fetch('/api/nfse/testar', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ empresa_id: empresaId }),
+  })
+  const data = await resp.json().catch(() => null)
+  if (!data) return { ok: false, mensagem: `Falha (HTTP ${resp.status}).` }
+  if (data.erro) return { ok: false, mensagem: data.erro }
+  return data
+}
+
 export async function sincronizarNFSe(empresaId?: string): Promise<ResumoSync> {
   const resp = await fetch('/api/nfse/sync', {
     method: 'POST',

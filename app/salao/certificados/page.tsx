@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import LayoutAdmin from '../../../components/LayoutAdmin'
 import { SALAO_ENABLED } from '../../../lib/salao/config'
-import { listarCertificados, salvarCertificado, removerCertificado, salvarPrazo } from '../../../lib/salao/certificados'
+import { listarCertificados, salvarCertificado, removerCertificado, salvarPrazo, testarConexao, sincronizarNFSe } from '../../../lib/salao/certificados'
 import type { CertificadoInfo } from '../../../lib/salao/tipos'
 
 function fmtData(iso: string | null) { if (!iso) return '—'; const [a, m, d] = iso.split('-'); return `${d}/${m}/${a}` }
@@ -20,6 +20,9 @@ export default function SalaoCertificadosPage() {
   const [alvo, setAlvo] = useState<string | null>(null)
   const [arquivo, setArquivo] = useState<File | null>(null)
   const [senha, setSenha] = useState(''); const [enviando, setEnviando] = useState(false)
+  // teste/sincronização por empresa
+  const [ocupado, setOcupado] = useState<string | null>(null)  // `${empresaId}:${acao}`
+  const [resultado, setResultado] = useState<Record<string, { ok: boolean; msg: string }>>({})
 
   useEffect(() => { if (!SALAO_ENABLED) { router.replace('/dashboard'); return } }, [router])
 
@@ -52,6 +55,19 @@ export default function SalaoCertificadosPage() {
     const res = await salvarPrazo(empresaId, valor)
     if (!res.ok) { notify(res.erro ?? 'Erro ao salvar prazo.', 'erro'); return }
     setLista(prev => prev.map(c => c.empresa_id === empresaId ? { ...c, prazo_dia: valor } : c))
+  }
+  async function testar(empresaId: string) {
+    setOcupado(`${empresaId}:teste`); setResultado(prev => ({ ...prev, [empresaId]: { ok: true, msg: 'Testando conexão com o gov.br...' } }))
+    const r = await testarConexao(empresaId)
+    setOcupado(null)
+    setResultado(prev => ({ ...prev, [empresaId]: { ok: r.ok, msg: r.mensagem + (r.ambiente ? `  ·  ${r.ambiente}` : '') } }))
+  }
+  async function sincronizar(empresaId: string) {
+    setOcupado(`${empresaId}:sync`); setResultado(prev => ({ ...prev, [empresaId]: { ok: true, msg: 'Sincronizando...' } }))
+    const r = await sincronizarNFSe(empresaId)
+    setOcupado(null)
+    if (r.erro) { setResultado(prev => ({ ...prev, [empresaId]: { ok: false, msg: r.erro! } })); return }
+    setResultado(prev => ({ ...prev, [empresaId]: { ok: true, msg: `${r.notasEncontradas} nota(s) encontrada(s), ${r.registrosAtualizados} atualizada(s).` } }))
   }
 
   if (!SALAO_ENABLED) return null
@@ -88,12 +104,28 @@ export default function SalaoCertificadosPage() {
                         onChange={e => mudarPrazo(c.empresa_id, Math.min(28, Math.max(1, Number(e.target.value))))}
                         className="input-field w-16 text-center" style={{ padding: '4px' }} />
                     </div>
-                    {c.temCertificado && <button onClick={() => remover(c.empresa_id)} className="text-red-500 text-xs font-medium">Remover</button>}
+                    {c.temCertificado && (
+                      <>
+                        <button onClick={() => testar(c.empresa_id)} disabled={!!ocupado} className="btn-secondary text-sm">
+                          {ocupado === `${c.empresa_id}:teste` ? 'Testando...' : 'Testar conexão'}
+                        </button>
+                        <button onClick={() => sincronizar(c.empresa_id)} disabled={!!ocupado} className="text-sm bg-emerald-600 text-white py-2 px-3 rounded-lg hover:bg-emerald-700 disabled:opacity-60">
+                          {ocupado === `${c.empresa_id}:sync` ? 'Sincronizando...' : 'Sincronizar'}
+                        </button>
+                        <button onClick={() => remover(c.empresa_id)} className="text-red-500 text-xs font-medium">Remover</button>
+                      </>
+                    )}
                     <button onClick={() => { setAlvo(alvo === c.empresa_id ? null : c.empresa_id); setArquivo(null); setSenha('') }} className="btn-secondary text-sm">
                       {c.temCertificado ? 'Substituir' : 'Enviar .pfx'}
                     </button>
                   </div>
                 </div>
+
+                {resultado[c.empresa_id] && (
+                  <div className={`mt-3 text-xs rounded-lg px-3 py-2 ${resultado[c.empresa_id].ok ? 'bg-green-50 border border-green-200 text-green-700' : 'bg-red-50 border border-red-200 text-red-700'}`}>
+                    {resultado[c.empresa_id].msg}
+                  </div>
+                )}
 
                 {alvo === c.empresa_id && (
                   <div className="mt-4 pt-4 border-t border-gray-100 grid grid-cols-1 md:grid-cols-3 gap-3 items-end">

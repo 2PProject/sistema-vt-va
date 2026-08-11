@@ -20,9 +20,12 @@ NFS-e pelos profissionais autônomos de salões de beleza.
    - `SUPABASE_SERVICE_ROLE_KEY` — chave service_role (server-only) usada para
      ler/gravar certificados e o NSU (tabelas protegidas por RLS).
    - `SALON_ENC_KEY` — segredo (>= 32 chars) para criptografar a senha do .pfx.
-   - `SALON_ADN_BASE_URL` *(opcional, para a sync real)* — URL base da API ADN
-     NFS-e nacional. Sem ela, o botão Sincronizar funciona e reporta "0 notas
-     novas" (não quebra nada) até o endpoint ser configurado.
+   - `SALON_ADN_AMBIENTE` *(opcional)* — `restrita` (padrão, homologação) ou
+     `producao`. Define a base do ADN gov.br automaticamente:
+     - restrita: `https://adn.producaorestrita.nfse.gov.br`
+     - produção: `https://adn.nfse.gov.br`
+   - `SALON_ADN_BASE_URL` *(opcional)* — sobrescreve a base acima, se precisar
+     apontar para outro host. Endpoint usado: `GET /contribuintes/DFe/{NSU}`.
 3. (Opcional) `NEXT_PUBLIC_SALAO_ENABLED=true` — já é o padrão.
 
 ## Como DESLIGAR (sem remover)
