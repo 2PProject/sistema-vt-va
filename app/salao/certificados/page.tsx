@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import LayoutAdmin from '../../../components/LayoutAdmin'
 import { SALAO_ENABLED } from '../../../lib/salao/config'
-import { listarCertificados, salvarCertificado, removerCertificado, salvarPrazo, testarConexao, sincronizarNFSe } from '../../../lib/salao/certificados'
+import { listarCertificados, salvarCertificado, removerCertificado, salvarPrazo, testarConexao, sincronizarNFSe, rotuloAmbiente } from '../../../lib/salao/certificados'
 import type { CertificadoInfo } from '../../../lib/salao/tipos'
 
 function fmtData(iso: string | null) { if (!iso) return '—'; const [a, m, d] = iso.split('-'); return `${d}/${m}/${a}` }
@@ -67,7 +67,11 @@ export default function SalaoCertificadosPage() {
     const r = await sincronizarNFSe(empresaId)
     setOcupado(null)
     if (r.erro) { setResultado(prev => ({ ...prev, [empresaId]: { ok: false, msg: r.erro! } })); return }
-    setResultado(prev => ({ ...prev, [empresaId]: { ok: true, msg: `${r.notasEncontradas} nota(s) encontrada(s), ${r.registrosAtualizados} atualizada(s).` } }))
+    const avisos = (r.empresas ?? []).filter(e => e.erro).map(e => e.erro as string)
+    const amb = rotuloAmbiente(r.ambiente)
+    if (avisos.length) { setResultado(prev => ({ ...prev, [empresaId]: { ok: false, msg: `Avisos: ${avisos.join('; ')}` } })); return }
+    const dica = r.notasEncontradas === 0 && amb === 'ambiente de teste' ? ' — troque para produção para trazer as notas reais.' : ''
+    setResultado(prev => ({ ...prev, [empresaId]: { ok: true, msg: `${r.notasEncontradas} nota(s), ${r.registrosAtualizados} atualizada(s)${amb ? ` · ${amb}` : ''}.${dica}` } }))
   }
 
   if (!SALAO_ENABLED) return null

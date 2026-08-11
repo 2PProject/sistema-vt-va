@@ -34,9 +34,15 @@ export async function salvarPrazo(empresaId: string, prazoDia: number): Promise<
 }
 
 export type ResumoSync = {
-  ok?: boolean; erro?: string
+  ok?: boolean; erro?: string; ambiente?: string
   notasEncontradas: number; registrosAtualizados: number
   empresas?: { empresa_id: string; notas: number; atualizados: number; erro?: string }[]
+}
+
+/** Rótulo curto do ambiente ADN a partir da URL. */
+export function rotuloAmbiente(url?: string): string {
+  if (!url) return ''
+  return url.includes('producaorestrita') ? 'ambiente de teste' : 'ambiente de produção'
 }
 
 export type ResultadoTeste = { ok: boolean; status?: number; mensagem: string; ambiente?: string; amostra?: string; erro?: string }

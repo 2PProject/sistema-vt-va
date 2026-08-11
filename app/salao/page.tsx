@@ -7,7 +7,7 @@ import { supabase, Empresa } from '../../lib/supabase'
 import { formatarMoeda, MESES } from '../../utils/calculoVT'
 import { SALAO_ENABLED, STATUS_LABEL, STATUS_CLASSE, type StatusComissao } from '../../lib/salao/config'
 import { listarComissoes, resumoDoMes, confirmarNFManual, substituirNF } from '../../lib/salao/comissoes'
-import { sincronizarNFSe } from '../../lib/salao/certificados'
+import { sincronizarNFSe, rotuloAmbiente } from '../../lib/salao/certificados'
 import type { Comissao } from '../../lib/salao/tipos'
 
 function competenciaAtual() {
@@ -63,7 +63,12 @@ export default function SalaoPainelPage() {
     const r = await sincronizarNFSe(empresaFiltro || undefined)
     setSincronizando(false)
     if (r.erro) { notify(r.erro, 'erro'); return }
-    notify(`${r.notasEncontradas} nota(s) encontrada(s), ${r.registrosAtualizados} registro(s) atualizado(s).`, 'ok')
+    const amb = rotuloAmbiente(r.ambiente)
+    const avisos = (r.empresas ?? []).filter(e => e.erro).map(e => e.erro as string)
+    if (avisos.length) { notify(`Avisos: ${avisos.join(' · ')}`, 'erro'); carregar(); return }
+    const dica = r.notasEncontradas === 0 && amb === 'ambiente de teste'
+      ? ' — o ambiente de teste não traz suas notas reais; troque para produção.' : ''
+    notify(`${r.notasEncontradas} nota(s) encontrada(s), ${r.registrosAtualizados} atualizada(s)${amb ? ` · ${amb}` : ''}.${dica}`, 'ok')
     carregar()
   }
 

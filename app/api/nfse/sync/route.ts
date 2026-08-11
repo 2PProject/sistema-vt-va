@@ -3,7 +3,7 @@
 // pelas CPF/CNPJ dos prestadores → atualiza status e guarda o novo NSU.
 // (Um cron futuro no Vercel Pro pode apontar para esta mesma rota, sem mudanças.)
 import { getAdminClient, decrypt } from '../../../../lib/salao/server'
-import { agenteMTLS, consultarADN } from '../../../../lib/salao/adn'
+import { agenteMTLS, consultarADN, baseADN } from '../../../../lib/salao/adn'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -78,5 +78,5 @@ export async function POST(req: Request) {
     }
   }
 
-  return Response.json({ ok: true, notasEncontradas, registrosAtualizados, empresas: porEmpresa })
+  return Response.json({ ok: true, ambiente: baseADN(), notasEncontradas, registrosAtualizados, empresas: porEmpresa })
 }
