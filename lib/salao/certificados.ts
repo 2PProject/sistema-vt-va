@@ -58,11 +58,11 @@ export async function testarConexao(empresaId: string): Promise<ResultadoTeste> 
   return data
 }
 
-export async function sincronizarNFSe(empresaId?: string): Promise<ResumoSync> {
+export async function sincronizarNFSe(empresaId?: string, reset = false): Promise<ResumoSync> {
   const resp = await fetch('/api/nfse/sync', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(empresaId ? { empresa_id: empresaId } : {}),
+    body: JSON.stringify({ ...(empresaId ? { empresa_id: empresaId } : {}), ...(reset ? { reset: true } : {}) }),
   })
   const data = await resp.json().catch(() => null)
   if (!resp.ok || !data) return { erro: data?.erro ?? `Falha (HTTP ${resp.status}).`, notasEncontradas: 0, registrosAtualizados: 0 }

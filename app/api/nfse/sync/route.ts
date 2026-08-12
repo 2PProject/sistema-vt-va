@@ -11,9 +11,11 @@ export const dynamic = 'force-dynamic'
 
 export async function POST(req: Request) {
   let empresaFiltro: string | null = null
+  let reset = false
   try {
     const body = await req.json().catch(() => null)
     empresaFiltro = body?.empresa_id ?? null
+    reset = body?.reset === true
   } catch { /* sem corpo — sincroniza todas */ }
 
   let admin
@@ -35,7 +37,7 @@ export async function POST(req: Request) {
     const cert = c as any
     try {
       const { data: syncRow } = await admin.from('salon_nfse_sync').select('ultimo_nsu').eq('empresa_id', cert.empresa_id).maybeSingle()
-      const ultimoNsu = syncRow?.ultimo_nsu ?? 0
+      const ultimoNsu = reset ? 0 : (syncRow?.ultimo_nsu ?? 0)
       const agent = agenteMTLS(cert.cert_pfx_b64, decrypt(cert.cert_senha_enc))
       const { notas, ultimoNsu: novoNsu } = await consultarADN({ agent, cnpj: cert.cert_cnpj ?? '', ultimoNsu })
 

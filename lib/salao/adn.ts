@@ -93,19 +93,21 @@ function parseArquivoXml(arquivo: string): { chave: string; prestadorDoc: string
 }
 
 /** Converte um item do LoteDFe em NotaADN. */
+// Converte um item do LoteDFe em NotaADN. Nunca descarta o documento: se o
+// parser não extrair algum campo, grava o que conseguiu (com NSU/chave), para
+// nada se perder mesmo se o formato do XML tiver alguma variação.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function itemParaNota(item: any): NotaADN | null {
+function itemParaNota(item: any): NotaADN {
   const nsu = Number(pick(item, 'NSU', 'nsu') ?? 0)
   const arquivo = pick(item, 'ArquivoXml', 'arquivoXml', 'DocumentoXml', 'documentoXmlGZipB64', 'xmlGZipB64')
-  if (typeof arquivo !== 'string') return null
-  const p = parseArquivoXml(arquivo)
-  if (!p || !p.prestadorDoc) return null
+  const chaveItem = String(pick(item, 'ChaveAcesso', 'chaveAcesso') ?? '')
+  const p = typeof arquivo === 'string' ? parseArquivoXml(arquivo) : null
   return {
     nsu,
-    chave: p.chave || String(pick(item, 'ChaveAcesso', 'chaveAcesso') ?? ''),
-    prestadorDoc: p.prestadorDoc, prestadorNome: p.prestadorNome, numero: p.numero,
-    dataEmissao: p.data, valor: p.valor,
-    competencia: p.competencia || undefined,
+    chave: p?.chave || chaveItem,
+    prestadorDoc: p?.prestadorDoc ?? '', prestadorNome: p?.prestadorNome ?? '', numero: p?.numero ?? '',
+    dataEmissao: p?.data ?? '', valor: p?.valor ?? 0,
+    competencia: p?.competencia || undefined,
   }
 }
 
@@ -141,7 +143,7 @@ export async function consultarADN(params: { agent: https.Agent; cnpj: string; u
     const data = JSON.parse(corpo || 'null')
     const lote: unknown[] = pick(data, 'LoteDFe', 'loteDFe', 'documentos', 'DFe') ?? []
     if (!Array.isArray(lote) || lote.length === 0) break
-    for (const item of lote) { const n = itemParaNota(item); if (n) notas.push(n) }
+    for (const item of lote) notas.push(itemParaNota(item))
     const maxNsu = lote.reduce((mx: number, it) => Math.max(mx, Number(pick(it, 'NSU', 'nsu') ?? 0)), nsu)
     const ultimoInformado = Number(pick(data, 'UltimoNSU', 'ultimoNSU', 'MaximoNSU', 'maxNSU') ?? maxNsu)
     if (maxNsu <= nsu) break               // não avançou → fim

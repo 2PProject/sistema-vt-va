@@ -22,7 +22,7 @@ export default function SalaoCertificadosPage() {
   const [senha, setSenha] = useState(''); const [enviando, setEnviando] = useState(false)
   // teste/sincronização por empresa
   const [ocupado, setOcupado] = useState<string | null>(null)  // `${empresaId}:${acao}`
-  const [resultado, setResultado] = useState<Record<string, { ok: boolean; msg: string }>>({})
+  const [resultado, setResultado] = useState<Record<string, { ok: boolean; msg: string; amostra?: string }>>({})
 
   useEffect(() => { if (!SALAO_ENABLED) { router.replace('/dashboard'); return } }, [router])
 
@@ -60,18 +60,18 @@ export default function SalaoCertificadosPage() {
     setOcupado(`${empresaId}:teste`); setResultado(prev => ({ ...prev, [empresaId]: { ok: true, msg: 'Testando conexão com o gov.br...' } }))
     const r = await testarConexao(empresaId)
     setOcupado(null)
-    setResultado(prev => ({ ...prev, [empresaId]: { ok: r.ok, msg: r.mensagem + (r.ambiente ? `  ·  ${r.ambiente}` : '') } }))
+    setResultado(prev => ({ ...prev, [empresaId]: { ok: r.ok, msg: r.mensagem + (r.ambiente ? `  ·  ${r.ambiente}` : '') + (r.status ? `  (HTTP ${r.status})` : ''), amostra: r.amostra } }))
   }
-  async function sincronizar(empresaId: string) {
-    setOcupado(`${empresaId}:sync`); setResultado(prev => ({ ...prev, [empresaId]: { ok: true, msg: 'Sincronizando...' } }))
-    const r = await sincronizarNFSe(empresaId)
+  async function sincronizar(empresaId: string, reset = false) {
+    setOcupado(`${empresaId}:sync`); setResultado(prev => ({ ...prev, [empresaId]: { ok: true, msg: reset ? 'Rebuscando tudo (NSU 0)...' : 'Sincronizando...' } }))
+    const r = await sincronizarNFSe(empresaId, reset)
     setOcupado(null)
     if (r.erro) { setResultado(prev => ({ ...prev, [empresaId]: { ok: false, msg: r.erro! } })); return }
     const avisos = (r.empresas ?? []).filter(e => e.erro).map(e => e.erro as string)
     const amb = rotuloAmbiente(r.ambiente)
     if (avisos.length) { setResultado(prev => ({ ...prev, [empresaId]: { ok: false, msg: `Avisos: ${avisos.join('; ')}` } })); return }
     const dica = r.notasEncontradas === 0 && amb === 'ambiente de teste' ? ' — troque para produção para trazer as notas reais.' : ''
-    setResultado(prev => ({ ...prev, [empresaId]: { ok: true, msg: `${r.notasEncontradas} nota(s), ${r.registrosAtualizados} atualizada(s)${amb ? ` · ${amb}` : ''}.${dica}` } }))
+    setResultado(prev => ({ ...prev, [empresaId]: { ok: true, msg: `${r.notasEncontradas} nota(s) trazida(s), ${r.registrosAtualizados} gravada(s)${amb ? ` · ${amb}` : ''}.${dica}` } }))
   }
 
   if (!SALAO_ENABLED) return null
@@ -116,6 +116,9 @@ export default function SalaoCertificadosPage() {
                         <button onClick={() => sincronizar(c.empresa_id)} disabled={!!ocupado} className="text-sm bg-emerald-600 text-white py-2 px-3 rounded-lg hover:bg-emerald-700 disabled:opacity-60">
                           {ocupado === `${c.empresa_id}:sync` ? 'Sincronizando...' : 'Sincronizar'}
                         </button>
+                        <button onClick={() => sincronizar(c.empresa_id, true)} disabled={!!ocupado} title="Zera o NSU e puxa tudo de novo" className="text-xs text-emerald-700 font-medium underline">
+                          Rebuscar tudo
+                        </button>
                         <button onClick={() => remover(c.empresa_id)} className="text-red-500 text-xs font-medium">Remover</button>
                       </>
                     )}
@@ -128,6 +131,12 @@ export default function SalaoCertificadosPage() {
                 {resultado[c.empresa_id] && (
                   <div className={`mt-3 text-xs rounded-lg px-3 py-2 ${resultado[c.empresa_id].ok ? 'bg-green-50 border border-green-200 text-green-700' : 'bg-red-50 border border-red-200 text-red-700'}`}>
                     {resultado[c.empresa_id].msg}
+                    {resultado[c.empresa_id].amostra && (
+                      <details className="mt-1">
+                        <summary className="cursor-pointer text-gray-500">ver resposta do gov.br (para diagnóstico)</summary>
+                        <pre className="mt-1 whitespace-pre-wrap break-all bg-gray-900 text-gray-100 rounded p-2 max-h-40 overflow-auto">{resultado[c.empresa_id].amostra}</pre>
+                      </details>
+                    )}
                   </div>
                 )}
 

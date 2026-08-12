@@ -33,7 +33,10 @@ export default function SalaoNotasPage() {
 
   useEffect(() => {
     if (!SALAO_ENABLED) { router.replace('/dashboard'); return }
-    supabase.from('empresas').select('*').order('razao_social').then(({ data }) => setEmpresas(data ?? []))
+    supabase.from('empresas').select('*').order('razao_social').then(({ data }) => {
+      setEmpresas(data ?? [])
+      if (data && data[0]) setEmpresaId(data[0].id)  // busca por empresa (uma por vez)
+    })
   }, [router])
 
   const carregar = useCallback(async () => {
@@ -46,8 +49,9 @@ export default function SalaoNotasPage() {
   function notify(t: string, tipo: 'ok' | 'erro') { setMsg(t); setMsgTipo(tipo); setTimeout(() => setMsg(''), 8000) }
 
   async function sincronizar() {
+    if (!empresaId) { notify('Selecione uma empresa para buscar as notas.', 'erro'); return }
     setSincronizando(true)
-    const r = await sincronizarNFSe(empresaId || undefined)
+    const r = await sincronizarNFSe(empresaId)
     setSincronizando(false)
     if (r.erro) { notify(r.erro, 'erro'); return }
     const amb = rotuloAmbiente(r.ambiente)
