@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import { useEffect, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { supabase } from '../lib/supabase'
 // #region MÓDULO SALÃO — remover este import ao desinstalar o módulo
@@ -94,6 +95,7 @@ const secoesSalao: { title: string; items: Item[] }[] = SALAO_ENABLED ? [
     items: [
       { href: '/salao', label: 'Painel NFS-e', icon: ICON.salao },
       { href: '/salao/notas', label: 'Notas Recebidas', icon: ICON.recibo },
+      { href: '/salao/conferencia', label: 'Conferência', icon: ICON.competencia },
       { href: '/salao/importar', label: 'Importar Planilha', icon: ICON.pagamento },
       { href: '/salao/profissionais', label: 'Profissionais', icon: ICON.func },
       { href: '/salao/certificados', label: 'Certificados', icon: ICON.cargo },
@@ -106,6 +108,12 @@ const secoesSalao: { title: string; items: Item[] }[] = SALAO_ENABLED ? [
 export default function Sidebar() {
   const pathname = usePathname()
   const router = useRouter()
+  const secoes = [...sections, ...secoesSalao]
+
+  // Acordeão: só o módulo selecionado fica aberto. Abre o que contém a rota atual.
+  const secaoAtiva = secoes.find((s) => s.items.some((i) => pathname === i.href || pathname.startsWith(i.href + '/')))?.title ?? null
+  const [aberta, setAberta] = useState<string | null>(secaoAtiva)
+  useEffect(() => { if (secaoAtiva) setAberta(secaoAtiva) }, [secaoAtiva])
 
   async function handleLogout() {
     await supabase.auth.signOut()
@@ -138,14 +146,26 @@ export default function Sidebar() {
       </div>
 
       <nav className="flex-1 p-3 overflow-y-auto">
-        <ul className="space-y-1">{link(dashboard)}</ul>
+        <ul className="space-y-1 mb-2">{link(dashboard)}</ul>
 
-        {[...sections, ...secoesSalao].map((sec) => (
-          <div key={sec.title} className="mt-5">
-            <p className="px-3 mb-1.5 text-[10px] font-bold uppercase tracking-wider text-blue-400">{sec.title}</p>
-            <ul className="space-y-1">{sec.items.map(link)}</ul>
-          </div>
-        ))}
+        {secoes.map((sec) => {
+          const open = aberta === sec.title
+          const temAtivo = sec.items.some((i) => pathname === i.href || pathname.startsWith(i.href + '/'))
+          return (
+            <div key={sec.title} className="mt-1">
+              <button
+                onClick={() => setAberta(open ? null : sec.title)}
+                className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-[11px] font-bold uppercase tracking-wider transition-colors ${
+                  temAtivo ? 'text-white' : 'text-blue-300 hover:text-white hover:bg-blue-800'
+                }`}
+              >
+                <span>{sec.title}</span>
+                <svg className={`w-3.5 h-3.5 transition-transform ${open ? 'rotate-90' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+              </button>
+              {open && <ul className="space-y-1 mt-1 mb-2">{sec.items.map(link)}</ul>}
+            </div>
+          )
+        })}
       </nav>
 
       <div className="p-4 border-t border-blue-800 space-y-2">
