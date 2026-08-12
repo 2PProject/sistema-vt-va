@@ -48,13 +48,19 @@ export async function POST(req: Request) {
     if (status === 403) return Response.json({ ok: false, status, mensagem: 'Conexão TLS OK, mas acesso negado (403). Verifique o credenciamento da empresa no ambiente e se o CNPJ do certificado tem a mesma raiz.', ambiente: baseADN(), amostra })
     return Response.json({ ok: false, status, mensagem: `Conectou, mas o ADN respondeu HTTP ${status}.`, ambiente: baseADN(), amostra })
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e)
-    // Erros típicos de mTLS: senha errada / certificado inválido / host indisponível
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const err = e as any
+    const msg = String(err?.message ?? e)
+    const code = String(err?.code ?? err?.library ?? '')
+    const detalhe = `${msg}${code ? ` [${code}]` : ''}`
+    // Classificação precisa dos erros de mTLS/OpenSSL
     const amigavel =
-      /mac verify|wrong (final block|tag)|bad decrypt|PKCS12|passphrase|unable to load/i.test(msg) ? 'Certificado ou senha inválidos — verifique o .pfx e a senha.'
-      : /ENOTFOUND|EAI_AGAIN|ECONNREFUSED|timeout|ETIMEDOUT/i.test(msg) ? `Não foi possível alcançar o ADN (${baseADN()}). Verifique a rede/ambiente.`
-      : /alert|handshake|SSL|TLS|certificate/i.test(msg) ? 'Falha no handshake TLS — o gov.br não aceitou este certificado (verifique validade/tipo e-CNPJ e o ambiente).'
-      : `Falha: ${msg}`
-    return Response.json({ ok: false, mensagem: amigavel, ambiente: baseADN() })
+      /unsupported|digital envelope routines|legacy|OSSL_PROVIDER|provider|decoder/i.test(detalhe)
+        ? 'O certificado usa um algoritmo LEGADO de PKCS#12 (comum em certificados Soluti/Serpro). O OpenSSL do servidor não carrega esse algoritmo por padrão — é preciso habilitar o provider legado (NODE_OPTIONS=--openssl-legacy-provider). O certificado e a senha estão corretos.'
+      : /mac verify failure|invalid password|wrong final block|bad decrypt|incorrect password/i.test(detalhe) ? 'A senha do certificado não foi aceita na conexão (mac verify). Se a senha funciona em outros sistemas, provavelmente é o algoritmo legado do .pfx (Soluti) — habilite o provider legado.'
+      : /ENOTFOUND|EAI_AGAIN|ECONNREFUSED|timeout|ETIMEDOUT/i.test(detalhe) ? `Não foi possível alcançar o ADN (${baseADN()}). Verifique a rede/ambiente.`
+      : /alert|handshake|sslv3|tlsv1|unknown ca|self.signed|certificate|bad certificate/i.test(detalhe) ? 'Conexão TLS recusada pelo gov.br (handshake). Verifique o credenciamento da empresa e a cadeia do certificado.'
+      : `Falha ao conectar: ${msg}`
+    return Response.json({ ok: false, mensagem: amigavel, ambiente: baseADN(), amostra: detalhe })
   }
 }

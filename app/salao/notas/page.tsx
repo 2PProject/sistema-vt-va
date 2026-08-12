@@ -163,7 +163,7 @@ export default function SalaoNotasPage() {
                     <span className="text-xs text-gray-500">HTTP {e.status || '—'}</span>
                   </div>
                   {e.ok
-                    ? <div className="text-xs text-green-700 mt-0.5">{e.encontradas} no lote · <strong>{e.gravadas} recebida(s) gravada(s)</strong>{e.ignoradas ? ` · ${e.ignoradas} emitida(s) pela própria empresa (ignoradas)` : ''}{typeof e.ultimoNsu === 'number' ? ` · NSU ${e.ultimoNsu}` : ''}</div>
+                    ? <div className="text-xs text-green-700 mt-0.5">{e.encontradas} no lote · <strong>{e.gravadas} recebida(s) gravada(s)</strong>{e.ignoradas ? ` · ${e.ignoradas} descartada(s) (própria empresa / canceladas / valor zero)` : ''}{typeof e.ultimoNsu === 'number' ? ` · NSU ${e.ultimoNsu}` : ''}</div>
                     : <div className="text-xs text-red-700 mt-0.5">{e.erro}</div>}
                   {e.amostra && (
                     <details className="mt-1">

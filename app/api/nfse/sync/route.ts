@@ -75,13 +75,14 @@ export async function POST(req: Request) {
         empresas.push({ ...base, status: 429, houveMais: true, erro: 'O gov.br limitou as requisições (429). Aguarde ~1 minuto e clique em Sincronizar de novo (a busca continua de onde parou).', amostra }); continue
       }
 
-      // Só notas RECEBIDAS: descarta as emitidas pela própria empresa
-      // (mesma raiz de CNPJ do certificado). Mantém as de outros CNPJs/CPFs.
+      // Guarda só notas RECEBIDAS e VÁLIDAS:
+      //  - descarta valor <= 0 (canceladas / sem valor — "lixo");
+      //  - descarta emitidas pela própria empresa (mesma raiz de CNPJ);
+      //  - mantém CPFs e outros CNPJs (os profissionais).
       const raiz = (cert.cert_cnpj ?? '').replace(/\D/g, '').slice(0, 8)
       const recebidas = notas.filter((n) => {
+        if (!(Number(n.valor) > 0)) return false
         const emit = (n.prestadorDoc ?? '').replace(/\D/g, '')
-        // exclui só CNPJ de mesma raiz da empresa (nota emitida por ela mesma);
-        // CPFs e outros CNPJs (profissionais) são sempre mantidos
         return !(raiz && emit.length === 14 && emit.slice(0, 8) === raiz)
       })
       const ignoradas = notas.length - recebidas.length
