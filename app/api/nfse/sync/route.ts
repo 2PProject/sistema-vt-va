@@ -16,6 +16,7 @@ type DiagEmpresa = {
   status: number
   encontradas: number
   gravadas: number
+  ignoradas?: number
   ultimoNsu?: number
   houveMais?: boolean
   erro?: string
@@ -74,9 +75,18 @@ export async function POST(req: Request) {
         empresas.push({ ...base, status: 429, houveMais: true, erro: 'O gov.br limitou as requisições (429). Aguarde ~1 minuto e clique em Sincronizar de novo (a busca continua de onde parou).', amostra }); continue
       }
 
+      // Só notas RECEBIDAS: descarta as emitidas pela própria empresa
+      // (mesma raiz de CNPJ do certificado). Mantém as de outros CNPJs/CPFs.
+      const raiz = (cert.cert_cnpj ?? '').replace(/\D/g, '').slice(0, 8)
+      const recebidas = notas.filter((n) => {
+        const emit = (n.prestadorDoc ?? '').replace(/\D/g, '')
+        return !(raiz && emit.length >= 8 && emit.slice(0, 8) === raiz)
+      })
+      const ignoradas = notas.length - recebidas.length
+
       let gravadas = 0
-      if (notas.length > 0) {
-        const payload = notas.map((n) => ({
+      if (recebidas.length > 0) {
+        const payload = recebidas.map((n) => ({
           empresa_id: cert.empresa_id, nsu: n.nsu, chave: n.chave || null,
           documento: n.prestadorDoc || null, emitente_nome: n.prestadorNome || null,
           numero: n.numero || null, valor: n.valor, data_emissao: n.dataEmissao || null,
@@ -94,7 +104,7 @@ export async function POST(req: Request) {
       await admin.from('salon_nfse_sync').upsert({ empresa_id: cert.empresa_id, ultimo_nsu: novoNsu, ultima_sync: new Date().toISOString() })
       notasEncontradas += notas.length
       registrosAtualizados += gravadas
-      empresas.push({ ...base, ok: true, status, encontradas: notas.length, gravadas, ultimoNsu: novoNsu, houveMais: houveMais || rateLimited, amostra })
+      empresas.push({ ...base, ok: true, status, encontradas: notas.length, gravadas, ignoradas, ultimoNsu: novoNsu, houveMais: houveMais || rateLimited, amostra })
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       const amigavel =

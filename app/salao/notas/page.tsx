@@ -11,12 +11,6 @@ import { listarNotas, type NotaRecebida } from '../../../lib/salao/notas'
 import { MESES } from '../../../utils/calculoVT'
 
 function mesAtual() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}` }
-// Período fechado do mês (dia 1 ao último dia)
-function periodoDoMes(mes: string): { de: string; ate: string } {
-  const [a, m] = mes.split('-').map(Number)
-  const ultimo = new Date(a, m, 0).getDate()
-  return { de: `${mes}-01`, ate: `${mes}-${String(ultimo).padStart(2, '0')}` }
-}
 function fmtMesLabel(mes: string) { const [a, m] = mes.split('-').map(Number); return m ? `${MESES[m - 1]}/${a}` : mes }
 function fmtData(iso: string | null) { if (!iso) return ''; const [a, m, d] = iso.split('-'); return `${d}/${m}/${a}` }
 function fmtDoc(d: string | null) {
@@ -47,8 +41,7 @@ export default function SalaoNotasPage() {
 
   const carregar = useCallback(async () => {
     setLoading(true)
-    const { de, ate } = periodoDoMes(mes)
-    setLinhas(await listarNotas({ empresaId: empresaId || undefined, de, ate }))
+    setLinhas(await listarNotas({ empresaId: empresaId || undefined, mes }))
     setLoading(false)
   }, [empresaId, mes])
   useEffect(() => { if (SALAO_ENABLED) carregar() }, [carregar])
@@ -130,7 +123,7 @@ export default function SalaoNotasPage() {
                     <span className="text-xs text-gray-500">HTTP {e.status || '—'}</span>
                   </div>
                   {e.ok
-                    ? <div className="text-xs text-green-700 mt-0.5">{e.encontradas} encontrada(s) · {e.gravadas} gravada(s){typeof e.ultimoNsu === 'number' ? ` · NSU ${e.ultimoNsu}` : ''}</div>
+                    ? <div className="text-xs text-green-700 mt-0.5">{e.encontradas} no lote · <strong>{e.gravadas} recebida(s) gravada(s)</strong>{e.ignoradas ? ` · ${e.ignoradas} emitida(s) pela própria empresa (ignoradas)` : ''}{typeof e.ultimoNsu === 'number' ? ` · NSU ${e.ultimoNsu}` : ''}</div>
                     : <div className="text-xs text-red-700 mt-0.5">{e.erro}</div>}
                   {e.amostra && (
                     <details className="mt-1">
