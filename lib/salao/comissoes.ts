@@ -156,12 +156,13 @@ export async function importarPlanilhaComissoes(arquivo: File):
     const rows: Record<string, unknown>[] = XLSX.utils.sheet_to_json(wb.Sheets[aba], { defval: '' })
     for (let i = 0; i < rows.length; i++) {
       const row = Object.fromEntries(Object.entries(rows[i]).map(([k, v]) => [norm(k), v]))
-      const nome = String(row['nome do profissional'] ?? row['nome'] ?? row['profissional'] ?? '').trim()
+      const nome = String(row['nome completo'] ?? row['nome do profissional'] ?? row['nome'] ?? row['profissional'] ?? '').trim()
       const documento = String(row['cnpj'] ?? row['cpf'] ?? row['cnpj/cpf'] ?? row['cpf/cnpj'] ?? row['documento'] ?? row['cnpj cpf'] ?? '').replace(/\D/g, '')
-      const valor = parseValorBR(row['valor da comissao'] ?? row['valor comissao'] ?? row['comissao'] ?? row['valor'] ?? 0)
-      if (!nome && !documento) continue
+      const valor = parseValorBR(row['credito'] ?? row['valor da comissao'] ?? row['valor comissao'] ?? row['comissao'] ?? row['valor'] ?? 0)
+      if (!nome && !documento && !(valor > 0)) continue          // linha vazia/total
+      if (!documento) { erros.push(`Aba "${aba}", linha ${i + 2}: sem CNPJ${nome ? ` (${nome})` : ''} — informe o CNPJ na planilha para conferir por documento.`); continue }
       if (documento.length !== 11 && documento.length !== 14) { erros.push(`Aba "${aba}", linha ${i + 2}: CNPJ/CPF inválido${nome ? ` (${nome})` : ''}.`); continue }
-      if (isNaN(valor) || valor <= 0) { erros.push(`Aba "${aba}", linha ${i + 2}: valor inválido${nome ? ` (${nome})` : ''}.`); continue }
+      if (isNaN(valor) || valor <= 0) { erros.push(`Aba "${aba}", linha ${i + 2}: valor (Crédito) inválido${nome ? ` (${nome})` : ''}.`); continue }
       brutas.push({ empresaId: empresa.id, empresaNome: empresa.nome, documento, nome: nome || documento, valor_comissao: valor })
     }
   }

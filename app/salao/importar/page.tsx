@@ -56,8 +56,8 @@ export default function SalaoImportarPage() {
 
         <div className="card">
           <div className="bg-blue-50 border border-blue-200 text-blue-800 text-xs rounded-lg p-3 mb-4">
-            Cada <strong>aba</strong> = uma <strong>empresa</strong> (nome da aba = apelido). Colunas por linha: <strong>Nome do profissional</strong> · <strong>CNPJ/CPF</strong> · <strong>Valor</strong>.
-            A <strong>competência</strong> é informada aqui embaixo (não vem na planilha). Ao confirmar, o sistema guarda a lista esperada do mês e já concilia com as notas recebidas (CNPJ + valor).
+            Cada <strong>aba</strong> = uma <strong>empresa</strong> (nome da aba = apelido). Colunas: <strong>CNPJ</strong> · <strong>Nome completo</strong> · <strong>Crédito</strong> (valor).
+            A <strong>competência</strong> é informada aqui embaixo (não vem na planilha). Linhas sem CNPJ viram alerta (não dá para conferir por documento). Ao confirmar, guarda a lista esperada do mês e já concilia com as notas (CNPJ + valor).
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
             <div><label className="label-field">Competência</label><input type="month" className="input-field" value={competencia} onChange={e => setCompetencia(e.target.value)} /></div>
