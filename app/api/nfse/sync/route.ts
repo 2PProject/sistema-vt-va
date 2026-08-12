@@ -80,7 +80,9 @@ export async function POST(req: Request) {
       const raiz = (cert.cert_cnpj ?? '').replace(/\D/g, '').slice(0, 8)
       const recebidas = notas.filter((n) => {
         const emit = (n.prestadorDoc ?? '').replace(/\D/g, '')
-        return !(raiz && emit.length >= 8 && emit.slice(0, 8) === raiz)
+        // exclui só CNPJ de mesma raiz da empresa (nota emitida por ela mesma);
+        // CPFs e outros CNPJs (profissionais) são sempre mantidos
+        return !(raiz && emit.length === 14 && emit.slice(0, 8) === raiz)
       })
       const ignoradas = notas.length - recebidas.length
 

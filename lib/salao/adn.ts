@@ -103,19 +103,33 @@ function parseArquivoXml(arquivo: string): { chave: string; prestadorDoc: string
 }
 
 /** Converte um item do LoteDFe em NotaADN. */
-// Converte um item do LoteDFe em NotaADN. Nunca descarta o documento: se o
-// parser não extrair algum campo, grava o que conseguiu (com NSU/chave), para
-// nada se perder mesmo se o formato do XML tiver alguma variação.
+/**
+ * CNPJ/CPF do EMITENTE a partir da Chave de Acesso (50 dígitos). O campo
+ * "Inscrição Federal" (14 posições, começando na 10ª) carrega o CNPJ do
+ * emitente — ou o CPF com 3 zeros à esquerda. É a forma mais confiável de saber
+ * quem emitiu (não depende de abrir o XML).
+ */
+export function docDaChave(chave: string): string {
+  const c = (chave || '').replace(/\D/g, '')
+  if (c.length < 23) return ''
+  const d = c.slice(9, 23)                       // 14 dígitos da inscrição federal
+  return d.startsWith('000') ? d.slice(3) : d    // CPF vem com 000 à esquerda
+}
+
+// Converte um item do LoteDFe em NotaADN. O documento do emitente vem da CHAVE
+// (confiável); os demais campos, do XML (gzip+base64) quando disponível.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function itemParaNota(item: any): NotaADN {
   const nsu = Number(pick(item, 'NSU', 'nsu') ?? 0)
   const arquivo = pick(item, 'ArquivoXml', 'arquivoXml', 'DocumentoXml', 'documentoXmlGZipB64', 'xmlGZipB64')
-  const chaveItem = String(pick(item, 'ChaveAcesso', 'chaveAcesso') ?? '')
+  const chave = String(pick(item, 'ChaveAcesso', 'chaveAcesso') ?? '')
   const p = typeof arquivo === 'string' ? parseArquivoXml(arquivo) : null
+  const chaveFinal = p?.chave || chave
   return {
     nsu,
-    chave: p?.chave || chaveItem,
-    prestadorDoc: p?.prestadorDoc ?? '', prestadorNome: p?.prestadorNome ?? '', numero: p?.numero ?? '',
+    chave: chaveFinal,
+    prestadorDoc: docDaChave(chaveFinal) || p?.prestadorDoc || '',
+    prestadorNome: p?.prestadorNome ?? '', numero: p?.numero ?? '',
     dataEmissao: p?.data ?? '', valor: p?.valor ?? 0,
     competencia: p?.competencia || undefined,
   }
