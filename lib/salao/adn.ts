@@ -16,7 +16,13 @@ export type NotaADN = {
   valor: number
   competencia?: string   // 'YYYY-MM'
 }
-export type ResultadoADN = { notas: NotaADN[]; ultimoNsu: number }
+export type ResultadoADN = {
+  notas: NotaADN[]
+  ultimoNsu: number
+  status: number      // HTTP status da última chamada relevante
+  amostra: string     // trecho da 1ª resposta (diagnóstico)
+  paginas: number     // quantas páginas foram lidas
+}
 
 /** Base URL do ADN conforme o ambiente (padrão: produção restrita/homologação). */
 export function baseADN(): string {
@@ -136,11 +142,15 @@ export async function chamarDFe(agent: https.Agent, cnpj: string, nsu: number, c
 export async function consultarADN(params: { agent: https.Agent; cnpj: string; ultimoNsu: number }): Promise<ResultadoADN> {
   let nsu = params.ultimoNsu
   const notas: NotaADN[] = []
+  let status = 0, amostra = '', paginas = 0
   for (let i = 0; i < 40; i++) {           // trava de segurança (até ~2000 docs)
-    const { status, corpo } = await chamarDFe(params.agent, params.cnpj, nsu)
-    if (semDocumentos(status, corpo)) break // sem novos documentos (E2215/E2230/404)
-    if (status >= 400) throw new Error(`ADN HTTP ${status}`)
-    const data = JSON.parse(corpo || 'null')
+    const r = await chamarDFe(params.agent, params.cnpj, nsu)
+    if (i === 0) { status = r.status; amostra = (r.corpo || '').slice(0, 600) }
+    paginas++
+    if (semDocumentos(r.status, r.corpo)) { status = r.status; break }  // fim (E2215/E2230/404)
+    if (r.status >= 400) throw new Error(`ADN respondeu HTTP ${r.status}. ${(r.corpo || '').slice(0, 200)}`)
+    let data: unknown = null
+    try { data = JSON.parse(r.corpo || 'null') } catch { throw new Error(`Resposta do ADN não é JSON. Início: ${(r.corpo || '').slice(0, 200)}`) }
     const lote: unknown[] = pick(data, 'LoteDFe', 'loteDFe', 'documentos', 'DFe') ?? []
     if (!Array.isArray(lote) || lote.length === 0) break
     for (const item of lote) notas.push(itemParaNota(item))
@@ -150,5 +160,5 @@ export async function consultarADN(params: { agent: https.Agent; cnpj: string; u
     nsu = maxNsu
     if (lote.length < 50 && maxNsu >= ultimoInformado) break
   }
-  return { notas, ultimoNsu: nsu }
+  return { notas, ultimoNsu: nsu, status, amostra, paginas }
 }

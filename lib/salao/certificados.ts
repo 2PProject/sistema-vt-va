@@ -33,10 +33,14 @@ export async function salvarPrazo(empresaId: string, prazoDia: number): Promise<
   return { ok: true }
 }
 
+export type DiagEmpresaSync = {
+  empresa_id: string; empresaNome: string; ok: boolean; status: number
+  encontradas: number; gravadas: number; ultimoNsu?: number; erro?: string; amostra?: string
+}
 export type ResumoSync = {
   ok?: boolean; erro?: string; ambiente?: string
   notasEncontradas: number; registrosAtualizados: number
-  empresas?: { empresa_id: string; notas: number; atualizados: number; erro?: string }[]
+  empresas?: DiagEmpresaSync[]
 }
 
 /** Rótulo curto do ambiente ADN a partir da URL. */
