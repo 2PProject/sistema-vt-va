@@ -143,7 +143,7 @@ export async function consultarADN(params: { agent: https.Agent; cnpj: string; u
   let nsu = params.ultimoNsu
   const notas: NotaADN[] = []
   let status = 0, amostra = '', paginas = 0
-  for (let i = 0; i < 40; i++) {           // trava de segurança (até ~2000 docs)
+  for (let i = 0; i < 400; i++) {          // trava de segurança (até ~20.000 docs, 50/página)
     const r = await chamarDFe(params.agent, params.cnpj, nsu)
     if (i === 0) { status = r.status; amostra = (r.corpo || '').slice(0, 600) }
     paginas++
