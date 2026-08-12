@@ -22,7 +22,11 @@ export type ResultadoADN = {
   status: number      // HTTP status da última chamada relevante
   amostra: string     // trecho da 1ª resposta (diagnóstico)
   paginas: number     // quantas páginas foram lidas
+  houveMais: boolean  // parou no limite do lote (há mais para buscar)
+  rateLimited: boolean// gov.br respondeu 429 (excesso de requisições)
 }
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 
 /** Base URL do ADN conforme o ambiente (padrão: produção restrita/homologação). */
 export function baseADN(): string {
@@ -139,26 +143,36 @@ export async function chamarDFe(agent: https.Agent, cnpj: string, nsu: number, c
  * Consulta incremental por NSU: parte do último NSU salvo e pagina (50 por vez)
  * até esgotar. Retorna as notas novas e o maior NSU visto.
  */
-export async function consultarADN(params: { agent: https.Agent; cnpj: string; ultimoNsu: number }): Promise<ResultadoADN> {
+export async function consultarADN(params: { agent: https.Agent; cnpj: string; ultimoNsu: number; maxPaginas?: number }): Promise<ResultadoADN> {
+  const maxPaginas = params.maxPaginas ?? 6   // lotes pequenos: respeita limite de tempo/rate do gov.br
   let nsu = params.ultimoNsu
   const notas: NotaADN[] = []
-  let status = 0, amostra = '', paginas = 0
-  for (let i = 0; i < 400; i++) {          // trava de segurança (até ~20.000 docs, 50/página)
-    const r = await chamarDFe(params.agent, params.cnpj, nsu)
+  let status = 0, amostra = '', paginas = 0, houveMais = false, rateLimited = false
+
+  for (let i = 0; i < maxPaginas; i++) {
+    if (i > 0) await sleep(500)             // throttle: espaça as chamadas (evita 429)
+
+    // Chamada com retentativa em caso de 429 (excesso de requisições)
+    let r = await chamarDFe(params.agent, params.cnpj, nsu)
+    for (let t = 0; r.status === 429 && t < 2; t++) { await sleep(2000 * (t + 1)); r = await chamarDFe(params.agent, params.cnpj, nsu) }
+
     if (i === 0) { status = r.status; amostra = (r.corpo || '').slice(0, 600) }
     paginas++
-    if (semDocumentos(r.status, r.corpo)) { status = r.status; break }  // fim (E2215/E2230/404)
+
+    if (r.status === 429) { status = 429; rateLimited = true; houveMais = true; break }
+    if (semDocumentos(r.status, r.corpo)) { status = r.status; break }   // fim (E2215/E2230/404)
     if (r.status >= 400) throw new Error(`ADN respondeu HTTP ${r.status}. ${(r.corpo || '').slice(0, 200)}`)
+
     let data: unknown = null
     try { data = JSON.parse(r.corpo || 'null') } catch { throw new Error(`Resposta do ADN não é JSON. Início: ${(r.corpo || '').slice(0, 200)}`) }
     const lote: unknown[] = pick(data, 'LoteDFe', 'loteDFe', 'documentos', 'DFe') ?? []
     if (!Array.isArray(lote) || lote.length === 0) break
     for (const item of lote) notas.push(itemParaNota(item))
     const maxNsu = lote.reduce((mx: number, it) => Math.max(mx, Number(pick(it, 'NSU', 'nsu') ?? 0)), nsu)
-    const ultimoInformado = Number(pick(data, 'UltimoNSU', 'ultimoNSU', 'MaximoNSU', 'maxNSU') ?? maxNsu)
-    if (maxNsu <= nsu) break               // não avançou → fim
+    if (maxNsu <= nsu) break                // não avançou → fim
     nsu = maxNsu
-    if (lote.length < 50 && maxNsu >= ultimoInformado) break
+    if (lote.length < 50) break             // último lote parcial → acabou
+    if (i === maxPaginas - 1) houveMais = true   // parou no limite do lote; ainda há mais
   }
-  return { notas, ultimoNsu: nsu, status, amostra, paginas }
+  return { notas, ultimoNsu: nsu, status, amostra, paginas, houveMais, rateLimited }
 }

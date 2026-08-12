@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import LayoutAdmin from '../../../components/LayoutAdmin'
 import { SALAO_ENABLED } from '../../../lib/salao/config'
-import { listarCertificados, salvarCertificado, removerCertificado, salvarPrazo, testarConexao, sincronizarNFSe, rotuloAmbiente } from '../../../lib/salao/certificados'
+import { listarCertificados, salvarCertificado, removerCertificado, salvarPrazo, testarConexao } from '../../../lib/salao/certificados'
 import type { CertificadoInfo } from '../../../lib/salao/tipos'
 
 function fmtData(iso: string | null) { if (!iso) return '—'; const [a, m, d] = iso.split('-'); return `${d}/${m}/${a}` }
@@ -62,18 +62,6 @@ export default function SalaoCertificadosPage() {
     setOcupado(null)
     setResultado(prev => ({ ...prev, [empresaId]: { ok: r.ok, msg: r.mensagem + (r.ambiente ? `  ·  ${r.ambiente}` : '') + (r.status ? `  (HTTP ${r.status})` : ''), amostra: r.amostra } }))
   }
-  async function sincronizar(empresaId: string, reset = false) {
-    setOcupado(`${empresaId}:sync`); setResultado(prev => ({ ...prev, [empresaId]: { ok: true, msg: reset ? 'Rebuscando tudo (NSU 0)...' : 'Sincronizando...' } }))
-    const r = await sincronizarNFSe(empresaId, reset)
-    setOcupado(null)
-    if (r.erro) { setResultado(prev => ({ ...prev, [empresaId]: { ok: false, msg: r.erro! } })); return }
-    const avisos = (r.empresas ?? []).filter(e => e.erro).map(e => e.erro as string)
-    const amb = rotuloAmbiente(r.ambiente)
-    if (avisos.length) { setResultado(prev => ({ ...prev, [empresaId]: { ok: false, msg: `Avisos: ${avisos.join('; ')}` } })); return }
-    const dica = r.notasEncontradas === 0 && amb === 'ambiente de teste' ? ' — troque para produção para trazer as notas reais.' : ''
-    setResultado(prev => ({ ...prev, [empresaId]: { ok: true, msg: `${r.notasEncontradas} nota(s) trazida(s), ${r.registrosAtualizados} gravada(s)${amb ? ` · ${amb}` : ''}.${dica}` } }))
-  }
-
   if (!SALAO_ENABLED) return null
 
   return (
@@ -112,12 +100,6 @@ export default function SalaoCertificadosPage() {
                       <>
                         <button onClick={() => testar(c.empresa_id)} disabled={!!ocupado} className="btn-secondary text-sm">
                           {ocupado === `${c.empresa_id}:teste` ? 'Testando...' : 'Testar conexão'}
-                        </button>
-                        <button onClick={() => sincronizar(c.empresa_id)} disabled={!!ocupado} className="text-sm bg-emerald-600 text-white py-2 px-3 rounded-lg hover:bg-emerald-700 disabled:opacity-60">
-                          {ocupado === `${c.empresa_id}:sync` ? 'Sincronizando...' : 'Sincronizar'}
-                        </button>
-                        <button onClick={() => sincronizar(c.empresa_id, true)} disabled={!!ocupado} title="Zera o NSU e puxa tudo de novo" className="text-xs text-emerald-700 font-medium underline">
-                          Rebuscar tudo
                         </button>
                         <button onClick={() => remover(c.empresa_id)} className="text-red-500 text-xs font-medium">Remover</button>
                       </>

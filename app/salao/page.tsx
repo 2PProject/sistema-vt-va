@@ -7,7 +7,6 @@ import { supabase, Empresa } from '../../lib/supabase'
 import { formatarMoeda, MESES } from '../../utils/calculoVT'
 import { SALAO_ENABLED, STATUS_LABEL, STATUS_CLASSE, type StatusComissao } from '../../lib/salao/config'
 import { listarComissoes, resumoDoMes, confirmarNFManual, substituirNF } from '../../lib/salao/comissoes'
-import { sincronizarNFSe, rotuloAmbiente } from '../../lib/salao/certificados'
 import type { Comissao } from '../../lib/salao/tipos'
 
 function competenciaAtual() {
@@ -25,7 +24,6 @@ export default function SalaoPainelPage() {
   const [statusFiltro, setStatusFiltro] = useState<StatusComissao | ''>('')
   const [linhas, setLinhas] = useState<Comissao[]>([])
   const [loading, setLoading] = useState(false)
-  const [sincronizando, setSincronizando] = useState(false)
   const [usuario, setUsuario] = useState<string | undefined>()
 
   const [msg, setMsg] = useState('')
@@ -58,20 +56,6 @@ export default function SalaoPainelPage() {
 
   const resumo = useMemo(() => resumoDoMes(linhas), [linhas])
 
-  async function sincronizar() {
-    setSincronizando(true)
-    const r = await sincronizarNFSe(empresaFiltro || undefined)
-    setSincronizando(false)
-    if (r.erro) { notify(r.erro, 'erro'); return }
-    const amb = rotuloAmbiente(r.ambiente)
-    const avisos = (r.empresas ?? []).filter(e => e.erro).map(e => e.erro as string)
-    if (avisos.length) { notify(`Avisos: ${avisos.join(' · ')}`, 'erro'); carregar(); return }
-    const dica = r.notasEncontradas === 0 && amb === 'ambiente de teste'
-      ? ' — o ambiente de teste não traz suas notas reais; troque para produção.' : ''
-    notify(`${r.notasEncontradas} nota(s) encontrada(s), ${r.registrosAtualizados} atualizada(s)${amb ? ` · ${amb}` : ''}.${dica}`, 'ok')
-    carregar()
-  }
-
   function abrirModal(c: Comissao, substituir: boolean) {
     setModal({ c, substituir })
     setNfNumero(c.nf_numero ?? ''); setNfData(c.nf_data ?? ''); setNfValor(c.nf_valor ? String(c.nf_valor) : String(c.valor_comissao || '')); setMotivo('')
@@ -92,16 +76,7 @@ export default function SalaoPainelPage() {
   if (!SALAO_ENABLED) return null
 
   return (
-    <LayoutAdmin
-      title="Salão — Controle de NFS-e"
-      actions={
-        <button onClick={sincronizar} disabled={sincronizando}
-          className="bg-emerald-600 text-white font-medium py-2 px-4 rounded-lg hover:bg-emerald-700 disabled:opacity-60 flex items-center gap-2">
-          <svg className={`w-4 h-4 ${sincronizando ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
-          {sincronizando ? 'Sincronizando...' : 'Sincronizar NFS-e'}
-        </button>
-      }
-    >
+    <LayoutAdmin title="Salão — Controle de NFS-e">
       <div className="space-y-6">
         {msg && (
           <div className={`px-4 py-3 rounded-lg text-sm flex justify-between items-center ${msgTipo === 'ok' ? 'bg-green-50 border border-green-200 text-green-700' : 'bg-red-50 border border-red-200 text-red-700'}`}>

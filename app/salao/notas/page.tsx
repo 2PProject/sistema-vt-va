@@ -8,9 +8,16 @@ import { formatarMoeda } from '../../../utils/calculoVT'
 import { SALAO_ENABLED } from '../../../lib/salao/config'
 import { sincronizarNFSe, rotuloAmbiente, type DiagEmpresaSync } from '../../../lib/salao/certificados'
 import { listarNotas, type NotaRecebida } from '../../../lib/salao/notas'
+import { MESES } from '../../../utils/calculoVT'
 
-function primeiroDiaMes() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01` }
-function hoje() { return new Date().toISOString().slice(0, 10) }
+function mesAtual() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}` }
+// Período fechado do mês (dia 1 ao último dia)
+function periodoDoMes(mes: string): { de: string; ate: string } {
+  const [a, m] = mes.split('-').map(Number)
+  const ultimo = new Date(a, m, 0).getDate()
+  return { de: `${mes}-01`, ate: `${mes}-${String(ultimo).padStart(2, '0')}` }
+}
+function fmtMesLabel(mes: string) { const [a, m] = mes.split('-').map(Number); return m ? `${MESES[m - 1]}/${a}` : mes }
 function fmtData(iso: string | null) { if (!iso) return ''; const [a, m, d] = iso.split('-'); return `${d}/${m}/${a}` }
 function fmtDoc(d: string | null) {
   const s = (d ?? '').replace(/\D/g, '')
@@ -23,8 +30,7 @@ export default function SalaoNotasPage() {
   const router = useRouter()
   const [empresas, setEmpresas] = useState<Empresa[]>([])
   const [empresaId, setEmpresaId] = useState('')          // '' = todas
-  const [de, setDe] = useState(primeiroDiaMes())
-  const [ate, setAte] = useState(hoje())
+  const [mes, setMes] = useState(mesAtual())              // mês fechado (1º ao último dia)
   const [busca, setBusca] = useState('')
   const [linhas, setLinhas] = useState<NotaRecebida[]>([])
   const [loading, setLoading] = useState(false)
@@ -41,9 +47,10 @@ export default function SalaoNotasPage() {
 
   const carregar = useCallback(async () => {
     setLoading(true)
+    const { de, ate } = periodoDoMes(mes)
     setLinhas(await listarNotas({ empresaId: empresaId || undefined, de, ate }))
     setLoading(false)
-  }, [empresaId, de, ate])
+  }, [empresaId, mes])
   useEffect(() => { if (SALAO_ENABLED) carregar() }, [carregar])
 
   async function sincronizar(reset = false) {
@@ -53,8 +60,11 @@ export default function SalaoNotasPage() {
     if (r.erro) { setErroGeral(r.erro); return }
     setDiag({ ambiente: r.ambiente, empresas: r.empresas ?? [] })
     const totalGrav = (r.empresas ?? []).reduce((s, e) => s + (e.gravadas || 0), 0)
+    const temMais = (r.empresas ?? []).some(e => e.houveMais)
     const amb = rotuloAmbiente(r.ambiente)
-    if (totalGrav === 0 && amb === 'ambiente de teste') {
+    if (temMais) {
+      setAviso(`Trazidas ${totalGrav} nota(s) neste lote — ainda há mais no gov.br. Clique em "Sincronizar" de novo para continuar de onde parou.`)
+    } else if (totalGrav === 0 && amb === 'ambiente de teste') {
       setAviso('Você está no AMBIENTE DE TESTE (produção restrita), que não tem suas notas reais. Defina SALON_ADN_AMBIENTE=producao no Vercel e faça Redeploy.')
     }
     carregar()
@@ -134,16 +144,15 @@ export default function SalaoNotasPage() {
           </div>
         )}
 
-        {/* 3) Filtro do período e lista */}
+        {/* 3) Filtro por mês e lista */}
         <div className="card">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-            <div><label className="label-field">De (emissão)</label><input type="date" className="input-field" value={de} onChange={e => setDe(e.target.value)} /></div>
-            <div><label className="label-field">Até</label><input type="date" className="input-field" value={ate} onChange={e => setAte(e.target.value)} /></div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <div><label className="label-field">Mês</label><input type="month" className="input-field" value={mes} onChange={e => setMes(e.target.value)} /></div>
             <div><label className="label-field">Buscar</label><input className="input-field" placeholder="Emitente, CPF/CNPJ ou nº" value={busca} onChange={e => setBusca(e.target.value)} /></div>
           </div>
 
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-base font-semibold text-gray-800">{filtradas.length} nota(s) · {alvoNome}</h2>
+            <h2 className="text-base font-semibold text-gray-800">{filtradas.length} nota(s) · {fmtMesLabel(mes)} · {alvoNome}</h2>
             <span className="text-sm font-semibold text-gray-700">Total: {formatarMoeda(total)}</span>
           </div>
 
