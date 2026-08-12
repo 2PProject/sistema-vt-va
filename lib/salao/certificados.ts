@@ -10,7 +10,7 @@ export async function listarCertificados(): Promise<CertificadoInfo[]> {
 }
 
 export async function salvarCertificado(empresaId: string, arquivo: File, senha: string):
-  Promise<{ ok: boolean; erro?: string; cert_nome?: string; cert_validade?: string }> {
+  Promise<{ ok: boolean; erro?: string; cert_nome?: string; cert_validade?: string; vencido?: boolean; aviso?: string }> {
   const form = new FormData()
   form.append('empresa_id', empresaId)
   form.append('senha', senha)
@@ -18,7 +18,7 @@ export async function salvarCertificado(empresaId: string, arquivo: File, senha:
   const resp = await fetch('/api/salao/certificado', { method: 'POST', body: form })
   const data = await resp.json().catch(() => null)
   if (!resp.ok) return { ok: false, erro: data?.erro ?? `Falha (HTTP ${resp.status}).` }
-  return { ok: true, cert_nome: data?.cert_nome, cert_validade: data?.cert_validade }
+  return { ok: true, cert_nome: data?.cert_nome, cert_validade: data?.cert_validade, vencido: data?.vencido, aviso: data?.aviso }
 }
 
 export async function removerCertificado(empresaId: string): Promise<void> {
