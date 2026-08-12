@@ -30,6 +30,8 @@ export default function SalaoNotasPage() {
   const [loading, setLoading] = useState(false)
 
   const [sincronizando, setSincronizando] = useState(false)
+  const [progresso, setProgresso] = useState('')
+  const pararRef = useState<{ v: boolean }>(() => ({ v: false }))[0]
   const [diag, setDiag] = useState<{ ambiente?: string; empresas: DiagEmpresaSync[] } | null>(null)
   const [erroGeral, setErroGeral] = useState('')
   const [aviso, setAviso] = useState('')
@@ -46,21 +48,42 @@ export default function SalaoNotasPage() {
   }, [empresaId, mes])
   useEffect(() => { if (SALAO_ENABLED) carregar() }, [carregar])
 
-  async function sincronizar(reset = false) {
-    setSincronizando(true); setErroGeral(''); setAviso(''); setDiag(null)
-    const r = await sincronizarNFSe(empresaId || undefined, reset)
-    setSincronizando(false)
-    if (r.erro) { setErroGeral(r.erro); return }
-    setDiag({ ambiente: r.ambiente, empresas: r.empresas ?? [] })
-    const totalGrav = (r.empresas ?? []).reduce((s, e) => s + (e.gravadas || 0), 0)
-    const temMais = (r.empresas ?? []).some(e => e.houveMais)
-    const amb = rotuloAmbiente(r.ambiente)
-    if (temMais) {
-      setAviso(`Trazidas ${totalGrav} nota(s) neste lote — ainda há mais no gov.br. Clique em "Sincronizar" de novo para continuar de onde parou.`)
-    } else if (totalGrav === 0 && amb === 'ambiente de teste') {
-      setAviso('Você está no AMBIENTE DE TESTE (produção restrita), que não tem suas notas reais. Defina SALON_ADN_AMBIENTE=producao no Vercel e faça Redeploy.')
+  // Baixa TODO o histórico automaticamente (a API do gov.br é sequencial por NSU,
+  // da nota mais antiga para a mais recente). Faz vários lotes seguidos, mostra
+  // o progresso e trata o limite 429 esperando e continuando.
+  async function baixarTudo(reset = false) {
+    const sleep = (ms: number) => new Promise<void>(res => setTimeout(res, ms))
+    pararRef.v = false
+    setSincronizando(true); setErroGeral(''); setAviso(''); setDiag(null); setProgresso('Iniciando...')
+    let totalGrav = 0, totalIgn = 0
+    const acc: Record<string, DiagEmpresaSync> = {}
+    let ambiente: string | undefined
+    for (let rodada = 1; rodada <= 120; rodada++) {
+      if (pararRef.v) { setProgresso(`Parado. ${totalGrav} recebidas gravadas até aqui.`); break }
+      const r = await sincronizarNFSe(empresaId || undefined, reset && rodada === 1)
+      if (r.erro) { setErroGeral(r.erro); break }
+      ambiente = r.ambiente
+      let rate = false, mais = false
+      for (const e of (r.empresas ?? [])) {
+        totalGrav += e.gravadas || 0; totalIgn += e.ignoradas || 0
+        if (e.status === 429) rate = true
+        if (e.houveMais) mais = true
+        const a = acc[e.empresa_id]
+        acc[e.empresa_id] = { ...e, gravadas: (a?.gravadas || 0) + (e.gravadas || 0), ignoradas: (a?.ignoradas || 0) + (e.ignoradas || 0), encontradas: (a?.encontradas || 0) + (e.encontradas || 0) }
+      }
+      setDiag({ ambiente, empresas: Object.values(acc) })
+      await carregar()
+      const amb = rotuloAmbiente(ambiente)
+      if (totalGrav === 0 && !mais && amb === 'ambiente de teste') {
+        setAviso('Você está no AMBIENTE DE TESTE (produção restrita), que não tem suas notas reais. Defina SALON_ADN_AMBIENTE=producao no Vercel e faça Redeploy.')
+        break
+      }
+      if (rate) { setProgresso(`gov.br limitou (429). Aguardando 30s para continuar... (${totalGrav} recebidas até agora)`); await sleep(30000); continue }
+      if (!mais) { setProgresso(`Concluído: ${totalGrav} nota(s) recebida(s) gravada(s).`); break }
+      setProgresso(`Baixando... ${totalGrav} recebidas gravadas (${totalIgn} próprias ignoradas). Continua...`)
+      await sleep(1200)
     }
-    carregar()
+    setSincronizando(false)
   }
 
   const filtradas = useMemo(() => {
@@ -76,27 +99,44 @@ export default function SalaoNotasPage() {
   return (
     <LayoutAdmin title="Salão — Notas Recebidas">
       <div className="space-y-6">
-        {/* 1) Sincronização (por empresa ou todas) */}
+        {/* 1) Baixar notas do gov.br */}
         <div className="card">
-          <h2 className="text-sm font-semibold text-gray-700 mb-3">Buscar notas no gov.br</h2>
+          <h2 className="text-sm font-semibold text-gray-700 mb-1">1. Baixar notas recebidas do gov.br</h2>
+          <p className="text-xs text-gray-500 mb-3">
+            O gov.br entrega as notas em ordem (da mais antiga para a mais recente), então é preciso baixar o histórico uma vez.
+            Depois é só filtrar pelo mês na seção abaixo. As notas emitidas pela própria empresa são descartadas.
+          </p>
           <div className="flex flex-wrap items-end gap-3">
             <div className="flex-1 min-w-[240px]">
               <label className="label-field">Empresa</label>
-              <select className="input-field" value={empresaId} onChange={e => setEmpresaId(e.target.value)}>
+              <select className="input-field" value={empresaId} onChange={e => setEmpresaId(e.target.value)} disabled={sincronizando}>
                 <option value="">Todas as empresas</option>
                 {empresas.map(e => <option key={e.id} value={e.id}>{e.apelido || e.razao_social}</option>)}
               </select>
             </div>
-            <button onClick={() => sincronizar(false)} disabled={sincronizando}
-              className="bg-emerald-600 text-white font-medium py-2 px-4 rounded-lg hover:bg-emerald-700 disabled:opacity-60 flex items-center gap-2">
-              <svg className={`w-4 h-4 ${sincronizando ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
-              {sincronizando ? 'Buscando...' : `Sincronizar (${empresaId ? '1 empresa' : 'todas'})`}
-            </button>
-            <button onClick={() => sincronizar(true)} disabled={sincronizando} title="Zera o NSU e rebusca tudo do zero" className="btn-secondary text-sm">
-              Rebuscar tudo
-            </button>
+            {!sincronizando ? (
+              <>
+                <button onClick={() => baixarTudo(false)}
+                  className="bg-emerald-600 text-white font-medium py-2 px-4 rounded-lg hover:bg-emerald-700 flex items-center gap-2">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
+                  Baixar notas ({empresaId ? '1 empresa' : 'todas'})
+                </button>
+                <button onClick={() => baixarTudo(true)} title="Apaga o marcador e baixa desde o início" className="btn-secondary text-sm">
+                  Rebaixar do zero
+                </button>
+              </>
+            ) : (
+              <button onClick={() => { pararRef.v = true }} className="bg-red-600 text-white font-medium py-2 px-4 rounded-lg hover:bg-red-700">
+                Parar
+              </button>
+            )}
           </div>
-          <p className="text-xs text-gray-400 mt-2">Busca as NFS-e recebidas de <strong>{alvoNome}</strong> e grava aqui. A consulta é incremental (só o que é novo); use &quot;Rebuscar tudo&quot; para puxar desde o início.</p>
+          {(sincronizando || progresso) && (
+            <div className="mt-3 text-sm text-gray-700 flex items-center gap-2">
+              {sincronizando && <svg className="w-4 h-4 animate-spin text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>}
+              <span>{progresso}</span>
+            </div>
+          )}
         </div>
 
         {/* Erro geral */}
