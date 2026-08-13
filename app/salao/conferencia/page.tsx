@@ -168,7 +168,10 @@ export default function SalaoConferenciaPage() {
                             <td className="table-cell text-xs">
                               {!temNota
                                 ? <span className="text-gray-400">nenhuma nota deste CNPJ</span>
-                                : <span className={valorBate ? 'text-green-700' : 'text-amber-700'}>{formatarMoeda(p.dicaNotaValor || 0)}{p.dicaNotaComp ? ` · ${p.dicaNotaComp}` : ''} {valorBate ? '· valor bate' : '· valor difere'}</span>}
+                                : <span className={p.dicaOutraEmpresa ? 'text-red-600' : (valorBate ? 'text-green-700' : 'text-amber-700')}>
+                                    {formatarMoeda(p.dicaNotaValor || 0)}{p.dicaNotaComp ? ` · ${p.dicaNotaComp}` : ''}
+                                    {p.dicaOutraEmpresa ? ` · ⚠ na empresa "${p.dicaNotaEmpresa}"` : (valorBate ? ' · valor bate' : ' · valor difere')}
+                                  </span>}
                             </td>
                             <td className="table-cell text-right"><button onClick={() => abrirPendente(p)} className="text-blue-600 hover:text-blue-800 text-xs font-medium">Vincular nota</button></td>
                           </tr>

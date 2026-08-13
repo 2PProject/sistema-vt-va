@@ -18,10 +18,12 @@ export type Esperada = {
   empresaNome?: string
   // nota vinculada (quando conferida)
   nota?: { numero: string | null; valor: number | null; data_emissao: string | null; competencia: string | null } | null
-  // diagnóstico: existe nota do MESMO CNPJ disponível? (mesmo que valor difira)
+  // diagnóstico: existe nota do MESMO CNPJ disponível? (mesmo que valor/empresa difira)
   dicaNotaValor?: number | null
   dicaNotaComp?: string | null
   dicaNotaId?: string | null
+  dicaNotaEmpresa?: string | null
+  dicaOutraEmpresa?: boolean
 }
 
 // Nota recebida sem vínculo
@@ -155,23 +157,32 @@ export async function listarConferencia(competencia: string, empresaId?: string)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     .map((n: any) => { const e = Array.isArray(n.empresas) ? n.empresas[0] : n.empresas; return { ...n, empresaNome: e?.apelido || e?.razao_social || '' } })
 
-  // Diagnóstico: notas NÃO usadas agrupadas por empresa|CNPJ (qualquer competência)
-  const livresPorDoc = new Map<string, { id: string; valor: number; comp: string }[]>()
+  // Diagnóstico: procura a nota do mesmo CNPJ em TODAS as empresas (não usadas),
+  // para revelar se a nota existe porém em outra empresa ou com outro valor.
+  const { data: todasNotas } = await supabase.from('salon_notas')
+    .select('id, empresa_id, documento, valor, competencia, competencia_conf, empresas(apelido, razao_social)').limit(20000)
+  const porDocGlobal = new Map<string, { id: string; valor: number; comp: string; empresa_id: string; empresaNome: string }[]>()
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  for (const n of (notas ?? []) as any[]) {
+  for (const n of (todasNotas ?? []) as any[]) {
     if (usadas.has(n.id)) continue
-    const k = n.empresa_id + '|' + dig(n.documento)
-    const arr = livresPorDoc.get(k) ?? []
-    arr.push({ id: n.id, valor: Number(n.valor) || 0, comp: n.competencia_conf || n.competencia || '' })
-    livresPorDoc.set(k, arr)
+    const e = Array.isArray(n.empresas) ? n.empresas[0] : n.empresas
+    const k = dig(n.documento)
+    if (!k) continue
+    const arr = porDocGlobal.get(k) ?? []
+    arr.push({ id: n.id, valor: Number(n.valor) || 0, comp: n.competencia_conf || n.competencia || '', empresa_id: n.empresa_id, empresaNome: e?.apelido || e?.razao_social || '' })
+    porDocGlobal.set(k, arr)
   }
   for (const p of pendentes) {
-    const cands = livresPorDoc.get(p.empresa_id + '|' + dig(p.documento))
-    if (cands && cands.length) {
-      const exato = cands.find((c) => Math.abs(c.valor - (p.valor_comissao || 0)) < 0.01)
-      const best = exato ?? cands[0]
-      p.dicaNotaValor = best.valor; p.dicaNotaComp = best.comp || null; p.dicaNotaId = best.id
-    }
+    const cands = porDocGlobal.get(dig(p.documento))
+    if (!cands || cands.length === 0) continue
+    const alvo = p.valor_comissao || 0
+    const best =
+      cands.find((c) => c.empresa_id === p.empresa_id && Math.abs(c.valor - alvo) < 0.01) ??
+      cands.find((c) => Math.abs(c.valor - alvo) < 0.01) ??
+      cands.find((c) => c.empresa_id === p.empresa_id) ??
+      cands[0]
+    p.dicaNotaValor = best.valor; p.dicaNotaComp = best.comp || null; p.dicaNotaId = best.id
+    p.dicaNotaEmpresa = best.empresaNome; p.dicaOutraEmpresa = best.empresa_id !== p.empresa_id
   }
 
   return { pendentes, conferidas, semVinculo, pendenciasImport }
