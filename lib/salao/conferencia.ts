@@ -49,64 +49,62 @@ function notaComp(n: { competencia_conf?: string | null; competencia?: string | 
 }
 
 /**
- * Reconcilia uma competência por CNPJ + competência (NÃO por valor exato).
+ * Reconcilia uma competência por CNPJ + competência (NÃO por valor exato, NÃO
+ * exigindo a mesma empresa).
  *
- * Motivo: o "Crédito" da planilha é a comissão que o salão paga ao profissional,
- * que NÃO é igual ao valor bruto da NFS-e emitida — mesmo no mesmo mês os números
- * divergem. Casar por valor exato praticamente nunca fecha. A chave confiável é
- * CNPJ do emitente + competência (dCompet da nota = mês informado na planilha).
+ * Motivo 1 (valor): o "Crédito" da planilha é a comissão que o salão paga, que
+ * pode diferir do valor bruto da NFS-e. O valor vira comparação, não requisito.
+ * Motivo 2 (empresa): a nota é baixada pela unidade dona do certificado e a linha
+ * da planilha é vinculada pela aba/apelido — os `empresa_id` internos nem sempre
+ * são o mesmo registro. Exigir empresa igual descartava notas idênticas em CNPJ e
+ * competência. A chave confiável é o CNPJ do emitente + a competência (dCompet).
  *
- * Para cada linha esperada ainda pendente, procura a(s) nota(s) recebida(s) do
- * MESMO CNPJ na MESMA empresa cuja competência seja a da conferência. Havendo mais
- * de uma, escolhe a de valor mais próximo do crédito. Ao casar, marca como
- * conferida e vincula a nota. O valor vira apenas comparação (exibido na tela),
- * não requisito. Uma nota só é usada uma vez.
+ * Estratégia em 2 passadas para não "roubar" a nota da unidade certa:
+ *   1ª) casa quando CNPJ + competência + MESMA empresa;
+ *   2ª) para o que sobrou, casa por CNPJ + competência em QUALQUER empresa.
+ * Havendo mais de uma nota, escolhe a de valor mais próximo do crédito. Ignora
+ * notas de valor 0 (canceladas). Uma nota só é usada uma vez.
  */
 export async function reconciliarCompetencia(competencia: string, empresaId?: string):
-  Promise<{ conferidas: number; pendentes: number; divergencias: number }> {
+  Promise<{ conferidas: number; pendentes: number; divergencias: number; outraEmpresa: number }> {
   let cq = supabase.from('salon_comissoes')
     .select('id, empresa_id, documento, valor_comissao')
     .eq('mes_ref', competencia).is('nota_id', null)
   if (empresaId) cq = cq.eq('empresa_id', empresaId)
   const { data: pend } = await cq
-  if (!pend || pend.length === 0) return { conferidas: 0, pendentes: 0, divergencias: 0 }
-
-  const empresas = Array.from(new Set(pend.map((p) => p.empresa_id)))
+  if (!pend || pend.length === 0) return { conferidas: 0, pendentes: 0, divergencias: 0, outraEmpresa: 0 }
 
   // Notas já usadas por qualquer comissão (não reutilizar)
   const { data: linkRows } = await supabase.from('salon_comissoes').select('nota_id').not('nota_id', 'is', null)
   const usadas = new Set((linkRows ?? []).map((r: { nota_id: string }) => r.nota_id))
 
+  // Carrega TODAS as notas da competência (qualquer empresa) — não filtra por
+  // empresa_id, senão notas de unidade diferente ficariam invisíveis.
   const { data: notas } = await supabase.from('salon_notas')
     .select('id, empresa_id, documento, valor, numero, data_emissao, competencia, competencia_conf')
-    .in('empresa_id', empresas)
+    .limit(20000)
 
-  // Agrupa notas livres por empresa|documento
-  type NotaCand = { id: string; valor: number; numero: string | null; data_emissao: string | null; competencia: string | null; competencia_conf: string | null }
-  const porChave = new Map<string, NotaCand[]>()
+  // Agrupa notas candidatas por CNPJ (só da competência, valor > 0, não usadas).
+  type NotaCand = { id: string; empresa_id: string; valor: number; numero: string | null; data_emissao: string | null }
+  const porDoc = new Map<string, NotaCand[]>()
   for (const n of (notas ?? [])) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const nn = n as any
     if (usadas.has(nn.id)) continue
-    const k = nn.empresa_id + '|' + dig(nn.documento)
-    const arr = porChave.get(k) ?? []
-    arr.push({ id: nn.id, valor: Number(nn.valor) || 0, numero: nn.numero, data_emissao: nn.data_emissao, competencia: nn.competencia, competencia_conf: nn.competencia_conf })
-    porChave.set(k, arr)
+    if (!(Number(nn.valor) > 0)) continue
+    if (notaComp(nn) !== competencia) continue
+    const k = dig(nn.documento)
+    if (!k) continue
+    const arr = porDoc.get(k) ?? []
+    arr.push({ id: nn.id, empresa_id: nn.empresa_id, valor: Number(nn.valor) || 0, numero: nn.numero, data_emissao: nn.data_emissao })
+    porDoc.set(k, arr)
   }
 
-  let conferidas = 0, divergencias = 0
-  for (const p of pend) {
-    const k = p.empresa_id + '|' + dig(p.documento)
-    const arr = porChave.get(k)
-    if (!arr || arr.length === 0) continue
+  let conferidas = 0, divergencias = 0, outraEmpresa = 0
+  const feitos = new Set<string>()
+
+  async function casar(p: { id: string; empresa_id: string; documento: string | null; valor_comissao: number }, arr: NotaCand[], nota: NotaCand) {
     const alvo = Number(p.valor_comissao) || 0
-    // Chave: mesma competência (dCompet da nota = mês da planilha). Valor NÃO é filtro,
-    // mas ignora notas de valor 0 (canceladas/lixo) para não vincular a nota errada.
-    const cands = arr.filter((n) => notaComp(n) === competencia && n.valor > 0)
-    if (cands.length === 0) continue
-    // Havendo várias notas do mesmo CNPJ no mês, prefere a de valor mais próximo do crédito.
-    cands.sort((a, b) => Math.abs(a.valor - alvo) - Math.abs(b.valor - alvo))
-    const nota = cands[0]
     await supabase.from('salon_comissoes').update({
       nota_id: nota.id, status: 'conferida',
       nf_numero: nota.numero ?? null, nf_data: nota.data_emissao ?? null, nf_valor: nota.valor, nf_origem: 'adn',
@@ -114,10 +112,34 @@ export async function reconciliarCompetencia(competencia: string, empresaId?: st
     }).eq('id', p.id)
     await supabase.from('salon_notas').update({ conferida: true }).eq('id', nota.id)
     arr.splice(arr.indexOf(nota), 1) // não reutiliza
+    feitos.add(p.id)
     if (Math.abs(nota.valor - alvo) >= 0.01) divergencias++
+    if (nota.empresa_id !== p.empresa_id) outraEmpresa++
     conferidas++
   }
-  return { conferidas, pendentes: pend.length - conferidas, divergencias }
+
+  // 1ª passada: CNPJ + competência + MESMA empresa (prioridade da unidade certa).
+  for (const p of pend) {
+    const arr = porDoc.get(dig(p.documento))
+    if (!arr || arr.length === 0) continue
+    const alvo = Number(p.valor_comissao) || 0
+    const mesmaEmpresa = arr.filter((n) => n.empresa_id === p.empresa_id)
+    if (mesmaEmpresa.length === 0) continue
+    mesmaEmpresa.sort((a, b) => Math.abs(a.valor - alvo) - Math.abs(b.valor - alvo))
+    await casar(p, arr, mesmaEmpresa[0])
+  }
+
+  // 2ª passada: o que sobrou casa por CNPJ + competência em QUALQUER empresa.
+  for (const p of pend) {
+    if (feitos.has(p.id)) continue
+    const arr = porDoc.get(dig(p.documento))
+    if (!arr || arr.length === 0) continue
+    const alvo = Number(p.valor_comissao) || 0
+    arr.sort((a, b) => Math.abs(a.valor - alvo) - Math.abs(b.valor - alvo))
+    await casar(p, arr, arr[0])
+  }
+
+  return { conferidas, pendentes: pend.length - conferidas, divergencias, outraEmpresa }
 }
 
 export type Conferencia = { pendentes: Esperada[]; conferidas: Esperada[]; semVinculo: NotaLivre[]; pendenciasImport: Esperada[] }

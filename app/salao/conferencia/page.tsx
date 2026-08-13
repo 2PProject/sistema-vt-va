@@ -62,7 +62,7 @@ export default function SalaoConferenciaPage() {
     setOcupado(true)
     const r = await reconciliarCompetencia(competencia, empresaId || undefined)
     setOcupado(false)
-    notify(`Conferência automática (CNPJ + competência): ${r.conferidas} nota(s) casada(s)${r.divergencias ? ` · ${r.divergencias} com valor divergente (crédito ≠ nota — normal)` : ''}. Restam ${r.pendentes} pendente(s).`, 'ok')
+    notify(`Conferência automática (CNPJ + competência): ${r.conferidas} nota(s) casada(s)${r.divergencias ? ` · ${r.divergencias} com valor divergente (crédito ≠ nota — normal)` : ''}${r.outraEmpresa ? ` · ${r.outraEmpresa} em outra unidade` : ''}. Restam ${r.pendentes} pendente(s).`, 'ok')
     carregar()
   }
   async function vincular(comissaoId: string, n: NotaLivre) {
