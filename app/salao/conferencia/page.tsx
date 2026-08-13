@@ -166,6 +166,17 @@ export default function SalaoConferenciaPage() {
                 ⚠ {diag.pendentesComNotaDisponivel} pendente(s) já têm nota livre do mesmo CNPJ nesta competência — clique em <strong>Refazer conferência</strong> para casar.
               </div>
             )}
+            <div className="col-span-2 md:col-span-6 border-t border-slate-200 pt-2 mt-1">
+              <div className="text-slate-400 mb-1">Notas por competência (total no banco: {diag.totalNotas}):</div>
+              <div className="flex flex-wrap gap-x-3 gap-y-1">
+                {diag.distComp.length === 0 ? <span className="text-slate-400">nenhuma nota baixada</span> :
+                  diag.distComp.map(d => (
+                    <span key={d.comp} className={d.comp === competencia ? 'text-green-700 font-semibold' : 'text-slate-600'}>
+                      {d.comp}: <strong>{d.n}</strong>
+                    </span>
+                  ))}
+              </div>
+            </div>
           </div>
         )}
 

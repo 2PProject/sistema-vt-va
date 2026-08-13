@@ -23,7 +23,7 @@ export async function listarConferencia(competencia: string, empresaId?: string)
   const j = await r.json().catch(() => null)
   const vazio: Conferencia = {
     pendentes: [], conferidas: [], semVinculo: [], pendenciasImport: [],
-    diagnostico: { competencia, notasNaCompetencia: 0, comissoesNaCompetencia: 0, conferidas: 0, pendentes: 0, pendentesComNotaNoMes: 0, pendentesComNotaDisponivel: 0, notasSemVinculo: 0 },
+    diagnostico: { competencia, notasNaCompetencia: 0, comissoesNaCompetencia: 0, conferidas: 0, pendentes: 0, pendentesComNotaNoMes: 0, pendentesComNotaDisponivel: 0, notasSemVinculo: 0, totalNotas: 0, distComp: [] },
   }
   if (!j?.ok) return vazio
   return { pendentes: j.pendentes, conferidas: j.conferidas, semVinculo: j.semVinculo, pendenciasImport: j.pendenciasImport, diagnostico: j.diagnostico }

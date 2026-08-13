@@ -59,6 +59,8 @@ export type Diagnostico = {
   pendentesComNotaNoMes: number    // pendentes que TÊM nota do mesmo CNPJ na competência (exista ou não vínculo)
   pendentesComNotaDisponivel: number // idem, com a nota AINDA livre (não usada no mês)
   notasSemVinculo: number
+  totalNotas: number                 // total de notas no banco (qualquer mês)
+  distComp: { comp: string; n: number }[]  // distribuição por competência efetiva (top)
 }
 
 export type ConferenciaResultado = {
@@ -71,9 +73,12 @@ export type ConferenciaResultado = {
 
 export function dig(s: string | null | undefined): string { return (s ?? '').replace(/\D/g, '') }
 
-// Competência efetiva da nota: conferência manual > dCompet > mês da emissão.
+// Competência efetiva da nota, na ORDEM CORRETA: dCompet real (competencia) →
+// override manual (competencia_conf) → mês da emissão. O dCompet vem primeiro:
+// é a competência fiscal da NFS-e e é o que deve casar com o mês da planilha.
+// (Antes o competencia_conf vinha primeiro e, poluído, escondia as notas do mês.)
 export function notaComp(n: { competencia_conf?: string | null; competencia?: string | null; data_emissao?: string | null }): string {
-  return (n.competencia_conf || n.competencia || (n.data_emissao ? String(n.data_emissao).slice(0, 7) : '')) as string
+  return (n.competencia || n.competencia_conf || (n.data_emissao ? String(n.data_emissao).slice(0, 7) : '')) as string
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -260,6 +265,16 @@ export async function carregar(admin: SupabaseClient, competencia: string, empre
     else p.dicaMotivo = 'sem nota nesta competência (só de outro mês)'
   }
 
+  // Distribuição das notas por competência efetiva (para enxergar onde estão).
+  const distMap = new Map<string, number>()
+  for (const n of notas) {
+    if (!(Number(n.valor) > 0)) continue
+    const c = notaComp(n) || '(sem competência)'
+    distMap.set(c, (distMap.get(c) ?? 0) + 1)
+  }
+  const distComp = Array.from(distMap.entries()).map(([comp, n]) => ({ comp, n }))
+    .sort((a, b) => b.n - a.n).slice(0, 12)
+
   const diagnostico: Diagnostico = {
     competencia,
     notasNaCompetencia: notas.filter((n) => Number(n.valor) > 0 && notaComp(n) === competencia).length,
@@ -269,6 +284,8 @@ export async function carregar(admin: SupabaseClient, competencia: string, empre
     pendentesComNotaNoMes,
     pendentesComNotaDisponivel,
     notasSemVinculo: semVinculo.length,
+    totalNotas: notas.length,
+    distComp,
   }
 
   return { pendentes, conferidas, semVinculo, pendenciasImport, diagnostico }
