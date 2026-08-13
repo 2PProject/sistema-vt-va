@@ -84,11 +84,24 @@ export function notaComp(n: { competencia_conf?: string | null; competencia?: st
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type NotaRow = any
 
+// PostgREST devolve no MÁXIMO 1000 linhas por requisição (independe do .limit()).
+// Esta função pagina com .range() até esgotar — carrega TODAS as notas do banco.
+// Era ESTE o bug de fundo: com >1000 notas, só as 1000 primeiras (as mais antigas)
+// eram carregadas, e as notas do mês corrente ficavam de fora ("Notas no mês: 2").
+const PAGINA = 1000
+
 async function carregarNotas(admin: SupabaseClient): Promise<NotaRow[]> {
-  const { data } = await admin.from('salon_notas')
-    .select('id, empresa_id, documento, emitente_nome, numero, valor, data_emissao, competencia, competencia_conf, conferida, empresas(apelido, razao_social)')
-    .limit(50000)
-  return data ?? []
+  const todas: NotaRow[] = []
+  for (let de = 0; ; de += PAGINA) {
+    const { data, error } = await admin.from('salon_notas')
+      .select('id, empresa_id, documento, emitente_nome, numero, valor, data_emissao, competencia, competencia_conf, conferida, empresas(apelido, razao_social)')
+      .order('id', { ascending: true })
+      .range(de, de + PAGINA - 1)
+    if (error || !data || data.length === 0) break
+    todas.push(...data)
+    if (data.length < PAGINA) break
+  }
+  return todas
 }
 
 function empresaNomeDe(row: NotaRow): string {
@@ -96,12 +109,18 @@ function empresaNomeDe(row: NotaRow): string {
   return e?.apelido || e?.razao_social || ''
 }
 
-/** Vínculos (nota_id) em uso — por competência (default) ou globais. */
+/** Vínculos (nota_id) em uso — por competência (default) ou globais. Paginado. */
 async function notasUsadas(admin: SupabaseClient, competencia?: string): Promise<Set<string>> {
-  let q = admin.from('salon_comissoes').select('nota_id').not('nota_id', 'is', null)
-  if (competencia) q = q.eq('mes_ref', competencia)
-  const { data } = await q
-  return new Set((data ?? []).map((r: { nota_id: string }) => r.nota_id))
+  const set = new Set<string>()
+  for (let de = 0; ; de += PAGINA) {
+    let q = admin.from('salon_comissoes').select('nota_id').not('nota_id', 'is', null).order('id', { ascending: true }).range(de, de + PAGINA - 1)
+    if (competencia) q = q.eq('mes_ref', competencia)
+    const { data, error } = await q
+    if (error || !data || data.length === 0) break
+    for (const r of data as { nota_id: string }[]) if (r.nota_id) set.add(r.nota_id)
+    if (data.length < PAGINA) break
+  }
+  return set
 }
 
 /**
