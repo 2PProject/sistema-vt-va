@@ -6,7 +6,7 @@ import LayoutAdmin from '../../../components/LayoutAdmin'
 import { supabase, Empresa } from '../../../lib/supabase'
 import { formatarMoeda, MESES } from '../../../utils/calculoVT'
 import { SALAO_ENABLED } from '../../../lib/salao/config'
-import { listarConferencia, reconciliarCompetencia, vincularNota, desvincular, type Esperada, type NotaLivre } from '../../../lib/salao/conferencia'
+import { listarConferencia, reconciliarCompetencia, vincularNota, desvincular, corrigirCnpj, type Esperada, type NotaLivre } from '../../../lib/salao/conferencia'
 
 function mesAtual() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}` }
 function fmtMes(m: string) { const [a, mm] = m.split('-').map(Number); return mm ? `${MESES[mm - 1]}/${a}` : m }
@@ -18,7 +18,7 @@ function fmtDoc(d: string | null) {
   return s || '—'
 }
 
-type Aba = 'pendentes' | 'conferidas' | 'sem_vinculo'
+type Aba = 'pendentes' | 'conferidas' | 'sem_vinculo' | 'falta_cnpj'
 
 export default function SalaoConferenciaPage() {
   const router = useRouter()
@@ -26,7 +26,8 @@ export default function SalaoConferenciaPage() {
   const [empresaId, setEmpresaId] = useState('')
   const [competencia, setCompetencia] = useState(mesAtual())
   const [aba, setAba] = useState<Aba>('pendentes')
-  const [dados, setDados] = useState<{ pendentes: Esperada[]; conferidas: Esperada[]; semVinculo: NotaLivre[] }>({ pendentes: [], conferidas: [], semVinculo: [] })
+  const [dados, setDados] = useState<{ pendentes: Esperada[]; conferidas: Esperada[]; semVinculo: NotaLivre[]; pendenciasImport: Esperada[] }>({ pendentes: [], conferidas: [], semVinculo: [], pendenciasImport: [] })
+  const [cnpjEdit, setCnpjEdit] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(false)
   const [ocupado, setOcupado] = useState(false)
   const [msg, setMsg] = useState(''); const [msgTipo, setMsgTipo] = useState<'ok' | 'erro'>('ok')
@@ -65,9 +66,17 @@ export default function SalaoConferenciaPage() {
     if (!res.ok) { notify(res.erro ?? 'Erro.', 'erro'); return }
     notify('Vínculo desfeito.', 'ok'); carregar()
   }
+  async function salvarCnpj(c: Esperada) {
+    const doc = cnpjEdit[c.id] ?? ''
+    const res = await corrigirCnpj(c.id, doc)
+    if (!res.ok) { notify(res.erro ?? 'Erro.', 'erro'); return }
+    // tenta conciliar essa competência já com o CNPJ corrigido
+    await reconciliarCompetencia(competencia, empresaId || undefined)
+    notify('CNPJ corrigido.', 'ok'); carregar()
+  }
 
   const resumo = useMemo(() => ({
-    pend: dados.pendentes.length, conf: dados.conferidas.length, orf: dados.semVinculo.length,
+    pend: dados.pendentes.length, conf: dados.conferidas.length, orf: dados.semVinculo.length, falta: dados.pendenciasImport.length,
     valorPend: dados.pendentes.reduce((s, p) => s + (p.valor_comissao || 0), 0),
   }), [dados])
 
@@ -122,7 +131,7 @@ export default function SalaoConferenciaPage() {
 
         {/* Abas com contadores */}
         <div className="flex flex-wrap gap-2">
-          {([['pendentes', `Pendentes (${resumo.pend})`, 'amber'], ['conferidas', `Conferidas (${resumo.conf})`, 'green'], ['sem_vinculo', `Sem vínculo (${resumo.orf})`, 'red']] as const).map(([k, label]) => (
+          {([['pendentes', `Pendentes (${resumo.pend})`, 'amber'], ['conferidas', `Conferidas (${resumo.conf})`, 'green'], ['sem_vinculo', `Sem vínculo (${resumo.orf})`, 'red'], ['falta_cnpj', `Falta CNPJ (${resumo.falta})`, 'amber']] as const).map(([k, label]) => (
             <button key={k} onClick={() => setAba(k)}
               className={`px-4 py-2 rounded-lg text-sm font-medium ${aba === k ? 'bg-blue-600 text-white' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
               {label}
@@ -194,6 +203,30 @@ export default function SalaoConferenciaPage() {
                             <td className="table-cell text-center text-xs">{fmtData(n.data_emissao)}</td>
                             <td className="table-cell text-right">{formatarMoeda(n.valor || 0)}</td>
                             <td className="table-cell text-right"><button onClick={() => setModal({ tipo: 'nota', item: n })} className="text-blue-600 hover:text-blue-800 text-xs font-medium">Vincular a pendente</button></td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                </>
+              )}
+
+              {aba === 'falta_cnpj' && (
+                <>
+                  <p className="text-xs text-gray-500 mb-3">Profissionais importados <strong>sem CNPJ</strong> na planilha (não foram perdidos). Informe o CNPJ/CPF para que entrem na conferência automática.</p>
+                  <table className="w-full border-collapse">
+                    <thead><tr className="bg-gray-50 border-b border-gray-200">
+                      <th className="table-header">Empresa</th><th className="table-header">Profissional</th><th className="table-header text-right">Valor</th><th className="table-header">Motivo</th><th className="table-header">Informar CNPJ/CPF</th><th className="table-header text-right">Ação</th>
+                    </tr></thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {dados.pendenciasImport.length === 0 ? <tr><td colSpan={6} className="text-center py-10 text-gray-400 text-sm">Nenhuma pendência de importação.</td></tr> :
+                        dados.pendenciasImport.map(p => (
+                          <tr key={p.id} className="hover:bg-gray-50 bg-amber-50/40">
+                            <td className="table-cell text-xs text-gray-500">{p.empresaNome}</td>
+                            <td className="table-cell font-medium text-gray-900">{p.nome || '—'}</td>
+                            <td className="table-cell text-right">{formatarMoeda(p.valor_comissao)}</td>
+                            <td className="table-cell text-xs text-amber-700">{p.pendencia}</td>
+                            <td className="table-cell"><input className="input-field" style={{ padding: '4px 8px', maxWidth: 200 }} placeholder="Só números" value={cnpjEdit[p.id] ?? ''} onChange={e => setCnpjEdit(prev => ({ ...prev, [p.id]: e.target.value }))} /></td>
+                            <td className="table-cell text-right"><button onClick={() => salvarCnpj(p)} className="text-blue-600 hover:text-blue-800 text-xs font-medium">Salvar</button></td>
                           </tr>
                         ))}
                     </tbody>

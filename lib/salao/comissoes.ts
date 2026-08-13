@@ -129,6 +129,7 @@ export async function substituirNF(
 export type LinhaImportComissao = {
   empresaId: string; empresaNome: string
   documento: string; nome: string; valor_comissao: number
+  pendencia?: string          // preenchido quando falta algo (ex.: "Sem CNPJ")
 }
 
 /**
@@ -160,43 +161,83 @@ export async function importarPlanilhaComissoes(arquivo: File):
       const documento = String(row['cnpj'] ?? row['cpf'] ?? row['cnpj/cpf'] ?? row['cpf/cnpj'] ?? row['documento'] ?? row['cnpj cpf'] ?? '').replace(/\D/g, '')
       const valor = parseValorBR(row['credito'] ?? row['valor da comissao'] ?? row['valor comissao'] ?? row['comissao'] ?? row['valor'] ?? 0)
       if (!nome && !documento && !(valor > 0)) continue          // linha vazia/total
-      if (!documento) { erros.push(`Aba "${aba}", linha ${i + 2}: sem CNPJ${nome ? ` (${nome})` : ''} — informe o CNPJ na planilha para conferir por documento.`); continue }
-      if (documento.length !== 11 && documento.length !== 14) { erros.push(`Aba "${aba}", linha ${i + 2}: CNPJ/CPF inválido${nome ? ` (${nome})` : ''}.`); continue }
+      // Sem valor não dá para conferir — vira erro (não importa)
       if (isNaN(valor) || valor <= 0) { erros.push(`Aba "${aba}", linha ${i + 2}: valor (Crédito) inválido${nome ? ` (${nome})` : ''}.`); continue }
-      brutas.push({ empresaId: empresa.id, empresaNome: empresa.nome, documento, nome: nome || documento, valor_comissao: valor })
+      // Sem CNPJ / CNPJ inválido → IMPORTA como PENDÊNCIA (não perde o registro)
+      const docOk = documento.length === 11 || documento.length === 14
+      const pendencia = !documento ? 'Sem CNPJ na planilha' : (!docOk ? 'CNPJ/CPF inválido' : undefined)
+      brutas.push({
+        empresaId: empresa.id, empresaNome: empresa.nome,
+        documento: docOk ? documento : '', nome: nome || (docOk ? documento : 'Sem nome'),
+        valor_comissao: valor, pendencia,
+      })
     }
   }
 
-  // Agrega por (empresa, documento): soma valores do mesmo profissional na competência
+  // Agrega por (empresa, documento) apenas as VÁLIDAS; pendências ficam individuais
   const map = new Map<string, LinhaImportComissao>()
+  const pend: LinhaImportComissao[] = []
   for (const l of brutas) {
+    if (!l.documento) { pend.push(l); continue }
     const k = l.empresaId + '|' + l.documento
     const ex = map.get(k)
     if (ex) ex.valor_comissao = Math.round((ex.valor_comissao + l.valor_comissao) * 100) / 100
     else map.set(k, { ...l })
   }
-  return { linhas: Array.from(map.values()), erros }
+  return { linhas: [...Array.from(map.values()), ...pend], erros }
 }
 
-/** Grava a lista esperada da competência. `sobrescrever` atualiza valores/nomes. */
+/**
+ * Grava a lista esperada da competência. Válidas entram por CNPJ; incompletas
+ * (sem CNPJ) entram como PENDÊNCIA (documento nulo + motivo), sem se perder.
+ * `sobrescrever`: refaz a lista não-conferida da competência (mantém as já
+ * conferidas). Sem sobrescrever: só adiciona o que ainda não existe.
+ */
 export async function processarImportacaoComissoes(linhas: LinhaImportComissao[], competencia: string, sobrescrever: boolean):
-  Promise<{ gravados: number; atualizados: number; ignorados: number }> {
-  let gravados = 0, atualizados = 0, ignorados = 0
+  Promise<{ gravados: number; atualizados: number; pendencias: number; ignorados: number }> {
+  let gravados = 0, atualizados = 0, pendencias = 0, ignorados = 0
+  const empresasNoLote = Array.from(new Set(linhas.map(l => l.empresaId)))
+
+  if (sobrescrever) {
+    // remove a lista anterior NÃO conferida dessas empresas nessa competência
+    for (const eid of empresasNoLote) {
+      await supabase.from('salon_comissoes').delete()
+        .eq('empresa_id', eid).eq('mes_ref', competencia).is('nota_id', null)
+    }
+  }
+
   for (const l of linhas) {
-    const { data: exist } = await supabase.from('salon_comissoes')
-      .select('id').eq('empresa_id', l.empresaId).eq('mes_ref', competencia).eq('documento', l.documento).maybeSingle()
+    const isPend = !l.documento
+    const payload = {
+      empresa_id: l.empresaId, mes_ref: competencia, documento: l.documento || null,
+      nome: l.nome, valor_comissao: l.valor_comissao, status: 'pendente',
+      pendencia: isPend ? (l.pendencia ?? 'Sem CNPJ') : null,
+    }
+
+    if (isPend) {
+      if (!sobrescrever) {
+        const { data: ex } = await supabase.from('salon_comissoes').select('id')
+          .eq('empresa_id', l.empresaId).eq('mes_ref', competencia).is('documento', null).eq('nome', l.nome).maybeSingle()
+        if (ex) { ignorados++; continue }
+      }
+      const { error } = await supabase.from('salon_comissoes').insert(payload)
+      if (!error) pendencias++
+      continue
+    }
+
+    // Válida (tem CNPJ)
+    const { data: exist } = await supabase.from('salon_comissoes').select('id')
+      .eq('empresa_id', l.empresaId).eq('mes_ref', competencia).eq('documento', l.documento).maybeSingle()
     if (exist) {
       if (!sobrescrever) { ignorados++; continue }
-      await supabase.from('salon_comissoes').update({ valor_comissao: l.valor_comissao, nome: l.nome }).eq('id', exist.id)
+      await supabase.from('salon_comissoes').update({ valor_comissao: l.valor_comissao, nome: l.nome, pendencia: null }).eq('id', exist.id)
       atualizados++
     } else {
-      const { error } = await supabase.from('salon_comissoes').insert({
-        empresa_id: l.empresaId, mes_ref: competencia, documento: l.documento, nome: l.nome, valor_comissao: l.valor_comissao, status: 'pendente',
-      })
+      const { error } = await supabase.from('salon_comissoes').insert(payload)
       if (!error) gravados++
     }
   }
-  return { gravados, atualizados, ignorados }
+  return { gravados, atualizados, pendencias, ignorados }
 }
 
 /** Log completo (histórico) com nome do profissional. */

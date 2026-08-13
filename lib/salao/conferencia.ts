@@ -10,6 +10,7 @@ export type Esperada = {
   valor_comissao: number
   status: string
   nota_id: string | null
+  pendencia: string | null
   observacao: string | null
   nf_numero: string | null
   nf_data: string | null
@@ -100,9 +101,18 @@ export async function reconciliarCompetencia(competencia: string, empresaId?: st
   return { conferidas, pendentes: pend.length - conferidas }
 }
 
-export type Conferencia = { pendentes: Esperada[]; conferidas: Esperada[]; semVinculo: NotaLivre[] }
+export type Conferencia = { pendentes: Esperada[]; conferidas: Esperada[]; semVinculo: NotaLivre[]; pendenciasImport: Esperada[] }
 
-/** Lista os 3 grupos da competência: pendentes, conferidas e notas sem vínculo. */
+/** Corrige o CNPJ de uma pendência de importação (deixa de ser pendência). */
+export async function corrigirCnpj(comissaoId: string, documento: string): Promise<{ ok: boolean; erro?: string }> {
+  const doc = (documento ?? '').replace(/\D/g, '')
+  if (doc.length !== 11 && doc.length !== 14) return { ok: false, erro: 'CNPJ/CPF inválido.' }
+  const { error } = await supabase.from('salon_comissoes').update({ documento: doc, pendencia: null }).eq('id', comissaoId)
+  if (error) return { ok: false, erro: error.code === '23505' ? 'Já existe um registro com esse CNPJ nesta competência/empresa.' : error.message }
+  return { ok: true }
+}
+
+/** Lista os grupos da competência: pendentes, conferidas, sem vínculo e pendências de importação. */
 export async function listarConferencia(competencia: string, empresaId?: string): Promise<Conferencia> {
   let cq = supabase.from('salon_comissoes')
     .select('*, empresas(apelido, razao_social)')
@@ -123,8 +133,12 @@ export async function listarConferencia(competencia: string, empresaId?: string)
     const e = Array.isArray(c.empresas) ? c.empresas[0] : c.empresas
     return { ...c, empresaNome: e?.apelido || e?.razao_social || '', nota: c.nota_id ? (notaById.get(c.nota_id) ?? null) : null }
   }
-  const pendentes = (coms ?? []).filter((c: { nota_id: string | null }) => !c.nota_id).map(mapEsp)
-  const conferidas = (coms ?? []).filter((c: { nota_id: string | null }) => c.nota_id).map(mapEsp)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const conferidas = (coms ?? []).filter((c: any) => c.nota_id).map(mapEsp)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const pendenciasImport = (coms ?? []).filter((c: any) => !c.nota_id && c.pendencia).map(mapEsp)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const pendentes = (coms ?? []).filter((c: any) => !c.nota_id && !c.pendencia).map(mapEsp)
 
   // Notas sem vínculo (da competência): não usadas por nenhuma comissão
   const { data: allLink } = await supabase.from('salon_comissoes').select('nota_id').not('nota_id', 'is', null)
@@ -137,7 +151,7 @@ export async function listarConferencia(competencia: string, empresaId?: string)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     .map((n: any) => { const e = Array.isArray(n.empresas) ? n.empresas[0] : n.empresas; return { ...n, empresaNome: e?.apelido || e?.razao_social || '' } })
 
-  return { pendentes, conferidas, semVinculo }
+  return { pendentes, conferidas, semVinculo, pendenciasImport }
 }
 
 /** Vincula manualmente uma nota a uma linha esperada (conferência manual). */

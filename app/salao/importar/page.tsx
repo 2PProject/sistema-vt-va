@@ -39,11 +39,14 @@ export default function SalaoImportarPage() {
     if (preview.length === 0) return
     if (!competencia) { notify('Informe a competência.', 'erro'); return }
     setLoad(true)
-    const { gravados, atualizados, ignorados } = await processarImportacaoComissoes(preview, competencia, sobrescrever)
+    const { gravados, atualizados, pendencias, ignorados } = await processarImportacaoComissoes(preview, competencia, sobrescrever)
     // conferência automática: casa o que já der (CNPJ + valor) com as notas recebidas
     const rec = await reconciliarCompetencia(competencia)
     setLoad(false)
-    notify(`${gravados} nova(s), ${atualizados} atualizada(s)${ignorados ? `, ${ignorados} ignorada(s)` : ''}. Conferência automática: ${rec.conferidas} nota(s) casada(s).`, 'ok')
+    const partes = [`${gravados} importada(s)`, `${atualizados} atualizada(s)`]
+    if (pendencias) partes.push(`${pendencias} pendência(s) sem CNPJ`)
+    if (ignorados) partes.push(`${ignorados} já existente(s)`)
+    notify(`${partes.join(' · ')}. Conferência automática: ${rec.conferidas} nota(s) casada(s).${pendencias ? ' Trate as pendências em Conferência → aba "Falta CNPJ".' : ''}`, pendencias ? 'erro' : 'ok')
     setPreview([]); setErros([])
   }
 
@@ -76,7 +79,10 @@ export default function SalaoImportarPage() {
         {preview.length > 0 && (
           <div className="card">
             <div className="flex items-center justify-between mb-3">
-              <div className="text-sm font-semibold text-gray-700">{preview.length} profissional(is) · competência {fmtMes(competencia)}</div>
+              <div className="text-sm font-semibold text-gray-700">
+                {preview.length} profissional(is) · competência {fmtMes(competencia)}
+                {preview.some(l => l.pendencia) && <span className="ml-2 text-amber-700 font-normal">({preview.filter(l => l.pendencia).length} sem CNPJ — vão para pendências)</span>}
+              </div>
               <label className="flex items-center gap-2 text-sm text-gray-600">
                 <input type="checkbox" className="w-4 h-4" checked={sobrescrever} onChange={e => setSobrescrever(e.target.checked)} />
                 Sobrescrever valores já importados (mesma competência/empresa)
@@ -85,15 +91,16 @@ export default function SalaoImportarPage() {
             <div className="border border-gray-200 rounded-lg max-h-72 overflow-auto">
               <table className="w-full text-xs">
                 <thead><tr className="bg-gray-50 sticky top-0">
-                  <th className="table-header">Empresa</th><th className="table-header">Profissional</th><th className="table-header">CNPJ/CPF</th><th className="table-header text-right">Valor</th>
+                  <th className="table-header">Empresa</th><th className="table-header">Profissional</th><th className="table-header">CNPJ/CPF</th><th className="table-header text-right">Valor</th><th className="table-header">Situação</th>
                 </tr></thead>
                 <tbody>
                   {preview.map((l, i) => (
-                    <tr key={i} className="border-t border-gray-100">
+                    <tr key={i} className={`border-t border-gray-100 ${l.pendencia ? 'bg-amber-50' : ''}`}>
                       <td className="table-cell">{l.empresaNome}</td>
                       <td className="table-cell">{l.nome}</td>
-                      <td className="table-cell">{fmtDoc(l.documento)}</td>
+                      <td className="table-cell">{l.documento ? fmtDoc(l.documento) : <span className="text-amber-600">—</span>}</td>
                       <td className="table-cell text-right">{formatarMoeda(l.valor_comissao)}</td>
+                      <td className="table-cell">{l.pendencia ? <span className="text-amber-700 text-[11px] font-medium">⚠ {l.pendencia}</span> : <span className="text-green-600 text-[11px]">ok</span>}</td>
                     </tr>
                   ))}
                 </tbody>
