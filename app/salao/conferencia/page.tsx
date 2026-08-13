@@ -6,7 +6,7 @@ import LayoutAdmin from '../../../components/LayoutAdmin'
 import { supabase, Empresa } from '../../../lib/supabase'
 import { formatarMoeda, MESES } from '../../../utils/calculoVT'
 import { SALAO_ENABLED } from '../../../lib/salao/config'
-import { listarConferencia, reconciliarCompetencia, vincularNota, desvincular, corrigirCnpj, notasDoCnpj, type Esperada, type NotaLivre } from '../../../lib/salao/conferencia'
+import { listarConferencia, reconciliarCompetencia, limparVinculos, vincularNota, desvincular, corrigirCnpj, notasDoCnpj, type Esperada, type NotaLivre } from '../../../lib/salao/conferencia'
 
 function mesAtual() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}` }
 function fmtMes(m: string) { const [a, mm] = m.split('-').map(Number); return mm ? `${MESES[mm - 1]}/${a}` : m }
@@ -65,6 +65,15 @@ export default function SalaoConferenciaPage() {
     notify(`Conferência automática (CNPJ + competência): ${r.conferidas} nota(s) casada(s)${r.divergencias ? ` · ${r.divergencias} com valor divergente (crédito ≠ nota — normal)` : ''}${r.outraEmpresa ? ` · ${r.outraEmpresa} em outra unidade` : ''}. Restam ${r.pendentes} pendente(s).`, 'ok')
     carregar()
   }
+  async function refazer() {
+    if (!window.confirm(`Refazer a conferência de ${fmtMes(competencia)}? Isso desfaz os vínculos automáticos deste mês e concilia do zero (as correções manuais também serão refeitas).`)) return
+    setOcupado(true)
+    const { limpos } = await limparVinculos(competencia, empresaId || undefined)
+    const r = await reconciliarCompetencia(competencia, empresaId || undefined)
+    setOcupado(false)
+    notify(`Refeito: ${limpos} vínculo(s) limpo(s) · ${r.conferidas} casada(s)${r.outraEmpresa ? ` (${r.outraEmpresa} em outra unidade)` : ''}. Restam ${r.pendentes} pendente(s).`, 'ok')
+    carregar()
+  }
   async function vincular(comissaoId: string, n: NotaLivre) {
     const res = await vincularNota(comissaoId, { id: n.id, numero: n.numero, valor: n.valor, data_emissao: n.data_emissao })
     if (!res.ok) { notify(res.erro ?? 'Erro.', 'erro'); return }
@@ -115,7 +124,10 @@ export default function SalaoConferenciaPage() {
   return (
     <LayoutAdmin
       title="Salão — Conferência da Competência"
-      actions={<button onClick={reconciliar} disabled={ocupado || loading} className="bg-emerald-600 text-white font-medium py-2 px-4 rounded-lg hover:bg-emerald-700 disabled:opacity-60">{ocupado ? 'Conciliando...' : 'Conciliar automático'}</button>}
+      actions={<div className="flex gap-2">
+        <button onClick={refazer} disabled={ocupado || loading} className="bg-white border border-emerald-600 text-emerald-700 font-medium py-2 px-4 rounded-lg hover:bg-emerald-50 disabled:opacity-60" title="Limpa os vínculos deste mês e concilia do zero">{ocupado ? '...' : 'Refazer conferência'}</button>
+        <button onClick={reconciliar} disabled={ocupado || loading} className="bg-emerald-600 text-white font-medium py-2 px-4 rounded-lg hover:bg-emerald-700 disabled:opacity-60">{ocupado ? 'Conciliando...' : 'Conciliar automático'}</button>
+      </div>}
     >
       <div className="space-y-6">
         {msg && (

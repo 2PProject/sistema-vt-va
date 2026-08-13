@@ -74,8 +74,10 @@ export async function reconciliarCompetencia(competencia: string, empresaId?: st
   const { data: pend } = await cq
   if (!pend || pend.length === 0) return { conferidas: 0, pendentes: 0, divergencias: 0, outraEmpresa: 0 }
 
-  // Notas já usadas por qualquer comissão (não reutilizar)
-  const { data: linkRows } = await supabase.from('salon_comissoes').select('nota_id').not('nota_id', 'is', null)
+  // "Usada" conta APENAS vínculos da MESMA competência. Um vínculo herdado de
+  // outro mês (poluição de importações antigas, quando o casamento não travava a
+  // competência) não pode bloquear a nota do mês certo.
+  const { data: linkRows } = await supabase.from('salon_comissoes').select('nota_id').eq('mes_ref', competencia).not('nota_id', 'is', null)
   const usadas = new Set((linkRows ?? []).map((r: { nota_id: string }) => r.nota_id))
 
   // Carrega TODAS as notas da competência (qualquer empresa) — não filtra por
@@ -105,6 +107,12 @@ export async function reconciliarCompetencia(competencia: string, empresaId?: st
 
   async function casar(p: { id: string; empresa_id: string; documento: string | null; valor_comissao: number }, arr: NotaCand[], nota: NotaCand) {
     const alvo = Number(p.valor_comissao) || 0
+    // Auto-cura: libera qualquer vínculo INVÁLIDO dessa nota em OUTRA comissão
+    // (ex.: importação antiga que amarrou a nota a outro mês). A nota pertence a
+    // um único profissional/competência.
+    await supabase.from('salon_comissoes').update({
+      nota_id: null, status: 'pendente', nf_numero: null, nf_data: null, nf_valor: null, nf_origem: null, confirmado_em: null,
+    }).eq('nota_id', nota.id).neq('id', p.id)
     await supabase.from('salon_comissoes').update({
       nota_id: nota.id, status: 'conferida',
       nf_numero: nota.numero ?? null, nf_data: nota.data_emissao ?? null, nf_valor: nota.valor, nf_origem: 'adn',
@@ -144,6 +152,34 @@ export async function reconciliarCompetencia(competencia: string, empresaId?: st
 
 export type Conferencia = { pendentes: Esperada[]; conferidas: Esperada[]; semVinculo: NotaLivre[]; pendenciasImport: Esperada[] }
 
+/**
+ * Zera os vínculos de conferência de uma competência (ou de tudo) para reconciliar
+ * do zero. Volta as comissões a "pendente" e libera as notas (conferida=false).
+ * Útil para limpar vínculos poluídos por importações antigas.
+ */
+export async function limparVinculos(competencia?: string, empresaId?: string): Promise<{ limpos: number }> {
+  let sel = supabase.from('salon_comissoes').select('id, nota_id').not('nota_id', 'is', null)
+  if (competencia) sel = sel.eq('mes_ref', competencia)
+  if (empresaId) sel = sel.eq('empresa_id', empresaId)
+  const { data } = await sel
+  const notaIds = Array.from(new Set((data ?? []).map((r: { nota_id: string | null }) => r.nota_id).filter(Boolean))) as string[]
+
+  let upd = supabase.from('salon_comissoes').update({
+    nota_id: null, status: 'pendente', nf_numero: null, nf_data: null, nf_valor: null, nf_origem: null, confirmado_em: null,
+  }).not('nota_id', 'is', null)
+  if (competencia) upd = upd.eq('mes_ref', competencia)
+  if (empresaId) upd = upd.eq('empresa_id', empresaId)
+  await upd
+
+  if (notaIds.length) {
+    // libera as notas em blocos (evita URL longa demais)
+    for (let i = 0; i < notaIds.length; i += 200) {
+      await supabase.from('salon_notas').update({ conferida: false }).in('id', notaIds.slice(i, i + 200))
+    }
+  }
+  return { limpos: (data ?? []).length }
+}
+
 /** Corrige o CNPJ de uma pendência de importação (deixa de ser pendência). */
 export async function corrigirCnpj(comissaoId: string, documento: string): Promise<{ ok: boolean; erro?: string }> {
   const doc = (documento ?? '').replace(/\D/g, '')
@@ -181,8 +217,9 @@ export async function listarConferencia(competencia: string, empresaId?: string)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const pendentes = (coms ?? []).filter((c: any) => !c.nota_id && !c.pendencia).map(mapEsp)
 
-  // Notas sem vínculo (da competência): não usadas por nenhuma comissão
-  const { data: allLink } = await supabase.from('salon_comissoes').select('nota_id').not('nota_id', 'is', null)
+  // Notas sem vínculo (da competência): não usadas por comissão DESTA competência.
+  // (Vínculos de outro mês não contam — senão a nota some por poluição antiga.)
+  const { data: allLink } = await supabase.from('salon_comissoes').select('nota_id').eq('mes_ref', competencia).not('nota_id', 'is', null)
   const usadas = new Set((allLink ?? []).map((r: { nota_id: string }) => r.nota_id))
   let nq = supabase.from('salon_notas').select('*, empresas(apelido, razao_social)').limit(8000)
   if (empresaId) nq = nq.eq('empresa_id', empresaId)
@@ -226,16 +263,23 @@ export async function listarConferencia(competencia: string, empresaId?: string)
   return { pendentes, conferidas, semVinculo, pendenciasImport }
 }
 
-/** Notas recebidas (não usadas) do mesmo CNPJ — de qualquer competência. */
-export async function notasDoCnpj(empresaId: string, documento: string | null): Promise<NotaLivre[]> {
+/**
+ * Notas recebidas (não usadas) do mesmo CNPJ — de QUALQUER competência e de
+ * QUALQUER unidade. Cross-empresa de propósito: a nota é baixada pela unidade
+ * dona do certificado, que pode não ser o mesmo registro da aba da planilha.
+ * O 1º argumento é mantido por compatibilidade, mas não filtra mais por empresa.
+ */
+export async function notasDoCnpj(_empresaId: string, documento: string | null): Promise<NotaLivre[]> {
   const doc = dig(documento)
   const { data: allLink } = await supabase.from('salon_comissoes').select('nota_id').not('nota_id', 'is', null)
   const usadas = new Set((allLink ?? []).map((r: { nota_id: string }) => r.nota_id))
-  const { data } = await supabase.from('salon_notas').select('*, empresas(apelido, razao_social)').eq('empresa_id', empresaId).limit(8000)
+  const { data } = await supabase.from('salon_notas').select('*, empresas(apelido, razao_social)').limit(20000)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return (data ?? []).filter((n: any) => !usadas.has(n.id) && (!doc || dig(n.documento) === doc))
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     .map((n: any) => { const e = Array.isArray(n.empresas) ? n.empresas[0] : n.empresas; return { ...n, empresaNome: e?.apelido || e?.razao_social || '' } })
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .sort((a: any, b: any) => (b.competencia_conf || b.competencia || '').localeCompare(a.competencia_conf || a.competencia || ''))
 }
 
 /** Vincula manualmente uma nota a uma linha esperada (conferência manual). */
