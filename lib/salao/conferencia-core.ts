@@ -78,6 +78,121 @@ export type ConferenciaResultado = {
 
 export function dig(s: string | null | undefined): string { return (s ?? '').replace(/\D/g, '') }
 
+// ── Classificação e consulta (painel + filtros + tabela) ───────────────────
+export type Situacao =
+  | 'conferido' | 'divergencia_valor' | 'sem_nota' | 'nota_sem_vinculo'
+  | 'falta_cnpj' | 'cnpj_invalido' | 'nota_outra_empresa'
+  | 'possivel_duplicidade' | 'vinculo_sugerido' | 'aguardando_confirmacao' | 'corrigido_manual'
+
+export const SITUACAO_LABEL: Record<Situacao, string> = {
+  conferido: 'Conferido', divergencia_valor: 'Divergência de valor', sem_nota: 'Sem nota',
+  nota_sem_vinculo: 'Nota sem vínculo', falta_cnpj: 'Falta CNPJ', cnpj_invalido: 'CNPJ inválido',
+  nota_outra_empresa: 'Nota de outra empresa', possivel_duplicidade: 'Possível duplicidade',
+  vinculo_sugerido: 'Vínculo sugerido', aguardando_confirmacao: 'Aguardando confirmação',
+  corrigido_manual: 'Corrigido manualmente',
+}
+
+export type LinhaConsulta = {
+  tipo: 'comissao' | 'nota'
+  id: string
+  empresa_id: string
+  empresaNome: string
+  mes_ref: string
+  documento: string | null
+  nome: string | null
+  valor_comissao: number | null
+  nota_id: string | null
+  nf_numero: string | null
+  nf_data: string | null
+  nf_valor: number | null
+  nota_competencia?: string | null
+  nota_empresaNome?: string | null
+  diferenca: number | null
+  situacao: Situacao
+  outraEmpresa: boolean
+  corrigidoManual: boolean
+  duplicada: boolean
+  pendencia?: string | null
+  confianca?: number
+  confiancaLabel?: 'alta' | 'media' | 'baixa'
+  sugestaoNotaId?: string | null
+  sugestaoJustificativa?: string | null
+}
+
+export type Indicadores = {
+  esperados: number; conferidos: number; semNota: number; notasSemVinculo: number
+  divergencias: number; semCnpj: number; outraEmpresa: number; duplicidades: number
+  aguardando: number; corrigidos: number
+  valorEsperado: number; valorVinculado: number; diferenca: number
+}
+
+export type Filtros = {
+  competencia: string
+  empresaId?: string
+  nome?: string
+  documento?: string
+  situacao?: Situacao | 'todas'
+  vinculo?: 'vinculado' | 'nao_vinculado' | 'todas'
+  valorMin?: number | null
+  valorMax?: number | null
+  soDivergencia?: boolean
+  emissaoDe?: string | null
+  emissaoAte?: string | null
+  numeroNota?: string
+  busca?: string
+}
+export type Ordenacao = { campo: 'nome' | 'empresa' | 'documento' | 'valor' | 'competencia' | 'situacao' | 'diferenca'; dir: 'asc' | 'desc' }
+export type ConsultaResultado = { linhas: LinhaConsulta[]; total: number; pagina: number; tamanho: number; indicadores: Indicadores; distComp: { comp: string; n: number }[] }
+
+function mesesDiff(a: string, b: string): number {
+  const pa = (a || '').split('-').map(Number), pb = (b || '').split('-').map(Number)
+  if (pa.length < 2 || pb.length < 2 || !pa[0] || !pb[0]) return 99
+  return Math.abs((pa[0] * 12 + pa[1]) - (pb[0] * 12 + pb[1]))
+}
+function norm(s: string | null | undefined): string {
+  return (s ?? '').toLowerCase().trim().normalize('NFD').replace(/[̀-ͯ]/g, '')
+}
+// Similaridade simples de nomes (Jaccard por tokens) — apenas apoio.
+function similaridadeNome(a: string | null, b: string | null): number {
+  const ta = new Set(norm(a).split(/\s+/).filter((x) => x.length > 2))
+  const tb = new Set(norm(b).split(/\s+/).filter((x) => x.length > 2))
+  if (ta.size === 0 || tb.size === 0) return 0
+  let inter = 0; ta.forEach((t) => { if (tb.has(t)) inter++ })
+  return inter / new Set([...ta, ...tb]).size
+}
+
+/**
+ * Pontuação de confiança de um vínculo candidato (0–100) + justificativa.
+ * Bloqueia notas inválidas (usada/excluída/valor<=0). Considera CNPJ (base),
+ * competência (peso alto, com janela de 1 mês), empresa destinatária, proximidade
+ * de valor e semelhança de nome (apoio).
+ */
+export function pontuarVinculo(
+  com: { empresa_id: string; mes_ref: string; valor_comissao: number; nome: string | null },
+  nota: { empresa_id: string; valor: number | null; competencia?: string | null; competencia_conf?: string | null; data_emissao?: string | null; emitente_nome?: string | null },
+): { score: number; label: 'alta' | 'media' | 'baixa'; justificativa: string } {
+  const partes: string[] = ['mesmo CNPJ']
+  let score = 40
+  const compN = notaComp(nota)
+  const dm = mesesDiff(compN, com.mes_ref)
+  if (dm === 0) { score += 35; partes.push('mesma competência') }
+  else if (dm === 1) { score += 12; partes.push('competência ±1 mês') }
+  if (nota.empresa_id === com.empresa_id) { score += 15; partes.push('mesma empresa') }
+  else partes.push('empresa diferente')
+  const alvo = Number(com.valor_comissao) || 0
+  const d = Math.abs((Number(nota.valor) || 0) - alvo)
+  const rel = alvo > 0 ? d / alvo : 1
+  if (d < 0.01) { score += 10; partes.push('valor exato') }
+  else if (rel <= 0.05) { score += 6; partes.push('valor próximo') }
+  else if (rel <= 0.15) { score += 3; partes.push('valor aproximado') }
+  else partes.push('valor divergente')
+  const sim = similaridadeNome(com.nome, nota.emitente_nome ?? null)
+  if (sim >= 0.5) { score += 5; partes.push('nome compatível') }
+  score = Math.min(100, score)
+  const label = score >= 85 ? 'alta' : score >= 60 ? 'media' : 'baixa'
+  return { score, label, justificativa: `${score}% de compatibilidade: ${partes.join(', ')}.` }
+}
+
 // Competência efetiva da nota: dCompet real (competencia) → override manual
 // (competencia_conf) → mês da emissão. O sync já grava competencia = dCompet ||
 // mês da emissão, então a coluna `competencia` costuma bastar.
@@ -85,7 +200,7 @@ export function notaComp(n: { competencia_conf?: string | null; competencia?: st
   return (n.competencia || n.competencia_conf || (n.data_emissao ? String(n.data_emissao).slice(0, 7) : '')) as string
 }
 
-const NOTA_COLS = 'id, empresa_id, documento, emitente_nome, numero, valor, data_emissao, competencia, competencia_conf, conferida, empresas(apelido, razao_social)'
+const NOTA_COLS = 'id, empresa_id, documento, emitente_nome, numero, valor, data_emissao, competencia, competencia_conf, conferida, excluida, duplicada, observacao, empresas(apelido, razao_social)'
 const PAGINA = 1000
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -171,7 +286,7 @@ export async function reconciliar(admin: SupabaseClient, competencia: string, em
   type Cand = { id: string; empresa_id: string; valor: number; numero: string | null; data_emissao: string | null }
   const porDoc = new Map<string, Cand[]>()
   for (const n of notas) {
-    if (usadas.has(n.id)) continue
+    if (usadas.has(n.id) || n.excluida) continue
     const k = dig(n.documento); if (!k) continue
     const arr = porDoc.get(k) ?? []
     arr.push({ id: n.id, empresa_id: n.empresa_id, valor: Number(n.valor) || 0, numero: n.numero, data_emissao: n.data_emissao })
@@ -268,12 +383,12 @@ export async function carregar(admin: SupabaseClient, competencia: string, empre
   const usadasNoMes = await notasUsadas(admin, competencia)
 
   const semVinculo: NotaLivre[] = notasMes
-    .filter((n) => !usadasNoMes.has(n.id))
+    .filter((n) => !usadasNoMes.has(n.id) && !n.excluida)
     .map((n) => ({ ...n, empresaNome: empresaNomeDe(n) }))
 
   // Notas dos CNPJs pendentes (qualquer mês) — para a dica e a distribuição.
   const pendDocs = Array.from(new Set(pendentes.map((p) => dig(p.documento)).filter(Boolean)))
-  const notasPend = await notasDosDocumentos(admin, pendDocs)
+  const notasPend = (await notasDosDocumentos(admin, pendDocs)).filter((n) => !n.excluida)
 
   // Índices
   const porDocPend = new Map<string, NotaRow[]>()
@@ -281,7 +396,7 @@ export async function carregar(admin: SupabaseClient, competencia: string, empre
   const porDocMes = new Map<string, NotaRow[]>()
   const porDocMesLivre = new Map<string, NotaRow[]>()
   for (const n of notasMes) {
-    if (!(Number(n.valor) > 0)) continue
+    if (!(Number(n.valor) > 0) || n.excluida) continue
     const k = dig(n.documento); if (!k) continue
     ;(porDocMes.get(k) ?? porDocMes.set(k, []).get(k)!).push(n)
     if (!usadasNoMes.has(n.id)) (porDocMesLivre.get(k) ?? porDocMesLivre.set(k, []).get(k)!).push(n)
@@ -337,6 +452,180 @@ export async function carregar(admin: SupabaseClient, competencia: string, empre
   }
 
   return { pendentes, conferidas, semVinculo, pendenciasImport, diagnostico }
+}
+
+/**
+ * CONSULTA principal: classifica cada registro, calcula indicadores, aplica
+ * filtros, ordena e pagina — tudo no servidor. As notas ficam no backend
+ * (o frontend só recebe a página pedida + os totais).
+ */
+export async function consultar(admin: SupabaseClient, f: Filtros, ord: Ordenacao, pagina: number, tamanho: number): Promise<ConsultaResultado> {
+  const competencia = f.competencia
+  const coms = await comissoesDaCompetencia(admin, competencia, f.empresaId)
+  const notasMesTodas = await notasDaCompetencia(admin, competencia)
+  const notasMes = notasMesTodas.filter((n) => !n.excluida)
+
+  // Notas vinculadas (detalhe, inclusive de outra competência)
+  const linkIds = Array.from(new Set(coms.filter((c) => c.nota_id).map((c) => c.nota_id))) as string[]
+  const notaById = new Map<string, NotaRow>()
+  for (let i = 0; i < linkIds.length; i += 200) {
+    const { data } = await admin.from('salon_notas').select(NOTA_COLS).in('id', linkIds.slice(i, i + 200))
+    ;(data ?? []).forEach((n: NotaRow) => notaById.set(n.id, n))
+  }
+
+  // Notas dos CNPJs pendentes (qualquer mês) — sugestões e distribuição
+  const pendDocs = Array.from(new Set(coms.filter((c) => !c.nota_id && c.documento).map((c) => dig(c.documento))))
+  const notasPend = (await notasDosDocumentos(admin, pendDocs)).filter((n) => !n.excluida)
+  const usadasGlobal = await notasUsadas(admin)
+  const usadasNoMes = await notasUsadas(admin, competencia)
+
+  const porDocPend = new Map<string, NotaRow[]>()
+  for (const n of notasPend) { const k = dig(n.documento); if (!k) continue; (porDocPend.get(k) ?? porDocPend.set(k, []).get(k)!).push(n) }
+
+  // Duplicidades: mesma empresa + competência + CNPJ aparecendo mais de uma vez
+  const dupCount = new Map<string, number>()
+  for (const c of coms) { if (!c.documento) continue; const k = c.empresa_id + '|' + dig(c.documento); dupCount.set(k, (dupCount.get(k) ?? 0) + 1) }
+
+  const linhas: LinhaConsulta[] = []
+
+  for (const c of coms) {
+    const e = Array.isArray(c.empresas) ? c.empresas[0] : c.empresas
+    const empresaNome = e?.apelido || e?.razao_social || ''
+    const duplicada = !!c.documento && (dupCount.get(c.empresa_id + '|' + dig(c.documento)) ?? 0) > 1
+    const base: LinhaConsulta = {
+      tipo: 'comissao', id: c.id, empresa_id: c.empresa_id, empresaNome, mes_ref: c.mes_ref,
+      documento: c.documento, nome: c.nome, valor_comissao: Number(c.valor_comissao) || 0,
+      nota_id: c.nota_id ?? null, nf_numero: c.nf_numero ?? null, nf_data: c.nf_data ?? null, nf_valor: c.nf_valor ?? null,
+      diferenca: null, situacao: 'sem_nota', outraEmpresa: false, corrigidoManual: !!c.corrigido_manual,
+      duplicada, pendencia: c.pendencia ?? null,
+    }
+
+    if (c.nota_id) {
+      const n = notaById.get(c.nota_id)
+      const ne = n && (Array.isArray(n.empresas) ? n.empresas[0] : n.empresas)
+      base.nota_competencia = n ? notaComp(n) : null
+      base.nota_empresaNome = ne?.apelido || ne?.razao_social || ''
+      const vNota = Number(c.nf_valor ?? n?.valor ?? 0)
+      base.nf_valor = vNota
+      base.diferenca = Math.round((vNota - (base.valor_comissao || 0)) * 100) / 100
+      base.outraEmpresa = !!n && n.empresa_id !== c.empresa_id
+      base.situacao = duplicada ? 'possivel_duplicidade'
+        : base.outraEmpresa ? 'nota_outra_empresa'
+        : Math.abs(base.diferenca) >= 0.01 ? 'divergencia_valor' : 'conferido'
+    } else if (c.pendencia || !c.documento) {
+      const doc = dig(c.documento)
+      base.situacao = (doc && doc.length !== 11 && doc.length !== 14) ? 'cnpj_invalido' : 'falta_cnpj'
+    } else {
+      // pendente com CNPJ: melhor sugestão dentro da janela de ±1 mês, nota livre
+      const cands = (porDocPend.get(dig(c.documento)) ?? []).filter((n) =>
+        Number(n.valor) > 0 && !usadasGlobal.has(n.id) && mesesDiff(notaComp(n), c.mes_ref) <= 1)
+      let melhor: { nota: NotaRow; p: ReturnType<typeof pontuarVinculo> } | null = null
+      for (const n of cands) {
+        const p = pontuarVinculo({ empresa_id: c.empresa_id, mes_ref: c.mes_ref, valor_comissao: base.valor_comissao || 0, nome: c.nome }, n)
+        if (!melhor || p.score > melhor.p.score) melhor = { nota: n, p }
+      }
+      if (melhor && melhor.p.label !== 'baixa') {
+        base.confianca = melhor.p.score
+        base.confiancaLabel = melhor.p.label
+        base.sugestaoNotaId = melhor.nota.id
+        base.sugestaoJustificativa = melhor.p.justificativa
+        base.situacao = duplicada ? 'possivel_duplicidade'
+          : melhor.p.label === 'alta' ? 'vinculo_sugerido' : 'aguardando_confirmacao'
+      } else {
+        base.situacao = duplicada ? 'possivel_duplicidade' : 'sem_nota'
+      }
+    }
+    if (base.corrigidoManual && base.situacao === 'conferido') base.situacao = 'corrigido_manual'
+    linhas.push(base)
+  }
+
+  // Notas sem vínculo (do mês) → linhas tipo 'nota'
+  for (const n of notasMes) {
+    if (usadasNoMes.has(n.id)) continue
+    if (!(Number(n.valor) > 0)) continue
+    const e = Array.isArray(n.empresas) ? n.empresas[0] : n.empresas
+    linhas.push({
+      tipo: 'nota', id: n.id, empresa_id: n.empresa_id, empresaNome: e?.apelido || e?.razao_social || '',
+      mes_ref: notaComp(n), documento: n.documento, nome: n.emitente_nome, valor_comissao: null,
+      nota_id: n.id, nf_numero: n.numero, nf_data: n.data_emissao, nf_valor: Number(n.valor) || 0,
+      nota_competencia: notaComp(n), diferenca: null, situacao: 'nota_sem_vinculo',
+      outraEmpresa: false, corrigidoManual: false, duplicada: false,
+    })
+  }
+
+  // ── Filtros base (afetam indicadores + tabela) ──
+  const txt = (s: string | null | undefined) => norm(s)
+  const buscaN = txt(f.busca)
+  const nomeN = txt(f.nome)
+  const docN = dig(f.documento)
+  const baseRows = linhas.filter((l) => {
+    if (nomeN && !txt(l.nome).includes(nomeN)) return false
+    if (docN && !dig(l.documento).includes(docN)) return false
+    if (f.numeroNota && !(l.nf_numero ?? '').includes(f.numeroNota)) return false
+    if (f.valorMin != null && (l.valor_comissao ?? l.nf_valor ?? 0) < f.valorMin) return false
+    if (f.valorMax != null && (l.valor_comissao ?? l.nf_valor ?? 0) > f.valorMax) return false
+    if (f.emissaoDe && (!l.nf_data || l.nf_data < f.emissaoDe)) return false
+    if (f.emissaoAte && (!l.nf_data || l.nf_data > f.emissaoAte)) return false
+    if (buscaN) {
+      const hay = `${txt(l.nome)} ${dig(l.documento)} ${l.nf_numero ?? ''} ${txt(l.empresaNome)}`
+      if (!hay.includes(buscaN)) return false
+    }
+    return true
+  })
+
+  const indicadores: Indicadores = {
+    esperados: baseRows.filter((l) => l.tipo === 'comissao').length,
+    conferidos: baseRows.filter((l) => l.situacao === 'conferido' || l.situacao === 'corrigido_manual').length,
+    semNota: baseRows.filter((l) => l.situacao === 'sem_nota').length,
+    notasSemVinculo: baseRows.filter((l) => l.situacao === 'nota_sem_vinculo').length,
+    divergencias: baseRows.filter((l) => l.situacao === 'divergencia_valor').length,
+    semCnpj: baseRows.filter((l) => l.situacao === 'falta_cnpj' || l.situacao === 'cnpj_invalido').length,
+    outraEmpresa: baseRows.filter((l) => l.outraEmpresa).length,
+    duplicidades: baseRows.filter((l) => l.duplicada).length,
+    aguardando: baseRows.filter((l) => l.situacao === 'aguardando_confirmacao' || l.situacao === 'vinculo_sugerido').length,
+    corrigidos: baseRows.filter((l) => l.corrigidoManual).length,
+    valorEsperado: Math.round(baseRows.filter((l) => l.tipo === 'comissao').reduce((s, l) => s + (l.valor_comissao || 0), 0) * 100) / 100,
+    valorVinculado: Math.round(baseRows.filter((l) => l.nota_id && l.tipo === 'comissao').reduce((s, l) => s + (l.nf_valor || 0), 0) * 100) / 100,
+    diferenca: 0,
+  }
+  indicadores.diferenca = Math.round((indicadores.valorEsperado - indicadores.valorVinculado) * 100) / 100
+
+  // ── Filtros de recorte (tabela) ──
+  let tableRows = baseRows
+  if (f.situacao && f.situacao !== 'todas') tableRows = tableRows.filter((l) => l.situacao === f.situacao)
+  if (f.vinculo === 'vinculado') tableRows = tableRows.filter((l) => l.tipo === 'comissao' && l.nota_id)
+  else if (f.vinculo === 'nao_vinculado') tableRows = tableRows.filter((l) => !l.nota_id || l.tipo === 'nota')
+  if (f.soDivergencia) tableRows = tableRows.filter((l) => l.diferenca != null && Math.abs(l.diferenca) >= 0.01)
+
+  // ── Ordenação ──
+  const dir = ord.dir === 'desc' ? -1 : 1
+  const val = (l: LinhaConsulta): string | number => {
+    switch (ord.campo) {
+      case 'empresa': return txt(l.empresaNome)
+      case 'documento': return dig(l.documento)
+      case 'valor': return l.valor_comissao ?? l.nf_valor ?? 0
+      case 'competencia': return l.mes_ref || ''
+      case 'situacao': return SITUACAO_LABEL[l.situacao]
+      case 'diferenca': return l.diferenca ?? 0
+      default: return txt(l.nome)
+    }
+  }
+  tableRows = [...tableRows].sort((a, b) => {
+    const va = val(a), vb = val(b)
+    if (va < vb) return -1 * dir
+    if (va > vb) return 1 * dir
+    return txt(a.nome).localeCompare(txt(b.nome))
+  })
+
+  const total = tableRows.length
+  const de = Math.max(0, (pagina - 1) * tamanho)
+  const linhasPag = tableRows.slice(de, de + tamanho)
+
+  const distMap = new Map<string, number>()
+  for (const n of notasPend) { if (!(Number(n.valor) > 0)) continue; const cc = notaComp(n) || '(sem)'; distMap.set(cc, (distMap.get(cc) ?? 0) + 1) }
+  const distComp = Array.from(distMap.entries()).map(([comp, n]) => ({ comp, n })).sort((a, b) => b.n - a.n).slice(0, 12)
+
+  return { linhas: linhasPag, total, pagina, tamanho, indicadores, distComp }
 }
 
 /** Notas do mesmo CNPJ (qualquer unidade/competência) ainda livres — p/ vínculo manual. */
