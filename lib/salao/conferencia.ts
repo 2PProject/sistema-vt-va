@@ -42,20 +42,34 @@ export type NotaLivre = {
 
 function dig(s: string | null | undefined) { return (s ?? '').replace(/\D/g, '') }
 
+// Competência efetiva de uma nota: usa a conferência manual, senão o dCompet
+// da nota, senão o mês da data de emissão (fallback quando o XML não trouxe dCompet).
+function notaComp(n: { competencia_conf?: string | null; competencia?: string | null; data_emissao?: string | null }): string {
+  return (n.competencia_conf || n.competencia || (n.data_emissao ? String(n.data_emissao).slice(0, 7) : '')) as string
+}
+
 /**
- * Reconcilia uma competência: para cada linha esperada (planilha) ainda pendente,
- * procura uma NOTA recebida do MESMO CNPJ e MESMO VALOR (tolerância de centavos),
- * dando preferência à nota da própria competência. Ao casar, marca como conferida
- * e vincula a nota. Uma nota só é usada uma vez.
+ * Reconcilia uma competência por CNPJ + competência (NÃO por valor exato).
+ *
+ * Motivo: o "Crédito" da planilha é a comissão que o salão paga ao profissional,
+ * que NÃO é igual ao valor bruto da NFS-e emitida — mesmo no mesmo mês os números
+ * divergem. Casar por valor exato praticamente nunca fecha. A chave confiável é
+ * CNPJ do emitente + competência (dCompet da nota = mês informado na planilha).
+ *
+ * Para cada linha esperada ainda pendente, procura a(s) nota(s) recebida(s) do
+ * MESMO CNPJ na MESMA empresa cuja competência seja a da conferência. Havendo mais
+ * de uma, escolhe a de valor mais próximo do crédito. Ao casar, marca como
+ * conferida e vincula a nota. O valor vira apenas comparação (exibido na tela),
+ * não requisito. Uma nota só é usada uma vez.
  */
 export async function reconciliarCompetencia(competencia: string, empresaId?: string):
-  Promise<{ conferidas: number; pendentes: number }> {
+  Promise<{ conferidas: number; pendentes: number; divergencias: number }> {
   let cq = supabase.from('salon_comissoes')
     .select('id, empresa_id, documento, valor_comissao')
     .eq('mes_ref', competencia).is('nota_id', null)
   if (empresaId) cq = cq.eq('empresa_id', empresaId)
   const { data: pend } = await cq
-  if (!pend || pend.length === 0) return { conferidas: 0, pendentes: 0 }
+  if (!pend || pend.length === 0) return { conferidas: 0, pendentes: 0, divergencias: 0 }
 
   const empresas = Array.from(new Set(pend.map((p) => p.empresa_id)))
 
@@ -68,8 +82,8 @@ export async function reconciliarCompetencia(competencia: string, empresaId?: st
     .in('empresa_id', empresas)
 
   // Agrupa notas livres por empresa|documento
-  const porChave = new Map<string, NotaCand[]>()
   type NotaCand = { id: string; valor: number; numero: string | null; data_emissao: string | null; competencia: string | null; competencia_conf: string | null }
+  const porChave = new Map<string, NotaCand[]>()
   for (const n of (notas ?? [])) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const nn = n as any
@@ -80,20 +94,17 @@ export async function reconciliarCompetencia(competencia: string, empresaId?: st
     porChave.set(k, arr)
   }
 
-  let conferidas = 0
+  let conferidas = 0, divergencias = 0
   for (const p of pend) {
     const k = p.empresa_id + '|' + dig(p.documento)
     const arr = porChave.get(k)
     if (!arr || arr.length === 0) continue
     const alvo = Number(p.valor_comissao) || 0
-    const cands = arr.filter((n) => Math.abs(n.valor - alvo) < 0.01)
+    // Chave: mesma competência (dCompet da nota = mês da planilha). Valor NÃO é filtro.
+    const cands = arr.filter((n) => notaComp(n) === competencia)
     if (cands.length === 0) continue
-    cands.sort((a, b) => {
-      const ca = (a.competencia_conf || a.competencia || '') === competencia ? 0 : 1
-      const cb = (b.competencia_conf || b.competencia || '') === competencia ? 0 : 1
-      if (ca !== cb) return ca - cb
-      return (a.data_emissao || '').localeCompare(b.data_emissao || '')
-    })
+    // Havendo várias notas do mesmo CNPJ no mês, prefere a de valor mais próximo do crédito.
+    cands.sort((a, b) => Math.abs(a.valor - alvo) - Math.abs(b.valor - alvo))
     const nota = cands[0]
     await supabase.from('salon_comissoes').update({
       nota_id: nota.id, status: 'conferida',
@@ -102,9 +113,10 @@ export async function reconciliarCompetencia(competencia: string, empresaId?: st
     }).eq('id', p.id)
     await supabase.from('salon_notas').update({ conferida: true }).eq('id', nota.id)
     arr.splice(arr.indexOf(nota), 1) // não reutiliza
+    if (Math.abs(nota.valor - alvo) >= 0.01) divergencias++
     conferidas++
   }
-  return { conferidas, pendentes: pend.length - conferidas }
+  return { conferidas, pendentes: pend.length - conferidas, divergencias }
 }
 
 export type Conferencia = { pendentes: Esperada[]; conferidas: Esperada[]; semVinculo: NotaLivre[]; pendenciasImport: Esperada[] }
@@ -175,12 +187,15 @@ export async function listarConferencia(competencia: string, empresaId?: string)
   for (const p of pendentes) {
     const cands = porDocGlobal.get(dig(p.documento))
     if (!cands || cands.length === 0) continue
-    const alvo = p.valor_comissao || 0
+    // Nota mais recente primeiro (mostra a competência mais próxima disponível).
+    const ordenadas = [...cands].sort((a, b) => (b.comp || '').localeCompare(a.comp || ''))
+    // Prioridade: nota na competência conferida (na própria empresa) → competência
+    // conferida em outra empresa → nota mais recente na própria empresa → mais recente geral.
     const best =
-      cands.find((c) => c.empresa_id === p.empresa_id && Math.abs(c.valor - alvo) < 0.01) ??
-      cands.find((c) => Math.abs(c.valor - alvo) < 0.01) ??
-      cands.find((c) => c.empresa_id === p.empresa_id) ??
-      cands[0]
+      ordenadas.find((c) => c.empresa_id === p.empresa_id && c.comp === competencia) ??
+      ordenadas.find((c) => c.comp === competencia) ??
+      ordenadas.find((c) => c.empresa_id === p.empresa_id) ??
+      ordenadas[0]
     p.dicaNotaValor = best.valor; p.dicaNotaComp = best.comp || null; p.dicaNotaId = best.id
     p.dicaNotaEmpresa = best.empresaNome; p.dicaOutraEmpresa = best.empresa_id !== p.empresa_id
   }

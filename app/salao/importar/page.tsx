@@ -40,13 +40,13 @@ export default function SalaoImportarPage() {
     if (!competencia) { notify('Informe a competência.', 'erro'); return }
     setLoad(true)
     const { gravados, atualizados, pendencias, ignorados } = await processarImportacaoComissoes(preview, competencia, sobrescrever)
-    // conferência automática: casa o que já der (CNPJ + valor) com as notas recebidas
+    // conferência automática: casa por CNPJ + competência com as notas recebidas
     const rec = await reconciliarCompetencia(competencia)
     setLoad(false)
     const partes = [`${gravados} importada(s)`, `${atualizados} atualizada(s)`]
     if (pendencias) partes.push(`${pendencias} pendência(s) sem CNPJ`)
     if (ignorados) partes.push(`${ignorados} já existente(s)`)
-    notify(`${partes.join(' · ')}. Conferência automática: ${rec.conferidas} nota(s) casada(s).${pendencias ? ' Trate as pendências em Conferência → aba "Falta CNPJ".' : ''}`, pendencias ? 'erro' : 'ok')
+    notify(`${partes.join(' · ')}. Conferência automática (CNPJ + competência): ${rec.conferidas} nota(s) casada(s)${rec.divergencias ? `, ${rec.divergencias} com valor divergente` : ''}.${pendencias ? ' Trate as pendências em Conferência → aba "Falta CNPJ".' : ''}`, pendencias ? 'erro' : 'ok')
     setPreview([]); setErros([])
   }
 
@@ -60,7 +60,7 @@ export default function SalaoImportarPage() {
         <div className="card">
           <div className="bg-blue-50 border border-blue-200 text-blue-800 text-xs rounded-lg p-3 mb-4">
             Cada <strong>aba</strong> = uma <strong>empresa</strong> (nome da aba = apelido). Colunas: <strong>CNPJ</strong> · <strong>Nome completo</strong> · <strong>Crédito</strong> (valor).
-            A <strong>competência</strong> é informada aqui embaixo (não vem na planilha). Linhas sem CNPJ viram alerta (não dá para conferir por documento). Ao confirmar, guarda a lista esperada do mês e já concilia com as notas (CNPJ + valor).
+            A <strong>competência</strong> é informada aqui embaixo (não vem na planilha). Linhas sem CNPJ viram alerta (não dá para conferir por documento). Ao confirmar, guarda a lista esperada do mês e já concilia com as notas por <strong>CNPJ + competência</strong> (o valor do crédito não precisa ser igual ao da NFS-e — é só comparação).
           </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
             <div><label className="label-field">Competência</label><input type="month" className="input-field" value={competencia} onChange={e => setCompetencia(e.target.value)} /></div>

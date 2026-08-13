@@ -59,7 +59,7 @@ export default function SalaoConferenciaPage() {
     setOcupado(true)
     const r = await reconciliarCompetencia(competencia, empresaId || undefined)
     setOcupado(false)
-    notify(`Conferência automática: ${r.conferidas} nota(s) casada(s).`, 'ok')
+    notify(`Conferência automática (CNPJ + competência): ${r.conferidas} nota(s) casada(s)${r.divergencias ? ` · ${r.divergencias} com valor divergente (crédito ≠ nota — normal)` : ''}. Restam ${r.pendentes} pendente(s).`, 'ok')
     carregar()
   }
   async function vincular(comissaoId: string, n: NotaLivre) {
@@ -152,13 +152,13 @@ export default function SalaoConferenciaPage() {
               {aba === 'pendentes' && (
                 <table className="w-full border-collapse">
                   <thead><tr className="bg-gray-50 border-b border-gray-200">
-                    <th className="table-header">Empresa</th><th className="table-header">Profissional</th><th className="table-header">CNPJ/CPF</th><th className="table-header text-right">Valor esperado</th><th className="table-header">Nota do mesmo CNPJ</th><th className="table-header text-right">Ação</th>
+                    <th className="table-header">Empresa</th><th className="table-header">Profissional</th><th className="table-header">CNPJ/CPF</th><th className="table-header text-right">Crédito (planilha)</th><th className="table-header">Nota mais recente deste CNPJ</th><th className="table-header text-right">Ação</th>
                   </tr></thead>
                   <tbody className="divide-y divide-gray-100">
                     {dados.pendentes.length === 0 ? <tr><td colSpan={6} className="text-center py-10 text-gray-400 text-sm">Nenhum profissional pendente em {fmtMes(competencia)}.</td></tr> :
                       dados.pendentes.map(p => {
                         const temNota = typeof p.dicaNotaValor === 'number'
-                        const valorBate = temNota && Math.abs((p.dicaNotaValor || 0) - p.valor_comissao) < 0.01
+                        const compBate = temNota && (p.dicaNotaComp || '') === competencia
                         return (
                           <tr key={p.id} className="hover:bg-gray-50">
                             <td className="table-cell text-xs text-gray-500">{p.empresaNome}</td>
@@ -167,10 +167,12 @@ export default function SalaoConferenciaPage() {
                             <td className="table-cell text-right">{formatarMoeda(p.valor_comissao)}</td>
                             <td className="table-cell text-xs">
                               {!temNota
-                                ? <span className="text-gray-400">nenhuma nota deste CNPJ</span>
-                                : <span className={p.dicaOutraEmpresa ? 'text-red-600' : (valorBate ? 'text-green-700' : 'text-amber-700')}>
-                                    {formatarMoeda(p.dicaNotaValor || 0)}{p.dicaNotaComp ? ` · ${p.dicaNotaComp}` : ''}
-                                    {p.dicaOutraEmpresa ? ` · ⚠ na empresa "${p.dicaNotaEmpresa}"` : (valorBate ? ' · valor bate' : ' · valor difere')}
+                                ? <span className="text-gray-400">nenhuma nota deste CNPJ baixada</span>
+                                : <span className={p.dicaOutraEmpresa ? 'text-red-600' : (compBate ? 'text-green-700' : 'text-amber-700')}>
+                                    {formatarMoeda(p.dicaNotaValor || 0)}{p.dicaNotaComp ? ` · comp. ${p.dicaNotaComp}` : ''}
+                                    {p.dicaOutraEmpresa
+                                      ? ` · ⚠ na empresa "${p.dicaNotaEmpresa}"`
+                                      : (compBate ? ' · vincule manualmente' : ' · fora da competência (nota deste mês ainda não emitida/baixada)')}
                                   </span>}
                             </td>
                             <td className="table-cell text-right"><button onClick={() => abrirPendente(p)} className="text-blue-600 hover:text-blue-800 text-xs font-medium">Vincular nota</button></td>
@@ -184,21 +186,31 @@ export default function SalaoConferenciaPage() {
               {aba === 'conferidas' && (
                 <table className="w-full border-collapse">
                   <thead><tr className="bg-gray-50 border-b border-gray-200">
-                    <th className="table-header">Empresa</th><th className="table-header">Profissional</th><th className="table-header">CNPJ/CPF</th><th className="table-header text-right">Comissão</th><th className="table-header text-center">NF</th><th className="table-header text-right">Valor NF</th><th className="table-header text-right">Ação</th>
+                    <th className="table-header">Empresa</th><th className="table-header">Profissional</th><th className="table-header">CNPJ/CPF</th><th className="table-header text-right">Crédito</th><th className="table-header text-center">NF</th><th className="table-header text-right">Valor NF</th><th className="table-header text-center">Valor</th><th className="table-header text-right">Ação</th>
                   </tr></thead>
                   <tbody className="divide-y divide-gray-100">
-                    {dados.conferidas.length === 0 ? <tr><td colSpan={7} className="text-center py-10 text-gray-400 text-sm">Nenhuma conferida.</td></tr> :
-                      dados.conferidas.map(c => (
+                    {dados.conferidas.length === 0 ? <tr><td colSpan={8} className="text-center py-10 text-gray-400 text-sm">Nenhuma conferida.</td></tr> :
+                      dados.conferidas.map(c => {
+                        const vNota = c.nota?.valor ?? c.nf_valor ?? 0
+                        const diff = (vNota || 0) - (c.valor_comissao || 0)
+                        const bate = Math.abs(diff) < 0.01
+                        return (
                         <tr key={c.id} className="hover:bg-gray-50">
                           <td className="table-cell text-xs text-gray-500">{c.empresaNome}</td>
                           <td className="table-cell font-medium text-gray-900">{c.nome || '—'}</td>
                           <td className="table-cell text-gray-600">{fmtDoc(c.documento)}</td>
                           <td className="table-cell text-right">{formatarMoeda(c.valor_comissao)}</td>
                           <td className="table-cell text-center text-xs">{c.nota?.numero || c.nf_numero || '—'}</td>
-                          <td className="table-cell text-right text-xs">{formatarMoeda(c.nota?.valor ?? c.nf_valor ?? 0)}</td>
+                          <td className="table-cell text-right text-xs">{formatarMoeda(vNota)}</td>
+                          <td className="table-cell text-center text-xs">
+                            {bate
+                              ? <span className="text-green-700">✓ confere</span>
+                              : <span className="text-amber-700" title="A comissão da planilha difere do valor bruto da NFS-e (esperado)">Δ {formatarMoeda(diff)}</span>}
+                          </td>
                           <td className="table-cell text-right"><button onClick={() => desfazer(c)} className="text-red-500 hover:text-red-700 text-xs font-medium">Desfazer</button></td>
                         </tr>
-                      ))}
+                        )
+                      })}
                   </tbody>
                 </table>
               )}
@@ -267,11 +279,13 @@ export default function SalaoConferenciaPage() {
                     <div className="space-y-1">
                       {candNotas.map(n => {
                         const mesmoDoc = (n.documento ?? '').replace(/\D/g, '') === (modal.item.documento ?? '').replace(/\D/g, '')
+                        const nComp = n.competencia_conf || n.competencia || ''
+                        const mesmaComp = nComp === competencia
                         const mesmoValor = Math.abs((n.valor || 0) - modal.item.valor_comissao) < 0.01
                         return (
-                          <button key={n.id} onClick={() => vincular(modal.item.id, n)} className={`w-full text-left px-3 py-2 rounded-lg border text-sm hover:bg-blue-50 ${mesmoDoc && mesmoValor ? 'border-green-300 bg-green-50' : 'border-gray-200'}`}>
+                          <button key={n.id} onClick={() => vincular(modal.item.id, n)} className={`w-full text-left px-3 py-2 rounded-lg border text-sm hover:bg-blue-50 ${mesmoDoc && mesmaComp ? 'border-green-300 bg-green-50' : 'border-gray-200'}`}>
                             <div className="flex justify-between"><span className="font-medium">{n.emitente_nome || '—'}</span><span>{formatarMoeda(n.valor || 0)}</span></div>
-                            <div className="text-xs text-gray-500">{fmtDoc(n.documento)} · NF {n.numero || '—'} · emissão {fmtData(n.data_emissao)} · comp. {n.competencia_conf || n.competencia || '—'} {mesmoDoc ? '· mesmo CNPJ' : ''} {mesmoValor ? '· mesmo valor' : ''}</div>
+                            <div className="text-xs text-gray-500">{fmtDoc(n.documento)} · NF {n.numero || '—'} · emissão {fmtData(n.data_emissao)} · comp. {nComp || '—'} {mesmoDoc ? '· mesmo CNPJ' : ''} {mesmaComp ? '· mesma competência' : ''} {mesmoValor ? '· mesmo valor' : ''}</div>
                           </button>
                         )
                       })}
