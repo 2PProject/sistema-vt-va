@@ -44,6 +44,9 @@ export default function SalaoConferenciaPage() {
   useEffect(() => {
     if (!SALAO_ENABLED) { router.replace('/dashboard'); return }
     supabase.from('empresas').select('*').order('razao_social').then(({ data }) => setEmpresas(data ?? []))
+    // Abre já na ÚLTIMA competência importada (evita cair no mês atual, que costuma estar vazio).
+    supabase.from('salon_comissoes').select('mes_ref').order('mes_ref', { ascending: false }).limit(1)
+      .then(({ data }) => { const m = data?.[0]?.mes_ref; if (m) setCompetencia(m) })
   }, [router])
 
   const carregar = useCallback(async () => {
