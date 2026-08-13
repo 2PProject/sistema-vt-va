@@ -18,6 +18,10 @@ export type Esperada = {
   empresaNome?: string
   // nota vinculada (quando conferida)
   nota?: { numero: string | null; valor: number | null; data_emissao: string | null; competencia: string | null } | null
+  // diagnóstico: existe nota do MESMO CNPJ disponível? (mesmo que valor difira)
+  dicaNotaValor?: number | null
+  dicaNotaComp?: string | null
+  dicaNotaId?: string | null
 }
 
 // Nota recebida sem vínculo
@@ -151,7 +155,38 @@ export async function listarConferencia(competencia: string, empresaId?: string)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     .map((n: any) => { const e = Array.isArray(n.empresas) ? n.empresas[0] : n.empresas; return { ...n, empresaNome: e?.apelido || e?.razao_social || '' } })
 
+  // Diagnóstico: notas NÃO usadas agrupadas por empresa|CNPJ (qualquer competência)
+  const livresPorDoc = new Map<string, { id: string; valor: number; comp: string }[]>()
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  for (const n of (notas ?? []) as any[]) {
+    if (usadas.has(n.id)) continue
+    const k = n.empresa_id + '|' + dig(n.documento)
+    const arr = livresPorDoc.get(k) ?? []
+    arr.push({ id: n.id, valor: Number(n.valor) || 0, comp: n.competencia_conf || n.competencia || '' })
+    livresPorDoc.set(k, arr)
+  }
+  for (const p of pendentes) {
+    const cands = livresPorDoc.get(p.empresa_id + '|' + dig(p.documento))
+    if (cands && cands.length) {
+      const exato = cands.find((c) => Math.abs(c.valor - (p.valor_comissao || 0)) < 0.01)
+      const best = exato ?? cands[0]
+      p.dicaNotaValor = best.valor; p.dicaNotaComp = best.comp || null; p.dicaNotaId = best.id
+    }
+  }
+
   return { pendentes, conferidas, semVinculo, pendenciasImport }
+}
+
+/** Notas recebidas (não usadas) do mesmo CNPJ — de qualquer competência. */
+export async function notasDoCnpj(empresaId: string, documento: string | null): Promise<NotaLivre[]> {
+  const doc = dig(documento)
+  const { data: allLink } = await supabase.from('salon_comissoes').select('nota_id').not('nota_id', 'is', null)
+  const usadas = new Set((allLink ?? []).map((r: { nota_id: string }) => r.nota_id))
+  const { data } = await supabase.from('salon_notas').select('*, empresas(apelido, razao_social)').eq('empresa_id', empresaId).limit(8000)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (data ?? []).filter((n: any) => !usadas.has(n.id) && (!doc || dig(n.documento) === doc))
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .map((n: any) => { const e = Array.isArray(n.empresas) ? n.empresas[0] : n.empresas; return { ...n, empresaNome: e?.apelido || e?.razao_social || '' } })
 }
 
 /** Vincula manualmente uma nota a uma linha esperada (conferência manual). */
