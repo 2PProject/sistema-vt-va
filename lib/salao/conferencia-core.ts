@@ -9,6 +9,11 @@
 //   diferir do valor bruto da NFS-e). Notas de valor 0 (canceladas) são ignoradas.
 //   "Nota usada" conta só dentro da MESMA competência (vínculo de outro mês não
 //   bloqueia). Casa em 2 passadas: mesma unidade primeiro, depois qualquer unidade.
+//
+// EFICIÊNCIA: as consultas FILTRAM no banco (por competência e por CNPJ) — nunca
+// carregam a tabela inteira. E paginam com .range(): o PostgREST devolve no
+// máximo 1000 linhas por requisição (era esta a causa de "Notas no mês: 2" —
+// só as 1000 notas mais antigas vinham, e as do mês ficavam de fora).
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 export type Esperada = {
@@ -33,7 +38,7 @@ export type Esperada = {
   dicaNotaId?: string | null
   dicaNotaEmpresa?: string | null
   dicaOutraEmpresa?: boolean
-  dicaMotivo?: string          // por que ainda está pendente
+  dicaMotivo?: string
 }
 
 export type NotaLivre = {
@@ -52,15 +57,15 @@ export type NotaLivre = {
 
 export type Diagnostico = {
   competencia: string
-  notasNaCompetencia: number       // notas (valor>0) cuja competência = a conferida
+  notasNaCompetencia: number
   comissoesNaCompetencia: number
   conferidas: number
   pendentes: number
-  pendentesComNotaNoMes: number    // pendentes que TÊM nota do mesmo CNPJ na competência (exista ou não vínculo)
-  pendentesComNotaDisponivel: number // idem, com a nota AINDA livre (não usada no mês)
+  pendentesComNotaNoMes: number
+  pendentesComNotaDisponivel: number
   notasSemVinculo: number
-  totalNotas: number                 // total de notas no banco (qualquer mês)
-  distComp: { comp: string; n: number }[]  // distribuição por competência efetiva (top)
+  totalNotas: number
+  distComp: { comp: string; n: number }[]  // meses das notas dos profissionais pendentes
 }
 
 export type ConferenciaResultado = {
@@ -73,33 +78,30 @@ export type ConferenciaResultado = {
 
 export function dig(s: string | null | undefined): string { return (s ?? '').replace(/\D/g, '') }
 
-// Competência efetiva da nota, na ORDEM CORRETA: dCompet real (competencia) →
-// override manual (competencia_conf) → mês da emissão. O dCompet vem primeiro:
-// é a competência fiscal da NFS-e e é o que deve casar com o mês da planilha.
-// (Antes o competencia_conf vinha primeiro e, poluído, escondia as notas do mês.)
+// Competência efetiva da nota: dCompet real (competencia) → override manual
+// (competencia_conf) → mês da emissão. O sync já grava competencia = dCompet ||
+// mês da emissão, então a coluna `competencia` costuma bastar.
 export function notaComp(n: { competencia_conf?: string | null; competencia?: string | null; data_emissao?: string | null }): string {
   return (n.competencia || n.competencia_conf || (n.data_emissao ? String(n.data_emissao).slice(0, 7) : '')) as string
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type NotaRow = any
-
-// PostgREST devolve no MÁXIMO 1000 linhas por requisição (independe do .limit()).
-// Esta função pagina com .range() até esgotar — carrega TODAS as notas do banco.
-// Era ESTE o bug de fundo: com >1000 notas, só as 1000 primeiras (as mais antigas)
-// eram carregadas, e as notas do mês corrente ficavam de fora ("Notas no mês: 2").
+const NOTA_COLS = 'id, empresa_id, documento, emitente_nome, numero, valor, data_emissao, competencia, competencia_conf, conferida, empresas(apelido, razao_social)'
 const PAGINA = 1000
 
-async function carregarNotas(admin: SupabaseClient): Promise<NotaRow[]> {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type NotaRow = any
+// Builder do supabase-js — tipado como any para evitar acoplar à API interna.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type QB = any
+
+/** SELECT paginado (contorna o teto de 1000 linhas do PostgREST). */
+async function paginado(construir: (de: number, ate: number) => QB): Promise<NotaRow[]> {
   const todas: NotaRow[] = []
   for (let de = 0; ; de += PAGINA) {
-    const { data, error } = await admin.from('salon_notas')
-      .select('id, empresa_id, documento, emitente_nome, numero, valor, data_emissao, competencia, competencia_conf, conferida, empresas(apelido, razao_social)')
-      .order('id', { ascending: true })
-      .range(de, de + PAGINA - 1)
+    const { data, error } = await construir(de, de + PAGINA - 1)
     if (error || !data || data.length === 0) break
-    todas.push(...data)
-    if (data.length < PAGINA) break
+    todas.push(...(data as NotaRow[]))
+    if ((data as NotaRow[]).length < PAGINA) break
   }
   return todas
 }
@@ -109,18 +111,46 @@ function empresaNomeDe(row: NotaRow): string {
   return e?.apelido || e?.razao_social || ''
 }
 
+/** Notas de UMA competência (todas as unidades). Filtra no banco. */
+async function notasDaCompetencia(admin: SupabaseClient, competencia: string, soComValor = false): Promise<NotaRow[]> {
+  return paginado((de, ate) => {
+    let q = admin.from('salon_notas').select(NOTA_COLS).eq('competencia', competencia).order('id', { ascending: true }).range(de, ate)
+    if (soComValor) q = q.gt('valor', 0)
+    return q as unknown as QB
+  })
+}
+
+/** Notas de um conjunto de CNPJs (qualquer competência). Filtra no banco. */
+async function notasDosDocumentos(admin: SupabaseClient, docs: string[]): Promise<NotaRow[]> {
+  if (docs.length === 0) return []
+  const out: NotaRow[] = []
+  for (let i = 0; i < docs.length; i += 200) {           // .in() em blocos
+    const lote = docs.slice(i, i + 200)
+    const parte = await paginado((de, ate) =>
+      admin.from('salon_notas').select(NOTA_COLS).in('documento', lote).order('id', { ascending: true }).range(de, ate) as unknown as QB)
+    out.push(...parte)
+  }
+  return out
+}
+
 /** Vínculos (nota_id) em uso — por competência (default) ou globais. Paginado. */
 async function notasUsadas(admin: SupabaseClient, competencia?: string): Promise<Set<string>> {
-  const set = new Set<string>()
-  for (let de = 0; ; de += PAGINA) {
-    let q = admin.from('salon_comissoes').select('nota_id').not('nota_id', 'is', null).order('id', { ascending: true }).range(de, de + PAGINA - 1)
+  const rows = await paginado((de, ate) => {
+    let q = admin.from('salon_comissoes').select('nota_id').not('nota_id', 'is', null).order('id', { ascending: true }).range(de, ate)
     if (competencia) q = q.eq('mes_ref', competencia)
-    const { data, error } = await q
-    if (error || !data || data.length === 0) break
-    for (const r of data as { nota_id: string }[]) if (r.nota_id) set.add(r.nota_id)
-    if (data.length < PAGINA) break
-  }
+    return q as unknown as QB
+  })
+  const set = new Set<string>()
+  for (const r of rows) if (r.nota_id) set.add(r.nota_id)
   return set
+}
+
+async function comissoesDaCompetencia(admin: SupabaseClient, competencia: string, empresaId?: string): Promise<NotaRow[]> {
+  return paginado((de, ate) => {
+    let q = admin.from('salon_comissoes').select('*, empresas(apelido, razao_social)').eq('mes_ref', competencia).order('id', { ascending: true }).range(de, ate)
+    if (empresaId) q = q.eq('empresa_id', empresaId)
+    return q as unknown as QB
+  })
 }
 
 /**
@@ -136,14 +166,12 @@ export async function reconciliar(admin: SupabaseClient, competencia: string, em
   if (!pend || pend.length === 0) return { conferidas: 0, pendentes: 0, divergencias: 0, outraEmpresa: 0 }
 
   const usadas = await notasUsadas(admin, competencia)
-  const notas = await carregarNotas(admin)
+  const notas = await notasDaCompetencia(admin, competencia, true) // só as notas do mês, com valor > 0
 
   type Cand = { id: string; empresa_id: string; valor: number; numero: string | null; data_emissao: string | null }
   const porDoc = new Map<string, Cand[]>()
   for (const n of notas) {
     if (usadas.has(n.id)) continue
-    if (!(Number(n.valor) > 0)) continue
-    if (notaComp(n) !== competencia) continue
     const k = dig(n.documento); if (!k) continue
     const arr = porDoc.get(k) ?? []
     arr.push({ id: n.id, empresa_id: n.empresa_id, valor: Number(n.valor) || 0, numero: n.numero, data_emissao: n.data_emissao })
@@ -155,7 +183,6 @@ export async function reconciliar(admin: SupabaseClient, competencia: string, em
 
   async function casar(p: { id: string; empresa_id: string; valor_comissao: number }, arr: Cand[], nota: Cand) {
     const alvo = Number(p.valor_comissao) || 0
-    // auto-cura: libera qualquer vínculo dessa nota em OUTRA comissão (mês inválido)
     await admin.from('salon_comissoes').update({
       nota_id: null, status: 'pendente', nf_numero: null, nf_data: null, nf_valor: null, nf_origem: null, confirmado_em: null,
     }).eq('nota_id', nota.id).neq('id', p.id)
@@ -195,11 +222,13 @@ export async function reconciliar(admin: SupabaseClient, competencia: string, em
 
 /** Zera vínculos de conferência (competência/empresa opcionais) para refazer do zero. */
 export async function limpar(admin: SupabaseClient, competencia?: string, empresaId?: string): Promise<{ limpos: number }> {
-  let sel = admin.from('salon_comissoes').select('id, nota_id').not('nota_id', 'is', null)
-  if (competencia) sel = sel.eq('mes_ref', competencia)
-  if (empresaId) sel = sel.eq('empresa_id', empresaId)
-  const { data } = await sel
-  const notaIds = Array.from(new Set((data ?? []).map((r: { nota_id: string | null }) => r.nota_id).filter(Boolean))) as string[]
+  const rows = await paginado((de, ate) => {
+    let sel = admin.from('salon_comissoes').select('id, nota_id').not('nota_id', 'is', null).order('id', { ascending: true }).range(de, ate)
+    if (competencia) sel = sel.eq('mes_ref', competencia)
+    if (empresaId) sel = sel.eq('empresa_id', empresaId)
+    return sel as unknown as QB
+  })
+  const notaIds = Array.from(new Set(rows.map((r) => r.nota_id).filter(Boolean))) as string[]
 
   let upd = admin.from('salon_comissoes').update({
     nota_id: null, status: 'pendente', nf_numero: null, nf_data: null, nf_valor: null, nf_origem: null, confirmado_em: null,
@@ -211,20 +240,18 @@ export async function limpar(admin: SupabaseClient, competencia?: string, empres
   for (let i = 0; i < notaIds.length; i += 200) {
     await admin.from('salon_notas').update({ conferida: false }).in('id', notaIds.slice(i, i + 200))
   }
-  return { limpos: (data ?? []).length }
+  return { limpos: rows.length }
 }
 
 /** Estado completo da conferência + diagnóstico do banco (server-side). */
 export async function carregar(admin: SupabaseClient, competencia: string, empresaId?: string): Promise<ConferenciaResultado> {
-  let cq = admin.from('salon_comissoes').select('*, empresas(apelido, razao_social)').eq('mes_ref', competencia)
-  if (empresaId) cq = cq.eq('empresa_id', empresaId)
-  const { data: coms } = await cq
+  const coms = await comissoesDaCompetencia(admin, competencia, empresaId)
 
   // notas vinculadas (para exibir na aba Conferidas)
-  const linkIds = Array.from(new Set((coms ?? []).filter((c: NotaRow) => c.nota_id).map((c: NotaRow) => c.nota_id))) as string[]
+  const linkIds = Array.from(new Set(coms.filter((c) => c.nota_id).map((c) => c.nota_id))) as string[]
   const notaById = new Map<string, { numero: string | null; valor: number | null; data_emissao: string | null; competencia: string | null }>()
-  if (linkIds.length) {
-    const { data: nl } = await admin.from('salon_notas').select('id, numero, valor, data_emissao, competencia').in('id', linkIds)
+  for (let i = 0; i < linkIds.length; i += 200) {
+    const { data: nl } = await admin.from('salon_notas').select('id, numero, valor, data_emissao, competencia').in('id', linkIds.slice(i, i + 200))
     ;(nl ?? []).forEach((n: NotaRow) => notaById.set(n.id, { numero: n.numero, valor: n.valor, data_emissao: n.data_emissao, competencia: n.competencia }))
   }
 
@@ -232,40 +259,41 @@ export async function carregar(admin: SupabaseClient, competencia: string, empre
     const e = Array.isArray(c.empresas) ? c.empresas[0] : c.empresas
     return { ...c, empresaNome: e?.apelido || e?.razao_social || '', nota: c.nota_id ? (notaById.get(c.nota_id) ?? null) : null }
   }
-  const conferidas = (coms ?? []).filter((c: NotaRow) => c.nota_id).map(mapEsp)
-  const pendenciasImport = (coms ?? []).filter((c: NotaRow) => !c.nota_id && c.pendencia).map(mapEsp)
-  const pendentes = (coms ?? []).filter((c: NotaRow) => !c.nota_id && !c.pendencia).map(mapEsp)
+  const conferidas = coms.filter((c) => c.nota_id).map(mapEsp)
+  const pendenciasImport = coms.filter((c) => !c.nota_id && c.pendencia).map(mapEsp)
+  const pendentes = coms.filter((c) => !c.nota_id && !c.pendencia).map(mapEsp)
 
-  // Todas as notas + índices
-  const notas = await carregarNotas(admin)
+  // Notas do mês (filtradas no banco) + vínculos do mês
+  const notasMes = await notasDaCompetencia(admin, competencia)
   const usadasNoMes = await notasUsadas(admin, competencia)
 
-  // Notas sem vínculo (da competência), não usadas no mês
-  const semVinculo: NotaLivre[] = notas
-    .filter((n) => !usadasNoMes.has(n.id) && notaComp(n) === competencia)
+  const semVinculo: NotaLivre[] = notasMes
+    .filter((n) => !usadasNoMes.has(n.id))
     .map((n) => ({ ...n, empresaNome: empresaNomeDe(n) }))
 
-  // Índice por CNPJ de TODAS as notas (para dica) e por CNPJ só da competência
-  const porDocTodas = new Map<string, NotaRow[]>()
-  const porDocMes = new Map<string, NotaRow[]>()          // valor>0, competência = a conferida
-  const porDocMesLivre = new Map<string, NotaRow[]>()     // idem, ainda livre
-  for (const n of notas) {
+  // Notas dos CNPJs pendentes (qualquer mês) — para a dica e a distribuição.
+  const pendDocs = Array.from(new Set(pendentes.map((p) => dig(p.documento)).filter(Boolean)))
+  const notasPend = await notasDosDocumentos(admin, pendDocs)
+
+  // Índices
+  const porDocPend = new Map<string, NotaRow[]>()
+  for (const n of notasPend) { const k = dig(n.documento); if (!k) continue; (porDocPend.get(k) ?? porDocPend.set(k, []).get(k)!).push(n) }
+  const porDocMes = new Map<string, NotaRow[]>()
+  const porDocMesLivre = new Map<string, NotaRow[]>()
+  for (const n of notasMes) {
+    if (!(Number(n.valor) > 0)) continue
     const k = dig(n.documento); if (!k) continue
-    ;(porDocTodas.get(k) ?? porDocTodas.set(k, []).get(k)!).push(n)
-    if (Number(n.valor) > 0 && notaComp(n) === competencia) {
-      ;(porDocMes.get(k) ?? porDocMes.set(k, []).get(k)!).push(n)
-      if (!usadasNoMes.has(n.id)) (porDocMesLivre.get(k) ?? porDocMesLivre.set(k, []).get(k)!).push(n)
-    }
+    ;(porDocMes.get(k) ?? porDocMes.set(k, []).get(k)!).push(n)
+    if (!usadasNoMes.has(n.id)) (porDocMesLivre.get(k) ?? porDocMesLivre.set(k, []).get(k)!).push(n)
   }
 
-  // Dica por pendente + contadores de diagnóstico
   let pendentesComNotaNoMes = 0, pendentesComNotaDisponivel = 0
   for (const p of pendentes) {
     const k = dig(p.documento)
     if (porDocMes.has(k)) pendentesComNotaNoMes++
     if (porDocMesLivre.has(k)) pendentesComNotaDisponivel++
 
-    const cands = porDocTodas.get(k)
+    const cands = porDocPend.get(k)
     if (!cands || cands.length === 0) { p.dicaMotivo = 'nenhuma nota deste CNPJ baixada'; continue }
     const ord = [...cands].sort((a, b) => (notaComp(b) || '').localeCompare(notaComp(a) || ''))
     const best =
@@ -278,32 +306,33 @@ export async function carregar(admin: SupabaseClient, competencia: string, empre
     p.dicaNotaId = best.id
     p.dicaNotaEmpresa = empresaNomeDe(best)
     p.dicaOutraEmpresa = best.empresa_id !== p.empresa_id
-    // motivo
-    if (porDocMesLivre.has(k)) p.dicaMotivo = 'tem nota livre no mês — clique em Conciliar/Refazer'
+    if (porDocMesLivre.has(k)) p.dicaMotivo = 'tem nota livre no mês — clique em Refazer conferência'
     else if (porDocMes.has(k)) p.dicaMotivo = 'nota do mês já vinculada a outro registro'
     else p.dicaMotivo = 'sem nota nesta competência (só de outro mês)'
   }
 
-  // Distribuição das notas por competência efetiva (para enxergar onde estão).
+  // Distribuição por competência das notas dos profissionais pendentes.
   const distMap = new Map<string, number>()
-  for (const n of notas) {
+  for (const n of notasPend) {
     if (!(Number(n.valor) > 0)) continue
     const c = notaComp(n) || '(sem competência)'
     distMap.set(c, (distMap.get(c) ?? 0) + 1)
   }
-  const distComp = Array.from(distMap.entries()).map(([comp, n]) => ({ comp, n }))
-    .sort((a, b) => b.n - a.n).slice(0, 12)
+  const distComp = Array.from(distMap.entries()).map(([comp, n]) => ({ comp, n })).sort((a, b) => b.n - a.n).slice(0, 12)
+
+  // Total de notas no banco (só a contagem, sem transferir linhas).
+  const { count: totalNotas } = await admin.from('salon_notas').select('id', { count: 'exact', head: true })
 
   const diagnostico: Diagnostico = {
     competencia,
-    notasNaCompetencia: notas.filter((n) => Number(n.valor) > 0 && notaComp(n) === competencia).length,
-    comissoesNaCompetencia: (coms ?? []).length,
+    notasNaCompetencia: notasMes.filter((n) => Number(n.valor) > 0).length,
+    comissoesNaCompetencia: coms.length,
     conferidas: conferidas.length,
     pendentes: pendentes.length,
     pendentesComNotaNoMes,
     pendentesComNotaDisponivel,
     notasSemVinculo: semVinculo.length,
-    totalNotas: notas.length,
+    totalNotas: totalNotas ?? 0,
     distComp,
   }
 
@@ -313,10 +342,11 @@ export async function carregar(admin: SupabaseClient, competencia: string, empre
 /** Notas do mesmo CNPJ (qualquer unidade/competência) ainda livres — p/ vínculo manual. */
 export async function notasDoCnpj(admin: SupabaseClient, documento: string | null): Promise<NotaLivre[]> {
   const doc = dig(documento)
+  if (!doc) return []
   const usadas = await notasUsadas(admin) // global: p/ manual, não mostrar já usadas
-  const notas = await carregarNotas(admin)
+  const notas = await notasDosDocumentos(admin, [doc])
   return notas
-    .filter((n) => !usadas.has(n.id) && (!doc || dig(n.documento) === doc))
+    .filter((n) => !usadas.has(n.id))
     .map((n) => ({ ...n, empresaNome: empresaNomeDe(n) }))
     .sort((a, b) => (notaComp(b) || '').localeCompare(notaComp(a) || ''))
 }
@@ -324,7 +354,6 @@ export async function notasDoCnpj(admin: SupabaseClient, documento: string | nul
 export async function vincular(admin: SupabaseClient, comissaoId: string, notaId: string): Promise<{ ok: boolean; erro?: string }> {
   const { data: n } = await admin.from('salon_notas').select('id, numero, valor, data_emissao').eq('id', notaId).maybeSingle()
   if (!n) return { ok: false, erro: 'Nota não encontrada.' }
-  // libera vínculo anterior dessa nota
   await admin.from('salon_comissoes').update({
     nota_id: null, status: 'pendente', nf_numero: null, nf_data: null, nf_valor: null, nf_origem: null, confirmado_em: null,
   }).eq('nota_id', notaId).neq('id', comissaoId)
