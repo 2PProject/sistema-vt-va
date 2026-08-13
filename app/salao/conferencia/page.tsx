@@ -6,7 +6,7 @@ import LayoutAdmin from '../../../components/LayoutAdmin'
 import { supabase, Empresa } from '../../../lib/supabase'
 import { formatarMoeda, MESES } from '../../../utils/calculoVT'
 import { SALAO_ENABLED } from '../../../lib/salao/config'
-import { listarConferencia, reconciliarCompetencia, limparVinculos, vincularNota, desvincular, corrigirCnpj, notasDoCnpj, type Esperada, type NotaLivre } from '../../../lib/salao/conferencia'
+import { listarConferencia, reconciliarCompetencia, refazerConferencia, vincularNota, desvincular, corrigirCnpj, notasDoCnpj, type Esperada, type NotaLivre, type Diagnostico } from '../../../lib/salao/conferencia'
 
 function mesAtual() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}` }
 function fmtMes(m: string) { const [a, mm] = m.split('-').map(Number); return mm ? `${MESES[mm - 1]}/${a}` : m }
@@ -27,6 +27,7 @@ export default function SalaoConferenciaPage() {
   const [competencia, setCompetencia] = useState(mesAtual())
   const [aba, setAba] = useState<Aba>('pendentes')
   const [dados, setDados] = useState<{ pendentes: Esperada[]; conferidas: Esperada[]; semVinculo: NotaLivre[]; pendenciasImport: Esperada[] }>({ pendentes: [], conferidas: [], semVinculo: [], pendenciasImport: [] })
+  const [diag, setDiag] = useState<Diagnostico | null>(null)
   const [cnpjEdit, setCnpjEdit] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(false)
   const [ocupado, setOcupado] = useState(false)
@@ -51,7 +52,9 @@ export default function SalaoConferenciaPage() {
 
   const carregar = useCallback(async () => {
     setLoading(true)
-    setDados(await listarConferencia(competencia, empresaId || undefined))
+    const d = await listarConferencia(competencia, empresaId || undefined)
+    setDados({ pendentes: d.pendentes, conferidas: d.conferidas, semVinculo: d.semVinculo, pendenciasImport: d.pendenciasImport })
+    setDiag(d.diagnostico)
     setLoading(false)
   }, [competencia, empresaId])
   useEffect(() => { if (SALAO_ENABLED) carregar() }, [carregar])
@@ -68,10 +71,9 @@ export default function SalaoConferenciaPage() {
   async function refazer() {
     if (!window.confirm(`Refazer a conferência de ${fmtMes(competencia)}? Isso desfaz os vínculos automáticos deste mês e concilia do zero (as correções manuais também serão refeitas).`)) return
     setOcupado(true)
-    const { limpos } = await limparVinculos(competencia, empresaId || undefined)
-    const r = await reconciliarCompetencia(competencia, empresaId || undefined)
+    const r = await refazerConferencia(competencia, empresaId || undefined)
     setOcupado(false)
-    notify(`Refeito: ${limpos} vínculo(s) limpo(s) · ${r.conferidas} casada(s)${r.outraEmpresa ? ` (${r.outraEmpresa} em outra unidade)` : ''}. Restam ${r.pendentes} pendente(s).`, 'ok')
+    notify(`Refeito: ${r.limpos} vínculo(s) limpo(s) · ${r.conferidas} casada(s)${r.outraEmpresa ? ` (${r.outraEmpresa} em outra unidade)` : ''}. Restam ${r.pendentes} pendente(s).`, 'ok')
     carregar()
   }
   async function vincular(comissaoId: string, n: NotaLivre) {
@@ -149,6 +151,23 @@ export default function SalaoConferenciaPage() {
             <div><label className="label-field">Competência</label><input type="month" className="input-field" value={competencia} onChange={e => setCompetencia(e.target.value)} /></div>
           </div>
         </div>
+
+        {/* Diagnóstico do banco (lido pelo servidor, service_role) */}
+        {diag && (
+          <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs text-slate-600 grid grid-cols-2 md:grid-cols-6 gap-2">
+            <div><div className="text-slate-400">Notas no mês</div><div className="font-semibold text-slate-800">{diag.notasNaCompetencia}</div></div>
+            <div><div className="text-slate-400">Comissões</div><div className="font-semibold text-slate-800">{diag.comissoesNaCompetencia}</div></div>
+            <div><div className="text-slate-400">Conferidas</div><div className="font-semibold text-green-700">{diag.conferidas}</div></div>
+            <div><div className="text-slate-400">Pendentes</div><div className="font-semibold text-amber-700">{diag.pendentes}</div></div>
+            <div><div className="text-slate-400">Pend. c/ nota no mês</div><div className={`font-semibold ${diag.pendentesComNotaDisponivel ? 'text-red-600' : 'text-slate-800'}`}>{diag.pendentesComNotaDisponivel}</div></div>
+            <div><div className="text-slate-400">Notas sem vínculo</div><div className="font-semibold text-slate-800">{diag.notasSemVinculo}</div></div>
+            {diag.pendentesComNotaDisponivel > 0 && (
+              <div className="col-span-2 md:col-span-6 text-red-600">
+                ⚠ {diag.pendentesComNotaDisponivel} pendente(s) já têm nota livre do mesmo CNPJ nesta competência — clique em <strong>Refazer conferência</strong> para casar.
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Abas com contadores */}
         <div className="flex flex-wrap gap-2">
