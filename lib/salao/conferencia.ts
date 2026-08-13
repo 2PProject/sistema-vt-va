@@ -100,8 +100,9 @@ export async function reconciliarCompetencia(competencia: string, empresaId?: st
     const arr = porChave.get(k)
     if (!arr || arr.length === 0) continue
     const alvo = Number(p.valor_comissao) || 0
-    // Chave: mesma competência (dCompet da nota = mês da planilha). Valor NÃO é filtro.
-    const cands = arr.filter((n) => notaComp(n) === competencia)
+    // Chave: mesma competência (dCompet da nota = mês da planilha). Valor NÃO é filtro,
+    // mas ignora notas de valor 0 (canceladas/lixo) para não vincular a nota errada.
+    const cands = arr.filter((n) => notaComp(n) === competencia && n.valor > 0)
     if (cands.length === 0) continue
     // Havendo várias notas do mesmo CNPJ no mês, prefere a de valor mais próximo do crédito.
     cands.sort((a, b) => Math.abs(a.valor - alvo) - Math.abs(b.valor - alvo))
