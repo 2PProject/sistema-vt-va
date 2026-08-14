@@ -112,6 +112,9 @@ export async function observacaoNota(notaId: string, texto: string, usuario?: st
 export async function classificarNota(notaId: string, classificacao: 'profissional' | 'outro_servico', opts: { categoria?: string; observacao?: string; usuario?: string } = {}) {
   return post({ acao: 'classificarNota', notaId, classificacao, categoria: opts.categoria, texto: opts.observacao, usuario: opts.usuario })
 }
+export async function setNotaConferida(notaId: string, conferida: boolean, usuario?: string) {
+  return post({ acao: 'setNotaConferida', notaId, ativo: conferida, usuario })
+}
 export async function setAnaliseManual(tipo: 'nota' | 'comissao', id: string, ativo: boolean, motivo?: string, usuario?: string) {
   return post({ acao: 'setAnaliseManual', tipo, notaId: tipo === 'nota' ? id : undefined, comissaoId: tipo === 'comissao' ? id : undefined, ativo, motivo, usuario })
 }
