@@ -99,6 +99,7 @@ export default function SalaoPainelPage() {
             </div>
             <div className="grid grid-cols-2 gap-2">
               <Link href="/salao/notas" className="rounded-xl border border-white/10 bg-white/10 p-3 transition hover:bg-white/15"><span className="block text-sm font-semibold">Notas baixadas</span><span className="text-xs text-slate-300">Consultar e corrigir</span></Link>
+              <Link href="/salao/dados-importados" className="rounded-xl border border-white/10 bg-white/10 p-3 transition hover:bg-white/15"><span className="block text-sm font-semibold">Dados importados</span><span className="text-xs text-slate-300">Filtrar, editar e gerir</span></Link>
               <Link href="/salao/conferencia" className="rounded-xl bg-blue-600 p-3 transition hover:bg-blue-500"><span className="block text-sm font-semibold">Conferir agora</span><span className="text-xs text-blue-100">{resumo.pendentes} pendência(s)</span></Link>
               <Link href="/salao/outros-servicos" className="rounded-xl border border-white/10 bg-white/10 p-3 transition hover:bg-white/15"><span className="block text-sm font-semibold">Outros serviços</span><span className="text-xs text-slate-300">Notas classificadas</span></Link>
               <Link href="/salao/relatorios" className="rounded-xl border border-white/10 bg-white/10 p-3 transition hover:bg-white/15"><span className="block text-sm font-semibold">Relatórios</span><span className="text-xs text-slate-300">Analisar e exportar</span></Link>
