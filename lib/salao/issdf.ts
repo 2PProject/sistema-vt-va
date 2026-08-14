@@ -8,8 +8,8 @@ export type NotaIssDf = {
 }
 export type ResultadoIssDf = { notas: NotaIssDf[]; paginas: number; status: number; mensagens: string[] }
 
-const endpoint = () => (process.env.SALON_ISSDF_URL || 'https://df.issnetonline.com.br/webservicenfse204/nfse.asmx').replace(/\/$/, '')
-const wsdlNs = () => process.env.SALON_ISSDF_WSDL_NS || 'http://nfse.abrasf.org.br'
+const endpoint = () => (process.env.SALON_ISSDF_URL || 'https://nfse.fazenda.df.gov.br/wsnfsenacional/nfse.asmx').replace(/\/$/, '')
+const wsdlNs = () => process.env.SALON_ISSDF_WSDL_NS || 'http://www.sped.fazenda.gov.br/nfse'
 const soapAction = () => process.env.SALON_ISSDF_SOAP_ACTION || `${wsdlNs()}/ConsultarNfseServicoTomado`
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 const unesc = (s: string) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&')
@@ -20,32 +20,18 @@ const numero = (xml: string) => tag(xml, 'nNFSe') || tag(xml, 'nDFSe') || tag(xm
 const data = (xml: string) => (tag(xml, 'dhEmi') || tag(xml, 'dhProc') || tag(xml, 'DataEmissao')).slice(0, 10)
 const valor = (xml: string) => Number((tag(xml, 'vLiq') || tag(xml, 'vServ') || tag(xml, 'ValorServicos') || '0').replace(',', '.')) || 0
 
-async function dados(pfxBase64: string, senha: string, cnpj: string, inscricao: string, inicio: string, fim: string, pagina: number) {
-  const ns = 'http://www.abrasf.org.br/nfse.xsd'
-  const pedido = `<Pedido><Consulente><CpfCnpj><Cnpj>${cnpj}</Cnpj></CpfCnpj><InscricaoMunicipal>${esc(inscricao)}</InscricaoMunicipal></Consulente><PeriodoEmissao><DataInicial>${inicio}</DataInicial><DataFinal>${fim}</DataFinal></PeriodoEmissao><Tomador><CpfCnpj><Cnpj>${cnpj}</Cnpj></CpfCnpj><InscricaoMunicipal>${esc(inscricao)}</InscricaoMunicipal></Tomador><Pagina>${pagina}</Pagina></Pedido>`
-  const raizSemAssinatura = `<ConsultarNfseServicoTomadoEnvio xmlns="${ns}">${pedido}</ConsultarNfseServicoTomadoEnvio>`
-  // Assinatura XMLDSig exigida pelo schema ABRASF 2.04.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const forge: any = (await import('node-forge')).default ?? (await import('node-forge'))
-  const p12 = forge.pkcs12.pkcs12FromAsn1(forge.asn1.fromDer(Buffer.from(pfxBase64, 'base64').toString('binary')), false, senha)
-  const bags = p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag })[forge.pki.oids.pkcs8ShroudedKeyBag]
-    || p12.getBags({ bagType: forge.pki.oids.keyBag })[forge.pki.oids.keyBag]
-  const certBag = p12.getBags({ bagType: forge.pki.oids.certBag })[forge.pki.oids.certBag]?.[0]
-  const key = bags?.[0]?.key
-  if (!key || !certBag?.cert) throw new Error('Certificado sem chave privada para assinar a consulta ISS-DF.')
-  const digest = forge.md.sha1.create(); digest.update(raizSemAssinatura, 'utf8')
-  const digest64 = forge.util.encode64(digest.digest().getBytes())
-  const signedInfo = `<SignedInfo xmlns="http://www.w3.org/2000/09/xmldsig#"><CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"></CanonicalizationMethod><SignatureMethod Algorithm="http://www.w3.org/2000/09/xmldsig#rsa-sha1"></SignatureMethod><Reference URI=""><Transforms><Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"></Transform><Transform Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"></Transform></Transforms><DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1"></DigestMethod><DigestValue>${digest64}</DigestValue></Reference></SignedInfo>`
-  const md = forge.md.sha1.create(); md.update(signedInfo, 'utf8')
-  const assinatura = forge.util.encode64(key.sign(md))
-  const cert64 = forge.util.encode64(forge.asn1.toDer(forge.pki.certificateToAsn1(certBag.cert)).getBytes())
-  const signature = `<Signature xmlns="http://www.w3.org/2000/09/xmldsig#">${signedInfo.replace(' xmlns="http://www.w3.org/2000/09/xmldsig#"','')}<SignatureValue>${assinatura}</SignatureValue><KeyInfo><X509Data><X509Certificate>${cert64}</X509Certificate></X509Data></KeyInfo></Signature>`
-  return `<ConsultarNfseServicoTomadoEnvio xmlns="${ns}">${pedido}${signature}</ConsultarNfseServicoTomadoEnvio>`
+function dados(cnpj: string, inscricao: string, inicio: string, fim: string, pagina: number) {
+  const ns = 'http://www.sped.fazenda.gov.br/nfse'
+  // Padrão nacional RTC vigente no DF desde 02/08/2026. Neste schema,
+  // tcIdentificacaoPessoaEmpresa usa CNPJ/CPF e IM diretamente.
+  const identificacao = `<CNPJ>${cnpj}</CNPJ><IM>${esc(inscricao)}</IM>`
+  const filtros = `<Consulente>${identificacao}</Consulente><PeriodoEmissao><DataInicial>${inicio}</DataInicial><DataFinal>${fim}</DataFinal></PeriodoEmissao><Tomador>${identificacao}</Tomador><Pagina>${pagina}</Pagina>`
+  return `<ConsultarNfseServicoTomadoEnvio xmlns="${ns}" xmlns:ns2="http://www.w3.org/2000/09/xmldsig#">${filtros}</ConsultarNfseServicoTomadoEnvio>`
 }
-async function envelope(pfxBase64: string, senha: string, cnpj: string, inscricao: string, inicio: string, fim: string, pagina: number) {
-  const cab = '<cabecalho versao="1.00" xmlns="http://www.abrasf.org.br/nfse.xsd"><versaoDados>2.04</versaoDados></cabecalho>'
-  const xml = await dados(pfxBase64, senha, cnpj, inscricao, inicio, fim, pagina)
-  return `<?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body><ConsultarNfseServicoTomado xmlns="${wsdlNs()}"><nfseCabecMsg>${esc(cab)}</nfseCabecMsg><nfseDadosMsg>${esc(xml)}</nfseDadosMsg></ConsultarNfseServicoTomado></soap:Body></soap:Envelope>`
+function envelope(cnpj: string, inscricao: string, inicio: string, fim: string, pagina: number) {
+  const cab = '<cabecalho versao="1.00" xmlns="http://www.sped.fazenda.gov.br/nfse"><versaoDados>1.00</versaoDados></cabecalho>'
+  const xml = dados(cnpj, inscricao, inicio, fim, pagina)
+  return `<?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body><ConsultarNfseServicoTomado xmlns="${wsdlNs()}"><nfseCabecMsg><![CDATA[${cab}]]></nfseCabecMsg><nfseDadosMsg><![CDATA[${xml}]]></nfseDadosMsg></ConsultarNfseServicoTomado></soap:Body></soap:Envelope>`
 }
 function post(agent: https.Agent, corpo: string): Promise<{ status: number; corpo: string }> {
   return new Promise((resolve, reject) => {
@@ -93,12 +79,13 @@ export async function consultarRecebidasIssDf(params: { pfxBase64: string; senha
   const todas: NotaIssDf[] = []; const mensagens: string[] = []; let status = 0, paginas = 0
   for (const periodo of periodosMensais(params.inicio, params.fim)) {
     for (let pagina = 1; pagina <= (params.maxPaginas || 40); pagina++) {
-      const corpo = await envelope(params.pfxBase64, params.senha, params.cnpj.replace(/\D/g, ''), params.inscricaoMunicipal, periodo.inicio, periodo.fim, pagina)
+      const corpo = envelope(params.cnpj.replace(/\D/g, ''), params.inscricaoMunicipal, periodo.inicio, periodo.fim, pagina)
       const r = await post(agent, corpo)
       status = r.status; paginas++
+      if (r.status === 403) throw new Error('O ISS-DF recusou o certificado A1 no endpoint nacional (HTTP 403). Verifique se o certificado é e-CNPJ ICP-Brasil válido da empresa, matriz ou filial da mesma raiz, e se o primeiro acesso foi liberado no portal ISS-DF.')
       if (r.status >= 400) {
-        const fault = tag(r.corpo, 'faultstring') || r.corpo.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
-        throw new Error(`ISS-DF histórico respondeu HTTP ${r.status}: ${fault.slice(0, 1200)}`)
+        const fault = tag(r.corpo, 'faultstring') || tag(r.corpo, 'Message') || r.corpo.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+        throw new Error(`ISS-DF respondeu HTTP ${r.status}: ${fault.slice(0, 1200)}`)
       }
       const x = interpretar(r.corpo)
       todas.push(...x.notas)
