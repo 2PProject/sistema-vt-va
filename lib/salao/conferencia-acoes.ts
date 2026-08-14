@@ -129,6 +129,41 @@ export async function observacaoNota(admin: SupabaseClient, id: string, texto: s
   return { ok: true }
 }
 
+/** Classifica uma nota como profissional ou outro serviço. Outro serviço é retirado da conferência. */
+export async function classificarNota(admin: SupabaseClient, id: string, classificacao: 'profissional' | 'outro_servico', opts: { categoria?: string; observacao?: string; usuario?: string }): Promise<OK> {
+  if (classificacao === 'outro_servico' && !opts.categoria?.trim()) return { ok: false, erro: 'Informe a categoria do outro serviço.' }
+  const { data: atual, error: e0 } = await admin.from('salon_notas').select('*').eq('id', id).maybeSingle()
+  if (e0) return { ok: false, erro: e0.message }
+  if (!atual) return { ok: false, erro: 'Nota não encontrada.' }
+  if (classificacao === 'outro_servico') {
+    await admin.from('salon_comissoes').update({ nota_id: null, status: 'pendente', nf_numero: null, nf_data: null, nf_valor: null, nf_origem: null, confirmado_em: null }).eq('nota_id', id)
+  }
+  const novo = {
+    classificacao,
+    categoria_outro_servico: classificacao === 'outro_servico' ? opts.categoria?.trim() : null,
+    observacao: opts.observacao?.trim() || atual.observacao || null,
+    analise_manual: false,
+    analise_motivo: null,
+    conferida: classificacao === 'outro_servico' ? false : atual.conferida,
+  }
+  const { error } = await admin.from('salon_notas').update(novo).eq('id', id)
+  if (error) return { ok: false, erro: error.message }
+  await registrarHistorico(admin, { tipo: 'nota', ref_id: id, empresa_id: atual.empresa_id, competencia: notaComp(atual), acao: classificacao === 'outro_servico' ? 'outro_servico' : 'retorno_conferencia', valor_anterior: { classificacao: atual.classificacao }, valor_novo: novo, usuario: opts.usuario, justificativa: opts.observacao })
+  return { ok: true }
+}
+
+/** Envia nota ou comissão para análise posterior, sem perder o registro. */
+export async function setAnaliseManual(admin: SupabaseClient, tipo: 'nota' | 'comissao', id: string, ativo: boolean, motivo?: string, usuario?: string): Promise<OK> {
+  const tabela = tipo === 'nota' ? 'salon_notas' : 'salon_comissoes'
+  const { data: atual, error: e0 } = await admin.from(tabela).select('*').eq('id', id).maybeSingle()
+  if (e0) return { ok: false, erro: e0.message }
+  if (!atual) return { ok: false, erro: 'Registro não encontrado.' }
+  const { error } = await admin.from(tabela).update({ analise_manual: ativo, analise_motivo: ativo ? (motivo?.trim() || 'Analisar posteriormente') : null }).eq('id', id)
+  if (error) return { ok: false, erro: error.message }
+  await registrarHistorico(admin, { tipo, ref_id: id, empresa_id: atual.empresa_id, competencia: tipo === 'nota' ? notaComp(atual) : atual.mes_ref, acao: ativo ? 'enviado_analise' : 'retirado_analise', usuario, justificativa: motivo })
+  return { ok: true }
+}
+
 /** Histórico unificado (por registro, competência, ou geral). */
 export async function historico(admin: SupabaseClient, filtro: { tipo?: string; refId?: string; competencia?: string; limite?: number }): Promise<Row[]> {
   let q = admin.from('salon_historico').select('*').order('criado_em', { ascending: false }).limit(filtro.limite ?? 200)
