@@ -91,6 +91,9 @@ export async function consultarConferencia(filtros: Filtros, ord: Ordenacao, pag
   return j as ConsultaResultado
 }
 
+export async function excluirComissao(comissaoId: string, usuario?: string) {
+  return post({ acao: 'excluirComissao', comissaoId, usuario })
+}
 export async function editarComissao(comissaoId: string, campos: Record<string, unknown>, usuario?: string) {
   return post({ acao: 'editarComissao', comissaoId, campos, usuario })
 }
