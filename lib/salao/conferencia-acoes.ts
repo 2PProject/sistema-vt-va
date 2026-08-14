@@ -152,6 +152,17 @@ export async function classificarNota(admin: SupabaseClient, id: string, classif
   return { ok: true }
 }
 
+export async function setNotaConferida(admin: SupabaseClient, id: string, conferida: boolean, usuario?: string): Promise<OK> {
+  const { data: atual, error: e0 } = await admin.from('salon_notas').select('id, empresa_id, competencia, competencia_conf, data_emissao, conferida').eq('id', id).maybeSingle()
+  if (e0) return { ok: false, erro: e0.message }
+  if (!atual) return { ok: false, erro: 'Nota não encontrada.' }
+  const novo = { conferida, conferida_em: conferida ? new Date().toISOString() : null, conferida_por: conferida ? (usuario ?? null) : null }
+  const { error } = await admin.from('salon_notas').update(novo).eq('id', id)
+  if (error) return { ok: false, erro: error.message }
+  await registrarHistorico(admin, { tipo: 'nota', ref_id: id, empresa_id: atual.empresa_id, competencia: notaComp(atual), acao: conferida ? 'conferencia_manual' : 'reabertura_nota', valor_anterior: { conferida: !!atual.conferida }, valor_novo: { conferida }, usuario })
+  return { ok: true }
+}
+
 /** Envia nota ou comissão para análise posterior, sem perder o registro. */
 export async function setAnaliseManual(admin: SupabaseClient, tipo: 'nota' | 'comissao', id: string, ativo: boolean, motivo?: string, usuario?: string): Promise<OK> {
   const tabela = tipo === 'nota' ? 'salon_notas' : 'salon_comissoes'
