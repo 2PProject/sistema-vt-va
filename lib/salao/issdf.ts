@@ -20,34 +20,17 @@ const numero = (xml: string) => tag(xml, 'nNFSe') || tag(xml, 'nDFSe') || tag(xm
 const data = (xml: string) => (tag(xml, 'dhEmi') || tag(xml, 'dhProc') || tag(xml, 'DataEmissao')).slice(0, 10)
 const valor = (xml: string) => Number((tag(xml, 'vLiq') || tag(xml, 'vServ') || tag(xml, 'ValorServicos') || '0').replace(',', '.')) || 0
 
-async function dados(pfxBase64: string, senha: string, cnpj: string, inscricao: string, inicio: string, fim: string, pagina: number) {
+function dados(cnpj: string, inscricao: string, inicio: string, fim: string, pagina: number) {
   const ns = 'http://www.abrasf.org.br/nfse.xsd'
-  // No schema ABRASF, os filtros são filhos diretos da raiz. O antigo contêiner
-  // <Pedido> deslocava o Tomador e fazia o ISSNet interpretar a consulta como
-  // filtro de prestador, resultando indevidamente no erro E141.
+  // O XSD 2.04 encerra a sequência em Pagina. Signature não é um elemento
+  // permitido nesta mensagem; a identidade já é validada pelo certificado A1
+  // usado no canal mTLS.
   const filtros = `<Consulente><CpfCnpj><Cnpj>${cnpj}</Cnpj></CpfCnpj><InscricaoMunicipal>${esc(inscricao)}</InscricaoMunicipal></Consulente><PeriodoEmissao><DataInicial>${inicio}</DataInicial><DataFinal>${fim}</DataFinal></PeriodoEmissao><Tomador><CpfCnpj><Cnpj>${cnpj}</Cnpj></CpfCnpj><InscricaoMunicipal>${esc(inscricao)}</InscricaoMunicipal></Tomador><Pagina>${pagina}</Pagina>`
-  const raizSemAssinatura = `<ConsultarNfseServicoTomadoEnvio xmlns="${ns}">${filtros}</ConsultarNfseServicoTomadoEnvio>`
-  // Assinatura XMLDSig exigida pelo schema ABRASF 2.04.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const forge: any = (await import('node-forge')).default ?? (await import('node-forge'))
-  const p12 = forge.pkcs12.pkcs12FromAsn1(forge.asn1.fromDer(Buffer.from(pfxBase64, 'base64').toString('binary')), false, senha)
-  const bags = p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag })[forge.pki.oids.pkcs8ShroudedKeyBag]
-    || p12.getBags({ bagType: forge.pki.oids.keyBag })[forge.pki.oids.keyBag]
-  const certBag = p12.getBags({ bagType: forge.pki.oids.certBag })[forge.pki.oids.certBag]?.[0]
-  const key = bags?.[0]?.key
-  if (!key || !certBag?.cert) throw new Error('Certificado sem chave privada para assinar a consulta ISS-DF.')
-  const digest = forge.md.sha1.create(); digest.update(raizSemAssinatura, 'utf8')
-  const digest64 = forge.util.encode64(digest.digest().getBytes())
-  const signedInfo = `<SignedInfo xmlns="http://www.w3.org/2000/09/xmldsig#"><CanonicalizationMethod Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"></CanonicalizationMethod><SignatureMethod Algorithm="http://www.w3.org/2000/09/xmldsig#rsa-sha1"></SignatureMethod><Reference URI=""><Transforms><Transform Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature"></Transform><Transform Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315"></Transform></Transforms><DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1"></DigestMethod><DigestValue>${digest64}</DigestValue></Reference></SignedInfo>`
-  const md = forge.md.sha1.create(); md.update(signedInfo, 'utf8')
-  const assinatura = forge.util.encode64(key.sign(md))
-  const cert64 = forge.util.encode64(forge.asn1.toDer(forge.pki.certificateToAsn1(certBag.cert)).getBytes())
-  const signature = `<Signature xmlns="http://www.w3.org/2000/09/xmldsig#">${signedInfo.replace(' xmlns="http://www.w3.org/2000/09/xmldsig#"','')}<SignatureValue>${assinatura}</SignatureValue><KeyInfo><X509Data><X509Certificate>${cert64}</X509Certificate></X509Data></KeyInfo></Signature>`
-  return `<ConsultarNfseServicoTomadoEnvio xmlns="${ns}">${filtros}${signature}</ConsultarNfseServicoTomadoEnvio>`
+  return `<ConsultarNfseServicoTomadoEnvio xmlns="${ns}">${filtros}</ConsultarNfseServicoTomadoEnvio>`
 }
 async function envelope(pfxBase64: string, senha: string, cnpj: string, inscricao: string, inicio: string, fim: string, pagina: number) {
   const cab = '<cabecalho versao="1.00" xmlns="http://www.abrasf.org.br/nfse.xsd"><versaoDados>2.04</versaoDados></cabecalho>'
-  const xml = await dados(pfxBase64, senha, cnpj, inscricao, inicio, fim, pagina)
+  const xml = dados(cnpj, inscricao, inicio, fim, pagina)
   return `<?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body><ConsultarNfseServicoTomado xmlns="${wsdlNs()}"><nfseCabecMsg>${esc(cab)}</nfseCabecMsg><nfseDadosMsg>${esc(xml)}</nfseDadosMsg></ConsultarNfseServicoTomado></soap:Body></soap:Envelope>`
 }
 function post(agent: https.Agent, corpo: string): Promise<{ status: number; corpo: string }> {
