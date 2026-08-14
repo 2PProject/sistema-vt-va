@@ -113,6 +113,7 @@ export type LinhaConsulta = {
   corrigidoManual: boolean
   duplicada: boolean
   conferida?: boolean
+  analise_manual?: boolean
   pendencia?: string | null
   confianca?: number
   confiancaLabel?: 'alta' | 'media' | 'baixa'
@@ -498,7 +499,7 @@ export async function consultar(admin: SupabaseClient, f: Filtros, ord: Ordenaca
       documento: c.documento, nome: c.nome, valor_comissao: Number(c.valor_comissao) || 0,
       nota_id: c.nota_id ?? null, nf_numero: c.nf_numero ?? null, nf_data: c.nf_data ?? null, nf_valor: c.nf_valor ?? null,
       diferenca: null, situacao: 'sem_nota', outraEmpresa: false, corrigidoManual: !!c.corrigido_manual,
-      duplicada, pendencia: c.pendencia ?? null,
+      duplicada, analise_manual: !!c.analise_manual, pendencia: c.pendencia ?? null,
     }
 
     if (c.nota_id) {
