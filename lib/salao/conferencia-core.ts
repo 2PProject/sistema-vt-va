@@ -381,7 +381,6 @@ export async function carregar(admin: SupabaseClient, competencia: string, empre
 
   // Notas do mês (filtradas no banco) + vínculos do mês
   const notasMes = await notasDaCompetencia(admin, competencia)
-  const usadasNoMes = await notasUsadas(admin, competencia)
 
   const semVinculo: NotaLivre[] = notasMes
     .filter((n) => !usadasNoMes.has(n.id) && !n.excluida)
