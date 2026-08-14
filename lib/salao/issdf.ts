@@ -22,8 +22,11 @@ const valor = (xml: string) => Number((tag(xml, 'vLiq') || tag(xml, 'vServ') || 
 
 async function dados(pfxBase64: string, senha: string, cnpj: string, inscricao: string, inicio: string, fim: string, pagina: number) {
   const ns = 'http://www.abrasf.org.br/nfse.xsd'
-  const pedido = `<Pedido><Consulente><CpfCnpj><Cnpj>${cnpj}</Cnpj></CpfCnpj><InscricaoMunicipal>${esc(inscricao)}</InscricaoMunicipal></Consulente><PeriodoEmissao><DataInicial>${inicio}</DataInicial><DataFinal>${fim}</DataFinal></PeriodoEmissao><Tomador><CpfCnpj><Cnpj>${cnpj}</Cnpj></CpfCnpj><InscricaoMunicipal>${esc(inscricao)}</InscricaoMunicipal></Tomador><Pagina>${pagina}</Pagina></Pedido>`
-  const raizSemAssinatura = `<ConsultarNfseServicoTomadoEnvio xmlns="${ns}">${pedido}</ConsultarNfseServicoTomadoEnvio>`
+  // No schema ABRASF, os filtros são filhos diretos da raiz. O antigo contêiner
+  // <Pedido> deslocava o Tomador e fazia o ISSNet interpretar a consulta como
+  // filtro de prestador, resultando indevidamente no erro E141.
+  const filtros = `<Consulente><CpfCnpj><Cnpj>${cnpj}</Cnpj></CpfCnpj><InscricaoMunicipal>${esc(inscricao)}</InscricaoMunicipal></Consulente><PeriodoEmissao><DataInicial>${inicio}</DataInicial><DataFinal>${fim}</DataFinal></PeriodoEmissao><Tomador><CpfCnpj><Cnpj>${cnpj}</Cnpj></CpfCnpj><InscricaoMunicipal>${esc(inscricao)}</InscricaoMunicipal></Tomador><Pagina>${pagina}</Pagina>`
+  const raizSemAssinatura = `<ConsultarNfseServicoTomadoEnvio xmlns="${ns}">${filtros}</ConsultarNfseServicoTomadoEnvio>`
   // Assinatura XMLDSig exigida pelo schema ABRASF 2.04.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const forge: any = (await import('node-forge')).default ?? (await import('node-forge'))
@@ -40,7 +43,7 @@ async function dados(pfxBase64: string, senha: string, cnpj: string, inscricao: 
   const assinatura = forge.util.encode64(key.sign(md))
   const cert64 = forge.util.encode64(forge.asn1.toDer(forge.pki.certificateToAsn1(certBag.cert)).getBytes())
   const signature = `<Signature xmlns="http://www.w3.org/2000/09/xmldsig#">${signedInfo.replace(' xmlns="http://www.w3.org/2000/09/xmldsig#"','')}<SignatureValue>${assinatura}</SignatureValue><KeyInfo><X509Data><X509Certificate>${cert64}</X509Certificate></X509Data></KeyInfo></Signature>`
-  return `<ConsultarNfseServicoTomadoEnvio xmlns="${ns}">${pedido}${signature}</ConsultarNfseServicoTomadoEnvio>`
+  return `<ConsultarNfseServicoTomadoEnvio xmlns="${ns}">${filtros}${signature}</ConsultarNfseServicoTomadoEnvio>`
 }
 async function envelope(pfxBase64: string, senha: string, cnpj: string, inscricao: string, inicio: string, fim: string, pagina: number) {
   const cab = '<cabecalho versao="1.00" xmlns="http://www.abrasf.org.br/nfse.xsd"><versaoDados>2.04</versaoDados></cabecalho>'
