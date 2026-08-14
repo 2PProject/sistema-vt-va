@@ -112,6 +112,7 @@ export type LinhaConsulta = {
   outraEmpresa: boolean
   corrigidoManual: boolean
   duplicada: boolean
+  conferida?: boolean
   pendencia?: string | null
   confianca?: number
   confiancaLabel?: 'alta' | 'media' | 'baixa'
@@ -541,15 +542,15 @@ export async function consultar(admin: SupabaseClient, f: Filtros, ord: Ordenaca
 
   // Notas sem vínculo (do mês) → linhas tipo 'nota'
   for (const n of notasMes) {
-    if (usadasNoMes.has(n.id)) continue
+    if (usadasGlobal.has(n.id)) continue
     if (!(Number(n.valor) > 0)) continue
     const e = Array.isArray(n.empresas) ? n.empresas[0] : n.empresas
     linhas.push({
       tipo: 'nota', id: n.id, empresa_id: n.empresa_id, empresaNome: e?.apelido || e?.razao_social || '',
       mes_ref: notaComp(n), documento: n.documento, nome: n.emitente_nome, valor_comissao: null,
       nota_id: n.id, nf_numero: n.numero, nf_data: n.data_emissao, nf_valor: Number(n.valor) || 0,
-      nota_competencia: notaComp(n), diferenca: null, situacao: 'nota_sem_vinculo',
-      outraEmpresa: false, corrigidoManual: false, duplicada: false,
+      nota_competencia: notaComp(n), diferenca: null, situacao: n.conferida ? 'conferido' : 'nota_sem_vinculo',
+      outraEmpresa: false, corrigidoManual: false, duplicada: false, conferida: !!n.conferida,
     })
   }
 
