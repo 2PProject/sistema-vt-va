@@ -21,7 +21,7 @@ const data = (xml: string) => (tag(xml, 'dhEmi') || tag(xml, 'dhProc') || tag(xm
 const valor = (xml: string) => Number((tag(xml, 'vLiq') || tag(xml, 'vServ') || tag(xml, 'ValorServicos') || '0').replace(',', '.')) || 0
 
 function dados(cnpj: string, inicio: string, fim: string, pagina: number) {
-  return `<ConsultarNfseEnvio xmlns="http://www.sped.fazenda.gov.br/nfse"><Consulente><CNPJ>${cnpj}</CNPJ></Consulente><PeriodoEmissao><DataInicial>${inicio}</DataInicial><DataFinal>${fim}</DataFinal></PeriodoEmissao><Tomador><CNPJ>${cnpj}</CNPJ></Tomador><Pagina>${pagina}</Pagina></ConsultarNfseEnvio>`
+  return `<ConsultarNfseServicoTomadoEnvio xmlns="http://www.sped.fazenda.gov.br/nfse"><Consulente><CNPJ>${cnpj}</CNPJ></Consulente><PeriodoEmissao><DataInicial>${inicio}</DataInicial><DataFinal>${fim}</DataFinal></PeriodoEmissao><Tomador><CNPJ>${cnpj}</CNPJ></Tomador><Pagina>${pagina}</Pagina></ConsultarNfseServicoTomadoEnvio>`
 }
 function envelope(cnpj: string, inicio: string, fim: string, pagina: number) {
   const cab = '<cabecalho versao="1.01" xmlns="http://www.sped.fazenda.gov.br/nfse"><versaoDados>1.01</versaoDados></cabecalho>'
