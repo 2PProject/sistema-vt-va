@@ -11,7 +11,9 @@ export async function POST(req: Request) {
   const empresaId = String(body.empresa_id || '')
   const inicio = String(body.inicio || '')
   const fim = String(body.fim || '')
+  const inscricaoMunicipal = String(body.inscricao_municipal || '').replace(/\D/g, '')
   if (!empresaId) return Response.json({ erro: 'Selecione uma unidade.' }, { status: 400 })
+  if (!inscricaoMunicipal) return Response.json({ erro: 'Informe a inscrição municipal da unidade no ISS-DF.' }, { status: 400 })
   if (!/^\d{4}-\d{2}-\d{2}$/.test(inicio) || !/^\d{4}-\d{2}-\d{2}$/.test(fim) || inicio > fim)
     return Response.json({ erro: 'Informe um período válido.' }, { status: 400 })
 
@@ -28,7 +30,7 @@ export async function POST(req: Request) {
     if (cnpj.length !== 14) return Response.json({ erro: 'O certificado não possui um CNPJ válido.' }, { status: 400 })
 
     const resultado = await consultarRecebidasIssDf({
-      pfxBase64: cert.cert_pfx_b64, senha: decrypt(cert.cert_senha_enc), cnpj, inicio, fim,
+      pfxBase64: cert.cert_pfx_b64, senha: decrypt(cert.cert_senha_enc), cnpj, inscricaoMunicipal, inicio, fim,
     })
     const { data: atuais } = await admin.from('salon_notas')
       .select('chave, documento, numero, data_emissao, valor')
