@@ -17,6 +17,12 @@ export type NotaRecebida = {
   conferida: boolean
   conferida_em: string | null
   conferida_por: string | null
+  // classificação operacional (v7)
+  classificacao?: 'profissional' | 'outro_servico'
+  categoria_outro_servico?: string | null
+  analise_manual?: boolean
+  analise_motivo?: string | null
+  excluida?: boolean
   // derivados
   empresaNome?: string
   competenciaEfetiva?: string | null   // competencia_conf ?? competencia
@@ -31,6 +37,8 @@ export type FiltroNotas = {
   profissional?: string // nome ou documento do emitente
   status?: 'pendente' | 'conferida'
   busca?: string
+  classificacao?: 'profissional' | 'outro_servico'
+  incluirExcluidas?: boolean
 }
 
 /**
@@ -45,6 +53,8 @@ export async function listarNotas(f: FiltroNotas): Promise<NotaRecebida[]> {
     .order('data_emissao', { ascending: false, nullsFirst: false })
     .limit(8000)
   if (f.empresaId) q = q.eq('empresa_id', f.empresaId)
+  if (!f.incluirExcluidas) q = q.eq('excluida', false)
+  if (f.classificacao) q = q.eq('classificacao', f.classificacao)
   if (f.de) q = q.gte('data_emissao', f.de)
   if (f.ate) q = q.lte('data_emissao', f.ate)
   const { data } = await q
