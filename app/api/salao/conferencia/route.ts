@@ -74,7 +74,7 @@ export async function POST(req: Request) {
   try { admin = getAdminClient() } catch (e) { return erroConfig(e) }
   const b = await req.json().catch(() => null)
   if (!b?.acao) return Response.json({ ok: false, erro: 'Ação ausente.' }, { status: 400 })
-  const { acao, competencia, empresaId, comissaoId, notaId, documento, campos, motivo, usuario, status, justificativa, dup, texto } = b
+  const { acao, competencia, empresaId, comissaoId, notaId, documento, campos, motivo, usuario, status, justificativa, dup, texto, classificacao, categoria, tipo, ativo } = b
 
   try {
     switch (acao) {
@@ -94,6 +94,8 @@ export async function POST(req: Request) {
       case 'restaurarNota': { const r = await acoes.restaurarNota(admin, notaId, usuario); return Response.json(r, { status: r.ok ? 200 : 400 }) }
       case 'marcarDuplicada': { const r = await acoes.marcarDuplicada(admin, notaId, !!dup, usuario); return Response.json(r, { status: r.ok ? 200 : 400 }) }
       case 'observacaoNota': { const r = await acoes.observacaoNota(admin, notaId, texto ?? '', usuario); return Response.json(r, { status: r.ok ? 200 : 400 }) }
+      case 'classificarNota': { const r = await acoes.classificarNota(admin, notaId, classificacao, { categoria, observacao: texto, usuario }); return Response.json(r, { status: r.ok ? 200 : 400 }) }
+      case 'setAnaliseManual': { const r = await acoes.setAnaliseManual(admin, tipo, tipo === 'nota' ? notaId : comissaoId, !!ativo, motivo, usuario); return Response.json(r, { status: r.ok ? 200 : 400 }) }
       case 'setStatus': { const r = await acoes.setStatusCompetencia(admin, competencia, status, { empresaId: empresaId || undefined, usuario, justificativa }); return Response.json(r, { status: r.ok ? 200 : 400 }) }
       default: return Response.json({ ok: false, erro: `Ação desconhecida: ${acao}` }, { status: 400 })
     }
