@@ -51,13 +51,15 @@ export function parseValorBR(raw: unknown): number {
 }
 
 /** Lista comissões com nomes e status calculado. */
-export async function listarComissoes(params: { empresaId?: string; mes?: string; status?: StatusComissao }):
+export async function listarComissoes(params: { empresaId?: string; mes?: string; mesInicio?: string; mesFim?: string; status?: StatusComissao }):
   Promise<Comissao[]> {
   let q = supabase
     .from('salon_comissoes')
     .select('*, salon_professionals(nome, documento), empresas(razao_social, apelido)')
   if (params.empresaId) q = q.eq('empresa_id', params.empresaId)
   if (params.mes) q = q.eq('mes_ref', params.mes)
+  if (params.mesInicio) q = q.gte('mes_ref', params.mesInicio)
+  if (params.mesFim) q = q.lte('mes_ref', params.mesFim)
   const { data } = await q
   const prazos = await carregarPrazos()
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -67,7 +69,7 @@ export async function listarComissoes(params: { empresaId?: string; mes?: string
     const status = calcularStatus(c, prazos.get(c.empresa_id) ?? PRAZO_DIA_PADRAO)
     return {
       ...c, status,
-      profissionalNome: p?.nome ?? '—', profissionalDoc: p?.documento ?? '',
+      profissionalNome: String(c.nome ?? '').trim() || p?.nome || c.documento || 'Profissional não identificado', profissionalDoc: c.documento || p?.documento || '',
       empresaNome: e?.apelido || e?.razao_social || '',
     }
   })
@@ -195,49 +197,57 @@ export async function importarPlanilhaComissoes(arquivo: File):
  */
 export async function processarImportacaoComissoes(linhas: LinhaImportComissao[], competencia: string, sobrescrever: boolean):
   Promise<{ gravados: number; atualizados: number; pendencias: number; ignorados: number }> {
-  let gravados = 0, atualizados = 0, pendencias = 0, ignorados = 0
   const empresasNoLote = Array.from(new Set(linhas.map(l => l.empresaId)))
+  const { data: existentes, error: erroLeitura } = await supabase.from('salon_comissoes')
+    .select('id, empresa_id, documento, nome, nota_id')
+    .eq('mes_ref', competencia).in('empresa_id', empresasNoLote)
+  if (erroLeitura) throw new Error(erroLeitura.message)
+
+  const atuais = existentes ?? []
+  const porDocumento = new Map(atuais.filter(x => x.documento).map(x => [x.empresa_id + '|' + x.documento, x]))
+  const pendentesAtuais = new Set(atuais.filter(x => !x.documento).map(x => x.empresa_id + '|' + String(x.nome ?? '').trim().toLocaleLowerCase('pt-BR')))
 
   if (sobrescrever) {
-    // remove a lista anterior NÃO conferida dessas empresas nessa competência
-    for (const eid of empresasNoLote) {
-      await supabase.from('salon_comissoes').delete()
-        .eq('empresa_id', eid).eq('mes_ref', competencia).is('nota_id', null)
-    }
+    const { error } = await supabase.from('salon_comissoes').delete()
+      .eq('mes_ref', competencia).in('empresa_id', empresasNoLote).is('nota_id', null)
+    if (error) throw new Error(error.message)
   }
 
-  for (const l of linhas) {
-    const isPend = !l.documento
-    const payload = {
-      empresa_id: l.empresaId, mes_ref: competencia, documento: l.documento || null,
-      nome: l.nome, valor_comissao: l.valor_comissao, status: 'pendente',
-      pendencia: isPend ? (l.pendencia ?? 'Sem CNPJ') : null,
-    }
+  const validas = linhas.filter(l => l.documento)
+  const incompletas = linhas.filter(l => !l.documento)
+  let gravados = validas.filter(l => !porDocumento.has(l.empresaId + '|' + l.documento)).length
+  let atualizados = sobrescrever ? validas.length - gravados : 0
+  let ignorados = sobrescrever ? 0 : validas.length - gravados
 
-    if (isPend) {
-      if (!sobrescrever) {
-        const { data: ex } = await supabase.from('salon_comissoes').select('id')
-          .eq('empresa_id', l.empresaId).eq('mes_ref', competencia).is('documento', null).eq('nome', l.nome).maybeSingle()
-        if (ex) { ignorados++; continue }
-      }
-      const { error } = await supabase.from('salon_comissoes').insert(payload)
-      if (!error) pendencias++
-      continue
-    }
+  const payloadValidas = validas.map(l => ({
+    empresa_id: l.empresaId, mes_ref: competencia, documento: l.documento,
+    nome: l.nome.trim() || l.documento, valor_comissao: l.valor_comissao,
+    status: 'pendente', pendencia: null,
+  }))
+  const payloadPendencias = incompletas
+    .filter(l => sobrescrever || !pendentesAtuais.has(l.empresaId + '|' + l.nome.trim().toLocaleLowerCase('pt-BR')))
+    .map(l => ({
+      empresa_id: l.empresaId, mes_ref: competencia, documento: null,
+      nome: l.nome.trim() || 'Profissional não identificado', valor_comissao: l.valor_comissao,
+      status: 'pendente', pendencia: l.pendencia ?? 'Sem CNPJ',
+    }))
+  if (!sobrescrever) ignorados += incompletas.length - payloadPendencias.length
 
-    // Válida (tem CNPJ)
-    const { data: exist } = await supabase.from('salon_comissoes').select('id')
-      .eq('empresa_id', l.empresaId).eq('mes_ref', competencia).eq('documento', l.documento).maybeSingle()
-    if (exist) {
-      if (!sobrescrever) { ignorados++; continue }
-      await supabase.from('salon_comissoes').update({ valor_comissao: l.valor_comissao, nome: l.nome, pendencia: null }).eq('id', exist.id)
-      atualizados++
-    } else {
-      const { error } = await supabase.from('salon_comissoes').insert(payload)
-      if (!error) gravados++
-    }
+  const lotes = <T,>(itens: T[], tamanho = 500) =>
+    Array.from({ length: Math.ceil(itens.length / tamanho) }, (_, i) => itens.slice(i * tamanho, (i + 1) * tamanho))
+
+  for (const lote of lotes(payloadValidas)) {
+    const { error } = await supabase.from('salon_comissoes').upsert(lote, {
+      onConflict: 'empresa_id,mes_ref,documento', ignoreDuplicates: !sobrescrever,
+    })
+    if (error) throw new Error(error.message)
   }
-  return { gravados, atualizados, pendencias, ignorados }
+  for (const lote of lotes(payloadPendencias)) {
+    const { error } = await supabase.from('salon_comissoes').insert(lote)
+    if (error) throw new Error(error.message)
+  }
+
+  return { gravados, atualizados, pendencias: payloadPendencias.length, ignorados }
 }
 
 /** Log completo (histórico) com nome do profissional. */
