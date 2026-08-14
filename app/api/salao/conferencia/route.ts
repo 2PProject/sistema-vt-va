@@ -95,6 +95,7 @@ export async function POST(req: Request) {
       case 'marcarDuplicada': { const r = await acoes.marcarDuplicada(admin, notaId, !!dup, usuario); return Response.json(r, { status: r.ok ? 200 : 400 }) }
       case 'observacaoNota': { const r = await acoes.observacaoNota(admin, notaId, texto ?? '', usuario); return Response.json(r, { status: r.ok ? 200 : 400 }) }
       case 'classificarNota': { const r = await acoes.classificarNota(admin, notaId, classificacao, { categoria, observacao: texto, usuario }); return Response.json(r, { status: r.ok ? 200 : 400 }) }
+      case 'setNotaConferida': { const r = await acoes.setNotaConferida(admin, notaId, !!ativo, usuario); return Response.json(r, { status: r.ok ? 200 : 400 }) }
       case 'setAnaliseManual': { const r = await acoes.setAnaliseManual(admin, tipo, tipo === 'nota' ? notaId : comissaoId, !!ativo, motivo, usuario); return Response.json(r, { status: r.ok ? 200 : 400 }) }
       case 'setStatus': { const r = await acoes.setStatusCompetencia(admin, competencia, status, { empresaId: empresaId || undefined, usuario, justificativa }); return Response.json(r, { status: r.ok ? 200 : 400 }) }
       default: return Response.json({ ok: false, erro: `Ação desconhecida: ${acao}` }, { status: 400 })
