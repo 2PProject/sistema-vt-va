@@ -230,22 +230,23 @@ function empresaNomeDe(row: NotaRow): string {
 }
 
 /** Notas de UMA competência (todas as unidades). Filtra no banco. */
-async function notasDaCompetencia(admin: SupabaseClient, competencia: string, soComValor = false): Promise<NotaRow[]> {
+async function notasDaCompetencia(admin: SupabaseClient, competencia: string, soComValor = false, empresaId?: string): Promise<NotaRow[]> {
   return paginado((de, ate) => {
-    let q = admin.from('salon_notas').select(NOTA_COLS).eq('competencia', competencia).order('id', { ascending: true }).range(de, ate)
+    let q = admin.from('salon_notas').select(NOTA_COLS).or(`competencia.eq.${competencia},competencia_conf.eq.${competencia}`).eq('excluida',false).eq('classificacao','profissional').order('id', { ascending: true }).range(de, ate)
+    if (empresaId) q = q.eq('empresa_id', empresaId)
     if (soComValor) q = q.gt('valor', 0)
     return q as unknown as QB
   })
 }
 
 /** Notas de um conjunto de CNPJs (qualquer competência). Filtra no banco. */
-async function notasDosDocumentos(admin: SupabaseClient, docs: string[]): Promise<NotaRow[]> {
+async function notasDosDocumentos(admin: SupabaseClient, docs: string[], empresaId?: string): Promise<NotaRow[]> {
   if (docs.length === 0) return []
   const out: NotaRow[] = []
   for (let i = 0; i < docs.length; i += 200) {           // .in() em blocos
     const lote = docs.slice(i, i + 200)
     const parte = await paginado((de, ate) =>
-      admin.from('salon_notas').select(NOTA_COLS).in('documento', lote).order('id', { ascending: true }).range(de, ate) as unknown as QB)
+      (() => { let q=admin.from('salon_notas').select(NOTA_COLS).in('documento', lote).eq('excluida',false).eq('classificacao','profissional').order('id',{ascending:true}).range(de,ate);if(empresaId)q=q.eq('empresa_id',empresaId);return q as unknown as QB })())
     out.push(...parte)
   }
   return out
@@ -382,7 +383,7 @@ export async function carregar(admin: SupabaseClient, competencia: string, empre
   const pendentes = coms.filter((c) => !c.nota_id && !c.pendencia).map(mapEsp)
 
   // Notas do mês (filtradas no banco) + vínculos do mês
-  const notasMes = await notasDaCompetencia(admin, competencia)
+  const notasMes = await notasDaCompetencia(admin, competencia, false, empresaId)
   const usadasNoMes = await notasUsadas(admin, competencia)
 
   const semVinculo: NotaLivre[] = notasMes
@@ -391,7 +392,7 @@ export async function carregar(admin: SupabaseClient, competencia: string, empre
 
   // Notas dos CNPJs pendentes (qualquer mês) — para a dica e a distribuição.
   const pendDocs = Array.from(new Set(pendentes.map((p) => dig(p.documento)).filter(Boolean)))
-  const notasPend = (await notasDosDocumentos(admin, pendDocs)).filter((n) => !n.excluida)
+  const notasPend = await notasDosDocumentos(admin, pendDocs, empresaId)
 
   // Índices
   const porDocPend = new Map<string, NotaRow[]>()
@@ -465,7 +466,7 @@ export async function carregar(admin: SupabaseClient, competencia: string, empre
 export async function consultar(admin: SupabaseClient, f: Filtros, ord: Ordenacao, pagina: number, tamanho: number): Promise<ConsultaResultado> {
   const competencia = f.competencia
   const coms = await comissoesDaCompetencia(admin, competencia, f.empresaId)
-  const notasMesTodas = await notasDaCompetencia(admin, competencia)
+  const notasMesTodas = await notasDaCompetencia(admin, competencia, false, f.empresaId)
   const notasMes = notasMesTodas.filter((n) => !n.excluida)
 
   // Notas vinculadas (detalhe, inclusive de outra competência)
@@ -478,7 +479,7 @@ export async function consultar(admin: SupabaseClient, f: Filtros, ord: Ordenaca
 
   // Notas dos CNPJs pendentes (qualquer mês) — sugestões e distribuição
   const pendDocs = Array.from(new Set(coms.filter((c) => !c.nota_id && c.documento).map((c) => dig(c.documento))))
-  const notasPend = (await notasDosDocumentos(admin, pendDocs)).filter((n) => !n.excluida)
+  const notasPend = await notasDosDocumentos(admin, pendDocs, f.empresaId)
   const usadasGlobal = await notasUsadas(admin)
   const usadasNoMes = await notasUsadas(admin, competencia)
 
