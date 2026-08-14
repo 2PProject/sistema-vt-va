@@ -1,99 +1,84 @@
-// Consulta exclusiva de NFS-e RECEBIDAS (serviços tomados) no ISS-DF.
-// SERVER-ONLY: SOAP + mTLS com o certificado A1 já cadastrado.
-import https from 'https'
+// NFS-e RECEBIDAS (serviços tomados) do ISS-DF — SERVER-ONLY.
+//
+// POR QUE MUDOU: o DF migrou para a NFS-e NACIONAL. Nesse padrão, nota recebida
+// NÃO se consulta por SOAP (ABRASF). Ela é DISTRIBUÍDA pelo ADN nacional
+// (GET /contribuintes/DFe/{NSU}) ao titular do certificado sempre que ele é o
+// TOMADOR. Enviar um `ConsultarNfseServicoTomado`/`<cabecalho versao=...>` ao
+// endpoint nacional dá E183 (cabeçalho fora do padrão) e E160 (fora do XSD),
+// porque essa operação/schema não existem no padrão nacional.
+//
+// Portanto, reutilizamos o MESMO mecanismo mTLS + ADN do sync nacional (adn.ts),
+// filtrando as notas do DF (município 5300108) no período. Zero XML montado à mão.
+import type { SupabaseClient } from '@supabase/supabase-js'
+import { agenteMTLS, consultarADN } from './adn'
+
+// Código IBGE do único município do Distrito Federal (Brasília).
+export const MUNICIPIO_DF = '5300108'
+export const municipioDaChave = (chave?: string | null) => (chave || '').replace(/\D/g, '').slice(0, 7)
 
 export type NotaIssDf = {
   chave: string; documento: string; emitenteNome: string; numero: string
   dataEmissao: string; competencia: string; valor: number
 }
-export type ResultadoIssDf = { notas: NotaIssDf[]; paginas: number; status: number; mensagens: string[] }
-
-const endpoint = () => (process.env.SALON_ISSDF_URL || 'https://nfse.fazenda.df.gov.br/wsnfsenacional/nfse.asmx').replace(/\/$/, '')
-const wsdlNs = () => process.env.SALON_ISSDF_WSDL_NS || 'http://www.sped.fazenda.gov.br/nfse'
-const soapAction = () => process.env.SALON_ISSDF_SOAP_ACTION || `${wsdlNs()}/ConsultarNfseServicoTomado`
-const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-const unesc = (s: string) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&')
-const tag = (xml: string, nome: string) => xml.match(new RegExp(`<[\\w:]*${nome}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/[\\w:]*${nome}>`, 'i'))?.[1]?.trim() || ''
-const blocos = (xml: string, nome: string) => [...xml.matchAll(new RegExp(`<[\\w:]*${nome}(?:\\s[^>]*)?>[\\s\\S]*?<\\/[\\w:]*${nome}>`, 'gi'))].map(m => m[0])
-const doc = (xml: string) => (tag(xml, 'CNPJ') || tag(xml, 'CPF')).replace(/\D/g, '')
-const numero = (xml: string) => tag(xml, 'nNFSe') || tag(xml, 'nDFSe') || tag(xml, 'Numero')
-const data = (xml: string) => (tag(xml, 'dhEmi') || tag(xml, 'dhProc') || tag(xml, 'DataEmissao')).slice(0, 10)
-const valor = (xml: string) => Number((tag(xml, 'vLiq') || tag(xml, 'vServ') || tag(xml, 'ValorServicos') || '0').replace(',', '.')) || 0
-
-function dados(cnpj: string, inscricao: string, inicio: string, fim: string, pagina: number) {
-  const ns = 'http://www.sped.fazenda.gov.br/nfse'
-  // Padrão nacional RTC vigente no DF desde 02/08/2026. Neste schema,
-  // tcIdentificacaoPessoaEmpresa usa CNPJ/CPF e IM diretamente.
-  const identificacao = `<CNPJ>${cnpj}</CNPJ><IM>${esc(inscricao)}</IM>`
-  const filtros = `<Consulente>${identificacao}</Consulente><PeriodoEmissao><DataInicial>${inicio}</DataInicial><DataFinal>${fim}</DataFinal></PeriodoEmissao><Tomador>${identificacao}</Tomador><Pagina>${pagina}</Pagina>`
-  return `<ConsultarNfseServicoTomadoEnvio xmlns="${ns}" xmlns:ns2="http://www.w3.org/2000/09/xmldsig#">${filtros}</ConsultarNfseServicoTomadoEnvio>`
+export type ResultadoIssDf = {
+  encontradas: number; gravadas: number; existentes: number; noPeriodoDf: number
+  paginas: number; status: number; novoNsu: number; houveMais: boolean; mensagens: string[]
 }
-function envelope(cnpj: string, inscricao: string, inicio: string, fim: string, pagina: number) {
-  const cab = '<cabecalho versao="1.01" xmlns="http://www.sped.fazenda.gov.br/nfse"><versaoDados>1.01</versaoDados></cabecalho>'
-  const xml = dados(cnpj, inscricao, inicio, fim, pagina)
-  return `<?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body><ConsultarNfseServicoTomado xmlns="${wsdlNs()}"><nfseCabecMsg>${esc(cab)}</nfseCabecMsg><nfseDadosMsg>${esc(xml)}</nfseDadosMsg></ConsultarNfseServicoTomado></soap:Body></soap:Envelope>`
-}
-function post(agent: https.Agent, corpo: string): Promise<{ status: number; corpo: string }> {
-  return new Promise((resolve, reject) => {
-    const u = new URL(endpoint())
-    const req = https.request(u, { method: 'POST', agent, timeout: 30000, headers: {
-      'content-type': 'text/xml; charset=utf-8', SOAPAction: `"${soapAction()}"`, 'content-length': Buffer.byteLength(corpo),
-    }}, res => {
-      const partes: Buffer[] = []; res.on('data', p => partes.push(Buffer.from(p)))
-      res.on('end', () => resolve({ status: res.statusCode || 0, corpo: Buffer.concat(partes).toString('utf8') }))
+
+/**
+ * Sincroniza as notas RECEBIDAS via ADN nacional (incremental por NSU, com o
+ * mesmo cursor do sync nacional) e grava em salon_notas. Devolve um resumo e
+ * quantas notas do DF existem no período. Chame de novo enquanto `houveMais`.
+ */
+export async function sincronizarRecebidasIssDf(admin: SupabaseClient, params: {
+  empresaId: string; pfxBase64: string; senha: string; cnpj: string; inicio: string; fim: string; maxLotes?: number
+}): Promise<ResultadoIssDf> {
+  const agent = agenteMTLS(params.pfxBase64, params.senha)
+  const cnpj = params.cnpj.replace(/\D/g, '')
+  const raiz = cnpj.slice(0, 8)
+
+  const { data: syncRow } = await admin.from('salon_nfse_sync').select('ultimo_nsu').eq('empresa_id', params.empresaId).maybeSingle()
+  let nsu = syncRow?.ultimo_nsu ?? 0
+  const maxLotes = params.maxLotes ?? 8
+  let status = 0, paginas = 0, houveMais = false, gravadas = 0, encontradas = 0
+  const mensagens: string[] = []
+
+  for (let lote = 0; lote < maxLotes; lote++) {
+    const r = await consultarADN({ agent, cnpj, ultimoNsu: nsu, maxPaginas: 6 })
+    status = r.status; paginas += r.paginas; nsu = r.ultimoNsu
+    encontradas += r.notas.length
+
+    // recebidas e válidas: valor > 0 e não emitidas pela própria empresa (mesma raiz)
+    const recebidas = r.notas.filter((n) => {
+      if (!(Number(n.valor) > 0)) return false
+      const emit = (n.prestadorDoc || '').replace(/\D/g, '')
+      return !(raiz && emit.length === 14 && emit.slice(0, 8) === raiz)
     })
-    req.on('timeout', () => req.destroy(new Error('Tempo limite ao consultar o ISS-DF.')))
-    req.on('error', reject); req.end(corpo)
-  })
-}
-function interpretar(soap: string): { notas: NotaIssDf[]; mensagens: string[] } {
-  const saida = unesc(tag(soap, 'ConsultarNfseServicoTomadoResult') || tag(soap, 'outputXML') || soap)
-  const mensagens = blocos(saida, 'MensagemRetorno').map(x => [tag(x, 'Codigo'), tag(x, 'Mensagem'), tag(x, 'Correcao')].filter(Boolean).join(' - '))
-  const itens = blocos(saida, 'CompNfse')
-  const notas = itens.map(item => {
-    const nf = blocos(item, 'NFSe')[0] || item
-    const prest = blocos(nf, 'emit')[0] || blocos(nf, 'PrestadorServico')[0] || blocos(nf, 'Prestador')[0] || nf
-    const emissao = data(nf)
-    const compet = (tag(nf, 'dCompet') || tag(nf, 'Competencia') || emissao).slice(0, 7)
-    const chave = (nf.match(/<[\w:]*infNFSe[^>]*\bId="([^"]+)"/i)?.[1] || tag(nf, 'chNFSe') || '').trim()
-    return { chave, documento: doc(prest), emitenteNome: tag(prest, 'xNome') || tag(prest, 'RazaoSocial'), numero: numero(nf), dataEmissao: emissao, competencia: compet, valor: valor(nf) }
-  }).filter(n => n.numero || n.chave)
-  return { notas, mensagens }
-}
-function periodosMensais(inicio: string, fim: string) {
-  const partes: { inicio: string; fim: string }[] = []
-  let [ano, mes] = inicio.split('-').map(Number)
-  const limite = new Date(`${fim}T12:00:00`)
-  while (new Date(ano, mes - 1, 1) <= limite && partes.length < 120) {
-    const primeiro = `${ano}-${String(mes).padStart(2, '0')}-01`
-    const ultimo = new Date(ano, mes, 0)
-    const ultimoStr = `${ultimo.getFullYear()}-${String(ultimo.getMonth() + 1).padStart(2, '0')}-${String(ultimo.getDate()).padStart(2, '0')}`
-    partes.push({ inicio: primeiro < inicio ? inicio : primeiro, fim: ultimoStr > fim ? fim : ultimoStr })
-    mes++; if (mes > 12) { mes = 1; ano++ }
-  }
-  return partes
-}
-
-export async function consultarRecebidasIssDf(params: { pfxBase64: string; senha: string; cnpj: string; inscricaoMunicipal: string; inicio: string; fim: string; maxPaginas?: number }): Promise<ResultadoIssDf> {
-  const agent = new https.Agent({ pfx: Buffer.from(params.pfxBase64, 'base64'), passphrase: params.senha, keepAlive: true, /* ISSNet legado entrega cadeia TLS incompleta; limitar esta exceção a este cliente dedicado. */ rejectUnauthorized: process.env.SALON_ISSDF_REJECT_UNAUTHORIZED === '1' })
-  const todas: NotaIssDf[] = []; const mensagens: string[] = []; let status = 0, paginas = 0
-  for (const periodo of periodosMensais(params.inicio, params.fim)) {
-    for (let pagina = 1; pagina <= (params.maxPaginas || 40); pagina++) {
-      const corpo = envelope(params.cnpj.replace(/\D/g, ''), params.inscricaoMunicipal, periodo.inicio, periodo.fim, pagina)
-      const r = await post(agent, corpo)
-      status = r.status; paginas++
-      if (r.status === 403) throw new Error('O ISS-DF recusou o certificado A1 no endpoint nacional (HTTP 403). Verifique se o certificado é e-CNPJ ICP-Brasil válido da empresa, matriz ou filial da mesma raiz, e se o primeiro acesso foi liberado no portal ISS-DF.')
-      if (r.status >= 400) {
-        const fault = tag(r.corpo, 'faultstring') || tag(r.corpo, 'Message') || r.corpo.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
-        throw new Error(`ISS-DF respondeu HTTP ${r.status}: ${fault.slice(0, 1200)}`)
-      }
-      const x = interpretar(r.corpo)
-      todas.push(...x.notas)
-      mensagens.push(...x.mensagens.filter(m => !/^E212\b/i.test(m)))
-      if (x.notas.length < 50 || x.mensagens.some(m => /^E212\b/i.test(m))) break
+    if (recebidas.length) {
+      const payload = recebidas.map((n) => ({
+        empresa_id: params.empresaId, nsu: n.nsu, chave: n.chave || null,
+        documento: n.prestadorDoc || null, emitente_nome: n.prestadorNome || null,
+        numero: n.numero || null, valor: n.valor, data_emissao: n.dataEmissao || null,
+        competencia: n.competencia || null,
+      }))
+      const { error, count } = await admin.from('salon_notas').upsert(payload, { onConflict: 'empresa_id,nsu', count: 'exact' })
+      if (error) throw new Error(`Erro ao gravar notas: ${error.message}`)
+      gravadas += count ?? payload.length
     }
-  }
-  const unicas = new Map(todas.map(n => [n.chave || `${n.documento}|${n.numero}|${n.dataEmissao}|${n.valor}`, n]))
-  return { notas: [...unicas.values()], paginas, status, mensagens: [...new Set(mensagens)] }
-}
 
+    if (r.rateLimited) { mensagens.push('O gov.br limitou as requisições (429). Rode novamente para continuar de onde parou.'); houveMais = true; break }
+    if (!r.houveMais) { houveMais = false; break }
+    if (lote === maxLotes - 1) houveMais = true
+  }
+
+  await admin.from('salon_nfse_sync').upsert({ empresa_id: params.empresaId, ultimo_nsu: nsu, ultima_sync: new Date().toISOString() })
+
+  // Quantas notas do DF (município 5300108) há no período — para a UI.
+  const { count: noPeriodoDf } = await admin.from('salon_notas')
+    .select('id', { count: 'exact', head: true })
+    .eq('empresa_id', params.empresaId)
+    .gte('data_emissao', params.inicio).lte('data_emissao', params.fim)
+    .like('chave', `${MUNICIPIO_DF}%`)
+
+  return { encontradas, gravadas, existentes: encontradas - gravadas, noPeriodoDf: noPeriodoDf ?? 0, paginas, status, novoNsu: nsu, houveMais, mensagens }
+}
