@@ -101,6 +101,7 @@ const secoesSalao: { title: string; items: Item[] }[] = SALAO_ENABLED ? [
       { href: '/salao/importar', label: 'Importar Planilha', icon: ICON.pagamento },
       { href: '/salao/certificados', label: 'Certificados', icon: ICON.cargo },
       { href: '/salao/relatorios', label: 'Relatórios', icon: ICON.recibo },
+      { href: '/salao/auditoria', label: 'Histórico / Excluídas', icon: ICON.recibo },
     ],
   },
 ] : []
