@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import LayoutAdmin from '../../components/LayoutAdmin'
 import { supabase, Empresa } from '../../lib/supabase'
@@ -77,7 +78,7 @@ export default function SalaoPainelPage() {
 
   return (
     <LayoutAdmin title="Salão — Controle de NFS-e">
-      <div className="space-y-6">
+      <div className="space-y-4">
         {msg && (
           <div className={`px-4 py-3 rounded-lg text-sm flex justify-between items-center ${msgTipo === 'ok' ? 'bg-green-50 border border-green-200 text-green-700' : 'bg-red-50 border border-red-200 text-red-700'}`}>
             <span>{msg}</span>
@@ -85,8 +86,28 @@ export default function SalaoPainelPage() {
           </div>
         )}
 
-        {/* Cards de resumo */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <section className="overflow-hidden rounded-2xl bg-gradient-to-br from-slate-950 via-slate-900 to-blue-950 text-white shadow-lg">
+          <div className="grid gap-5 p-5 lg:grid-cols-[1.35fr_1fr] lg:p-6">
+            <div>
+              <span className="rounded-full border border-white/15 bg-white/10 px-3 py-1 text-xs font-medium">Central NFS-e · {fmtMes(mes)}</span>
+              <h1 className="mt-4 text-2xl font-bold tracking-tight">Visão operacional do Salão</h1>
+              <p className="mt-1 max-w-xl text-sm text-slate-300">Acompanhe o que chegou, ataque as pendências e finalize a conferência sem navegar por telas desnecessárias.</p>
+              <div className="mt-5">
+                <div className="mb-2 flex justify-between text-xs"><span>Conferência da competência</span><strong>{resumo.percentualRecebidas}% concluída</strong></div>
+                <div className="h-2 overflow-hidden rounded-full bg-white/15"><div className="h-full rounded-full bg-emerald-400 transition-all" style={{width:`${Math.min(100,resumo.percentualRecebidas)}%`}} /></div>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Link href="/salao/notas" className="rounded-xl border border-white/10 bg-white/10 p-3 transition hover:bg-white/15"><span className="block text-sm font-semibold">Notas baixadas</span><span className="text-xs text-slate-300">Consultar e corrigir</span></Link>
+              <Link href="/salao/conferencia" className="rounded-xl bg-blue-600 p-3 transition hover:bg-blue-500"><span className="block text-sm font-semibold">Conferir agora</span><span className="text-xs text-blue-100">{resumo.pendentes} pendência(s)</span></Link>
+              <Link href="/salao/outros-servicos" className="rounded-xl border border-white/10 bg-white/10 p-3 transition hover:bg-white/15"><span className="block text-sm font-semibold">Outros serviços</span><span className="text-xs text-slate-300">Notas classificadas</span></Link>
+              <Link href="/salao/relatorios" className="rounded-xl border border-white/10 bg-white/10 p-3 transition hover:bg-white/15"><span className="block text-sm font-semibold">Relatórios</span><span className="text-xs text-slate-300">Analisar e exportar</span></Link>
+            </div>
+          </div>
+        </section>
+
+                {/* Cards de resumo */}
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           <div className="card">
             <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">Profissionais</p>
             <p className="text-2xl font-bold text-gray-800 mt-1">{resumo.totalProfissionais}</p>
@@ -107,7 +128,8 @@ export default function SalaoPainelPage() {
         </div>
 
         {/* Filtros */}
-        <div className="card">
+        <div className="card border-slate-200 shadow-sm">
+          <div className="mb-3 flex items-center justify-between"><div><h2 className="text-sm font-semibold text-slate-800">Filtros do painel</h2><p className="text-xs text-slate-500">Atualização automática da competência selecionada.</p></div>{loading&&<span className="text-xs font-medium text-blue-600">Atualizando…</span>}</div>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div className="md:col-span-2">
               <label className="label-field">Empresa</label>
