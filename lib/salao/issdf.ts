@@ -29,7 +29,8 @@ function dados(cnpj: string, inscricao: string, inicio: string, fim: string, pag
   return `<ConsultarNfseServicoTomadoEnvio xmlns="${ns}" xmlns:ns2="http://www.w3.org/2000/09/xmldsig#">${filtros}</ConsultarNfseServicoTomadoEnvio>`
 }
 function envelope(cnpj: string, inscricao: string, inicio: string, fim: string, pagina: number) {
-  // Consultas não possuem o grupo IBSCBS; o manual v1.01 determina cabeçalho 1.00 nesse caso.\n  const cab = '<cabecalho versao="1.00" xmlns="http://www.sped.fazenda.gov.br/nfse"><versaoDados>1.00</versaoDados></cabecalho>'
+  // Consultas não possuem o grupo IBSCBS; o manual v1.01 determina cabeçalho 1.00 nesse caso.
+  const cab = '<cabecalho versao="1.00" xmlns="http://www.sped.fazenda.gov.br/nfse"><versaoDados>1.00</versaoDados></cabecalho>'
   const xml = dados(cnpj, inscricao, inicio, fim, pagina)
   return `<?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body><ConsultarNfseServicoTomado xmlns="${wsdlNs()}"><nfseCabecMsg>${cab}</nfseCabecMsg><nfseDadosMsg>${xml}</nfseDadosMsg></ConsultarNfseServicoTomado></soap:Body></soap:Envelope>`
 }
