@@ -9,7 +9,7 @@ export type NotaIssDf = {
 export type ResultadoIssDf = { notas: NotaIssDf[]; paginas: number; status: number; mensagens: string[] }
 
 const endpoint = () => (process.env.SALON_ISSDF_URL || 'https://nfse.fazenda.df.gov.br/wsnfsenacional/nfse.asmx').replace(/\/$/, '')
-const wsdlNs = () => process.env.SALON_ISSDF_WSDL_NS || 'http://nfse.abrasf.org.br'
+const wsdlNs = () => process.env.SALON_ISSDF_WSDL_NS || 'http://www.sped.fazenda.gov.br/nfse'
 const soapAction = () => process.env.SALON_ISSDF_SOAP_ACTION || `${wsdlNs()}/ConsultarNfseServicoTomado`
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 const unesc = (s: string) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&')
@@ -29,7 +29,7 @@ function dados(cnpj: string, inscricao: string, inicio: string, fim: string, pag
   return `<ConsultarNfseServicoTomadoEnvio xmlns="${ns}" xmlns:ns2="http://www.w3.org/2000/09/xmldsig#">${filtros}</ConsultarNfseServicoTomadoEnvio>`
 }
 function envelope(cnpj: string, inscricao: string, inicio: string, fim: string, pagina: number) {
-  const cab = '<cabecalho versao="1.00" xmlns="http://www.sped.fazenda.gov.br/nfse"><versaoDados>1.00</versaoDados></cabecalho>'
+  const cab = '<cabecalho versao="1.01" xmlns="http://www.sped.fazenda.gov.br/nfse"><versaoDados>1.01</versaoDados></cabecalho>'
   const xml = dados(cnpj, inscricao, inicio, fim, pagina)
   return `<?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body><ConsultarNfseServicoTomado xmlns="${wsdlNs()}"><nfseCabecMsg>${esc(cab)}</nfseCabecMsg><nfseDadosMsg>${esc(xml)}</nfseDadosMsg></ConsultarNfseServicoTomado></soap:Body></soap:Envelope>`
 }
@@ -83,7 +83,10 @@ export async function consultarRecebidasIssDf(params: { pfxBase64: string; senha
       const r = await post(agent, corpo)
       status = r.status; paginas++
       if (r.status === 403) throw new Error('O ISS-DF recusou o certificado A1 no endpoint nacional (HTTP 403). Verifique se o certificado é e-CNPJ ICP-Brasil válido da empresa, matriz ou filial da mesma raiz, e se o primeiro acesso foi liberado no portal ISS-DF.')
-      if (r.status >= 400) throw new Error(`ISS-DF respondeu HTTP ${r.status}: ${r.corpo.slice(0, 300)}`)
+      if (r.status >= 400) {
+        const fault = tag(r.corpo, 'faultstring') || tag(r.corpo, 'Message') || r.corpo.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+        throw new Error(`ISS-DF respondeu HTTP ${r.status}: ${fault.slice(0, 1200)}`)
+      }
       const x = interpretar(r.corpo)
       todas.push(...x.notas)
       mensagens.push(...x.mensagens.filter(m => !/^E212\b/i.test(m)))
