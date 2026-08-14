@@ -6,7 +6,7 @@ import type { Esperada, NotaLivre, Diagnostico, LinhaConsulta, Indicadores, Filt
 export type { Esperada, NotaLivre, Diagnostico, LinhaConsulta, Indicadores, Filtros, Ordenacao, ConsultaResultado, Situacao } from './conferencia-core'
 
 export const SITUACAO_LABEL: Record<Situacao, string> = {
-  conferido: 'Conferido', divergencia_valor: 'Divergência de valor', sem_nota: 'Sem nota',
+  conferido: 'Conferido', conferido_com_divergencia: 'Conferido com divergência', divergencia_valor: 'Divergência de valor', sem_nota: 'Sem nota',
   nota_sem_vinculo: 'Nota sem vínculo', falta_cnpj: 'Falta CNPJ', cnpj_invalido: 'CNPJ inválido',
   nota_outra_empresa: 'Nota de outra empresa', possivel_duplicidade: 'Possível duplicidade',
   vinculo_sugerido: 'Vínculo sugerido', aguardando_confirmacao: 'Aguardando confirmação',
