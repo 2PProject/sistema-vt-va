@@ -62,13 +62,13 @@ export default function SalaoPainelPage() {
     const termo = busca.trim().toLocaleLowerCase('pt-BR')
     const peso: Record<StatusComissao, number> = { fora_prazo: 1, pendente: 2, recebida: 3 }
     return linhas.filter(l => (!statusFiltro || l.status === statusFiltro) && (!termo ||
-      l.profissionalNome.toLocaleLowerCase('pt-BR').includes(termo) ||
-      l.profissionalDoc.includes(termo) || (l.empresaNome ?? '').toLocaleLowerCase('pt-BR').includes(termo)))
+      String(l.profissionalNome || '').toLocaleLowerCase('pt-BR').includes(termo) ||
+      String(l.profissionalDoc || '').includes(termo) || (l.empresaNome ?? '').toLocaleLowerCase('pt-BR').includes(termo)))
       .sort((a, b) => ordem === 'nome'
-        ? a.profissionalNome.localeCompare(b.profissionalNome, 'pt-BR')
+        ? String(a.profissionalNome || '').localeCompare(String(b.profissionalNome || ''), 'pt-BR')
         : ordem === 'competencia' ? a.mes_ref.localeCompare(b.mes_ref)
         : ordem === 'valor' ? b.valor_comissao - a.valor_comissao
-        : peso[a.status] - peso[b.status] || a.profissionalNome.localeCompare(b.profissionalNome, 'pt-BR'))
+        : peso[a.status] - peso[b.status] || String(a.profissionalNome || '').localeCompare(String(b.profissionalNome || ''), 'pt-BR'))
   }, [linhas, statusFiltro, busca, ordem])
   const resumo = useMemo(() => resumoDoMes(filtradas), [filtradas])
   const periodoLabel = mesInicio === mesFim ? fmtMes(mesInicio) : `${fmtMes(mesInicio)} a ${fmtMes(mesFim)}`
