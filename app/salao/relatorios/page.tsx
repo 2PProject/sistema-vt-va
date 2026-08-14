@@ -10,7 +10,7 @@ import { exportarExcel,exportarPDF,type Coluna } from '../../../lib/salao/relato
 import { formatarMoeda,MESES } from '../../../utils/calculoVT'
 
 type Tipo='pendencias'|'sem_nota'|'sem_profissional'|'divergencias'|'analise'|'outros'|'completa'|'comparativo'
-type Row=Partial<LinhaConsulta>&{id?:string;nome?:string|null;documento?:string|null;empresaNome?:string;mes_ref?:string;situacao?:string;nf_valor?:number|null;nf_numero?:string|null;valor_comissao?:number|null;diferenca?:number|null;analise_manual?:boolean}
+type Row=Omit<Partial<LinhaConsulta>,'situacao'>&{id?:string;nome?:string|null;documento?:string|null;empresaNome?:string;mes_ref?:string;situacao?:string;nf_valor?:number|null;nf_numero?:string|null;valor_comissao?:number|null;diferenca?:number|null;analise_manual?:boolean}
 type Pacote={linhas:Row[];outros:Row[];meses:{mes:string;ind:Indicadores}[]}
 const TIPOS:{v:Tipo;l:string;d:string}[]=[
  {v:'pendencias',l:'Pendências',d:'Tudo que exige ação'},
