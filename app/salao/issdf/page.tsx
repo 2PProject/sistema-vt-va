@@ -8,6 +8,11 @@ import { formatarMoeda } from '../../../utils/calculoVT'
 
 type Nota={id:string;emitente_nome:string|null;documento:string|null;numero:string|null;data_emissao:string|null;competencia:string|null;valor:number|null}
 type Resultado={empresa?:string;encontradas:number;gravadas:number;existentes:number;paginas:number;mensagens?:string[]}
+const INSCRICAO_POR_CNPJ:Record<string,string>={
+ '47837512000170':'0816355100107',
+ '17707344000138':'0763624900153',
+ '45161922000119':'0811368300109',
+}
 function hoje(){return new Intl.DateTimeFormat('en-CA',{timeZone:'America/Sao_Paulo',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date())}
 function mesAtual(){const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`}
 function primeiroDia(m:string){return `${m}-01`}
@@ -27,7 +32,7 @@ export default function IssDfPage(){
   {msg&&<div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">{msg}</div>}
   <section className="overflow-hidden rounded-2xl bg-gradient-to-br from-slate-950 to-blue-950 p-5 text-white shadow-lg">
    <div className="flex flex-wrap items-end gap-3"><div className="mr-auto max-w-xl"><span className="rounded-full bg-blue-500/20 px-3 py-1 text-xs text-blue-200">Base histórica ABRASF 2.04</span><h1 className="mt-3 text-xl font-bold">Notas recebidas no ISS-DF</h1><p className="mt-1 text-sm text-slate-300">Busca exclusivamente serviços tomados pela unidade no mês selecionado. Nenhuma nota emitida pela empresa é importada.</p></div>
-   <div className="min-w-56"><label className="block text-xs text-slate-300">Unidade / tomador</label><select className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-sm" value={empresaId} onChange={e=>setEmpresaId(e.target.value)}><option value="">Selecione</option>{empresas.map(e=><option key={e.id} value={e.id}>{e.apelido||e.razao_social}</option>)}</select></div><div><label className="block text-xs text-slate-300">Inscrição municipal</label><input className="mt-1 w-40 rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-sm" inputMode="numeric" placeholder="CF/DF" value={inscricaoMunicipal} onChange={e=>setInscricaoMunicipal(e.target.value.replace(/\D/g,''))}/></div>
+   <div className="min-w-56"><label className="block text-xs text-slate-300">Unidade / tomador</label><select className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-sm" value={empresaId} onChange={e=>{const id=e.target.value;setEmpresaId(id);const empresa=empresas.find(x=>x.id===id);const cnpj=String((empresa as Empresa&{cnpj?:string})?.cnpj||'').replace(/\D/g,'');setInscricaoMunicipal(INSCRICAO_POR_CNPJ[cnpj]||'')}}><option value="">Selecione</option>{empresas.map(e=><option key={e.id} value={e.id}>{e.apelido||e.razao_social}</option>)}</select></div><div><label className="block text-xs text-slate-300">Inscrição municipal</label><input className="mt-1 w-40 rounded-lg border border-slate-600 bg-slate-700 px-3 py-2 text-sm text-slate-200" inputMode="numeric" placeholder="Preenchida pela unidade" value={inscricaoMunicipal} readOnly/></div>
    <div><label className="block text-xs text-slate-300">Mês da consulta</label><input type="month" max={mesAtual()} className="mt-1 rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-sm" value={mes} onChange={e=>setMes(e.target.value)}/></div><button onClick={sincronizar} disabled={sync||!empresaId} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold hover:bg-blue-500 disabled:opacity-50">{sync?'Consultando ISS-DF…':'Buscar notas recebidas'}</button></div>
   </section>
   {resultado&&<section className="grid grid-cols-2 gap-2 md:grid-cols-4"><Kpi l="Encontradas no ISS-DF" v={resultado.encontradas}/><Kpi l="Novas incluídas" v={resultado.gravadas} cor="emerald"/><Kpi l="Já existentes" v={resultado.existentes}/><Kpi l="Páginas consultadas" v={resultado.paginas}/></section>}
