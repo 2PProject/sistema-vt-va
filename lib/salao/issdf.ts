@@ -28,7 +28,7 @@ function dados(cnpj: string, inscricao: string, inicio: string, fim: string, pag
   const filtros = `<Consulente><CpfCnpj><Cnpj>${cnpj}</Cnpj></CpfCnpj><InscricaoMunicipal>${esc(inscricao)}</InscricaoMunicipal></Consulente><PeriodoEmissao><DataInicial>${inicio}</DataInicial><DataFinal>${fim}</DataFinal></PeriodoEmissao><Tomador><CpfCnpj><Cnpj>${cnpj}</Cnpj></CpfCnpj><InscricaoMunicipal>${esc(inscricao)}</InscricaoMunicipal></Tomador><Pagina>${pagina}</Pagina>`
   return `<ConsultarNfseServicoTomadoEnvio xmlns="${ns}">${filtros}</ConsultarNfseServicoTomadoEnvio>`
 }
-async function envelope(pfxBase64: string, senha: string, cnpj: string, inscricao: string, inicio: string, fim: string, pagina: number) {
+function envelope(cnpj: string, inscricao: string, inicio: string, fim: string, pagina: number) {
   const cab = '<cabecalho versao="1.00" xmlns="http://www.abrasf.org.br/nfse.xsd"><versaoDados>2.04</versaoDados></cabecalho>'
   const xml = dados(cnpj, inscricao, inicio, fim, pagina)
   return `<?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body><ConsultarNfseServicoTomado xmlns="${wsdlNs()}"><nfseCabecMsg>${esc(cab)}</nfseCabecMsg><nfseDadosMsg>${esc(xml)}</nfseDadosMsg></ConsultarNfseServicoTomado></soap:Body></soap:Envelope>`
@@ -79,7 +79,7 @@ export async function consultarRecebidasIssDf(params: { pfxBase64: string; senha
   const todas: NotaIssDf[] = []; const mensagens: string[] = []; let status = 0, paginas = 0
   for (const periodo of periodosMensais(params.inicio, params.fim)) {
     for (let pagina = 1; pagina <= (params.maxPaginas || 40); pagina++) {
-      const corpo = await envelope(params.pfxBase64, params.senha, params.cnpj.replace(/\D/g, ''), params.inscricaoMunicipal, periodo.inicio, periodo.fim, pagina)
+      const corpo = envelope(params.cnpj.replace(/\D/g, ''), params.inscricaoMunicipal, periodo.inicio, periodo.fim, pagina)
       const r = await post(agent, corpo)
       status = r.status; paginas++
       if (r.status >= 400) throw new Error(`ISS-DF respondeu HTTP ${r.status}: ${r.corpo.slice(0, 300)}`)
