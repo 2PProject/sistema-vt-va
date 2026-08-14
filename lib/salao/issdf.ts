@@ -8,8 +8,8 @@ export type NotaIssDf = {
 }
 export type ResultadoIssDf = { notas: NotaIssDf[]; paginas: number; status: number; mensagens: string[] }
 
-const endpoint = () => (process.env.SALON_ISSDF_URL || 'https://df.issnetonline.com.br/webservicenfse204/nfse.asmx').replace(/\/$/, '')
-const wsdlNs = () => process.env.SALON_ISSDF_WSDL_NS || 'http://nfse.abrasf.org.br'
+const endpoint = () => (process.env.SALON_ISSDF_URL || 'https://iss.fazenda.df.gov.br/wsnfsenacional/nfse.asmx').replace(/\/$/, '')
+const wsdlNs = () => process.env.SALON_ISSDF_WSDL_NS || 'http://www.sped.fazenda.gov.br/nfse'
 const soapAction = () => process.env.SALON_ISSDF_SOAP_ACTION || `${wsdlNs()}/ConsultarNfseServicoTomado`
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 const unesc = (s: string) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&')
@@ -21,15 +21,15 @@ const data = (xml: string) => (tag(xml, 'dhEmi') || tag(xml, 'dhProc') || tag(xm
 const valor = (xml: string) => Number((tag(xml, 'vLiq') || tag(xml, 'vServ') || tag(xml, 'ValorServicos') || '0').replace(',', '.')) || 0
 
 function dados(cnpj: string, inscricao: string, inicio: string, fim: string, pagina: number) {
-  const ns = 'http://www.abrasf.org.br/nfse.xsd'
-  // O XSD 2.04 encerra a sequência em Pagina. Signature não é um elemento
-  // permitido nesta mensagem; a identidade já é validada pelo certificado A1
-  // usado no canal mTLS.
-  const filtros = `<Consulente><CpfCnpj><Cnpj>${cnpj}</Cnpj></CpfCnpj><InscricaoMunicipal>${esc(inscricao)}</InscricaoMunicipal></Consulente><PeriodoEmissao><DataInicial>${inicio}</DataInicial><DataFinal>${fim}</DataFinal></PeriodoEmissao><Tomador><CpfCnpj><Cnpj>${cnpj}</Cnpj></CpfCnpj><InscricaoMunicipal>${esc(inscricao)}</InscricaoMunicipal></Tomador><Pagina>${pagina}</Pagina>`
+  const ns = 'http://www.sped.fazenda.gov.br/nfse'
+  // Padrão nacional RTC vigente no DF desde 02/08/2026. Neste schema,
+  // tcIdentificacaoPessoaEmpresa usa CNPJ/CPF e IM diretamente.
+  const identificacao = `<CNPJ>${cnpj}</CNPJ><IM>${esc(inscricao)}</IM>`
+  const filtros = `<Consulente>${identificacao}</Consulente><PeriodoEmissao><DataInicial>${inicio}</DataInicial><DataFinal>${fim}</DataFinal></PeriodoEmissao><Tomador>${identificacao}</Tomador><Pagina>${pagina}</Pagina>`
   return `<ConsultarNfseServicoTomadoEnvio xmlns="${ns}">${filtros}</ConsultarNfseServicoTomadoEnvio>`
 }
 function envelope(cnpj: string, inscricao: string, inicio: string, fim: string, pagina: number) {
-  const cab = '<cabecalho versao="1.00" xmlns="http://www.abrasf.org.br/nfse.xsd"><versaoDados>2.04</versaoDados></cabecalho>'
+  const cab = '<cabecalho versao="1.00" xmlns="http://www.sped.fazenda.gov.br/nfse"><versaoDados>1.00</versaoDados></cabecalho>'
   const xml = dados(cnpj, inscricao, inicio, fim, pagina)
   return `<?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body><ConsultarNfseServicoTomado xmlns="${wsdlNs()}"><nfseCabecMsg>${esc(cab)}</nfseCabecMsg><nfseDadosMsg>${esc(xml)}</nfseDadosMsg></ConsultarNfseServicoTomado></soap:Body></soap:Envelope>`
 }
