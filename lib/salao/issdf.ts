@@ -54,16 +54,35 @@ function interpretar(soap: string): { notas: NotaIssDf[]; mensagens: string[] } 
   }).filter(n => n.numero || n.chave)
   return { notas, mensagens }
 }
+function periodosMensais(inicio: string, fim: string) {
+  const partes: { inicio: string; fim: string }[] = []
+  let [ano, mes] = inicio.split('-').map(Number)
+  const limite = new Date(`${fim}T12:00:00`)
+  while (new Date(ano, mes - 1, 1) <= limite && partes.length < 120) {
+    const primeiro = `${ano}-${String(mes).padStart(2, '0')}-01`
+    const ultimo = new Date(ano, mes, 0)
+    const ultimoStr = `${ultimo.getFullYear()}-${String(ultimo.getMonth() + 1).padStart(2, '0')}-${String(ultimo.getDate()).padStart(2, '0')}`
+    partes.push({ inicio: primeiro < inicio ? inicio : primeiro, fim: ultimoStr > fim ? fim : ultimoStr })
+    mes++; if (mes > 12) { mes = 1; ano++ }
+  }
+  return partes
+}
+
 export async function consultarRecebidasIssDf(params: { pfxBase64: string; senha: string; cnpj: string; inicio: string; fim: string; maxPaginas?: number }): Promise<ResultadoIssDf> {
   const agent = new https.Agent({ pfx: Buffer.from(params.pfxBase64, 'base64'), passphrase: params.senha, keepAlive: true })
   const todas: NotaIssDf[] = []; const mensagens: string[] = []; let status = 0, paginas = 0
-  for (let pagina = 1; pagina <= (params.maxPaginas || 40); pagina++) {
-    const r = await post(agent, envelope(params.cnpj.replace(/\D/g, ''), params.inicio, params.fim, pagina))
-    status = r.status; paginas++
-    if (r.status >= 400) throw new Error(`ISS-DF respondeu HTTP ${r.status}: ${r.corpo.slice(0, 300)}`)
-    const x = interpretar(r.corpo); todas.push(...x.notas); mensagens.push(...x.mensagens)
-    if (x.notas.length < 50) break
+  for (const periodo of periodosMensais(params.inicio, params.fim)) {
+    for (let pagina = 1; pagina <= (params.maxPaginas || 40); pagina++) {
+      const r = await post(agent, envelope(params.cnpj.replace(/\D/g, ''), periodo.inicio, periodo.fim, pagina))
+      status = r.status; paginas++
+      if (r.status >= 400) throw new Error(`ISS-DF respondeu HTTP ${r.status}: ${r.corpo.slice(0, 300)}`)
+      const x = interpretar(r.corpo)
+      todas.push(...x.notas)
+      mensagens.push(...x.mensagens.filter(m => !/^E212\b/i.test(m)))
+      if (x.notas.length < 50 || x.mensagens.some(m => /^E212\b/i.test(m))) break
+    }
   }
   const unicas = new Map(todas.map(n => [n.chave || `${n.documento}|${n.numero}|${n.dataEmissao}|${n.valor}`, n]))
   return { notas: [...unicas.values()], paginas, status, mensagens: [...new Set(mensagens)] }
 }
+
