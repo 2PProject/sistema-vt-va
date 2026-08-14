@@ -89,7 +89,7 @@ function periodosMensais(inicio: string, fim: string) {
 }
 
 export async function consultarRecebidasIssDf(params: { pfxBase64: string; senha: string; cnpj: string; inscricaoMunicipal: string; inicio: string; fim: string; maxPaginas?: number }): Promise<ResultadoIssDf> {
-  const agent = new https.Agent({ pfx: Buffer.from(params.pfxBase64, 'base64'), passphrase: params.senha, keepAlive: true })
+  const agent = new https.Agent({ pfx: Buffer.from(params.pfxBase64, 'base64'), passphrase: params.senha, keepAlive: true, /* ISSNet legado entrega cadeia TLS incompleta; limitar esta exceção a este cliente dedicado. */ rejectUnauthorized: process.env.SALON_ISSDF_REJECT_UNAUTHORIZED === '1' })
   const todas: NotaIssDf[] = []; const mensagens: string[] = []; let status = 0, paginas = 0
   for (const periodo of periodosMensais(params.inicio, params.fim)) {
     for (let pagina = 1; pagina <= (params.maxPaginas || 40); pagina++) {
