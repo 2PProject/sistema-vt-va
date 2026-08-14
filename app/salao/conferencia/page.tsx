@@ -7,7 +7,7 @@ import { supabase, Empresa } from '../../../lib/supabase'
 import { formatarMoeda, MESES } from '../../../utils/calculoVT'
 import { SALAO_ENABLED } from '../../../lib/salao/config'
 import {
-  consultarConferencia, reconciliarCompetencia, refazerConferencia,
+  consultarConferencia, reconciliarCompetencia, refazerConferencia, getStatusCompetencia,
   vincularNota, desvincular, corrigirCnpj, notasDoCnpj, editarComissao, editarNota, excluirNota,
   SITUACAO_LABEL, type LinhaConsulta, type NotaLivre, type Filtros, type Ordenacao, type Situacao, type Indicadores,
 } from '../../../lib/salao/conferencia'
@@ -68,6 +68,7 @@ export default function SalaoConferenciaPage() {
   const [ind, setInd] = useState<Indicadores | null>(null)
   const [loading, setLoading] = useState(false)
   const [ocupado, setOcupado] = useState(false)
+  const [competenciaFechada, setCompetenciaFechada] = useState(false)
   const [msg, setMsg] = useState(''); const [msgTipo, setMsgTipo] = useState<'ok' | 'erro'>('ok')
 
   const [modal, setModal] = useState<{ tipo: 'vincular'; item: LinhaConsulta } | { tipo: 'editarCom'; item: LinhaConsulta } | { tipo: 'editarNota'; item: LinhaConsulta } | null>(null)
@@ -97,8 +98,8 @@ export default function SalaoConferenciaPage() {
   const carregar = useCallback(async () => {
     if (!filtros.competencia) return
     setLoading(true)
-    const r = await consultarConferencia(filtros, ord, pagina, tamanho)
-    setLinhas(r.linhas); setTotal(r.total); setInd(r.indicadores)
+    const [r, statusComp] = await Promise.all([consultarConferencia(filtros, ord, pagina, tamanho), getStatusCompetencia(filtros.competencia, filtros.empresaId || undefined)])
+    setLinhas(r.linhas); setTotal(r.total); setInd(r.indicadores); setCompetenciaFechada(statusComp?.status === 'fechada')
     setLoading(false)
   }, [filtros, ord, pagina, tamanho])
   useEffect(() => { if (SALAO_ENABLED) carregar() }, [carregar])
@@ -189,6 +190,7 @@ export default function SalaoConferenciaPage() {
   return (
     <LayoutAdmin title="Salão — Conferência de Notas">
       <div className="space-y-4">
+        {competenciaFechada && <div className="px-4 py-3 rounded-lg text-sm bg-amber-50 border border-amber-200 text-amber-800"><strong>Competência fechada.</strong> As alterações estão bloqueadas. Reabra com justificativa em Salão → Competências.</div>}
         {msg && <div className={`px-4 py-3 rounded-lg text-sm flex justify-between ${msgTipo === 'ok' ? 'bg-green-50 border border-green-200 text-green-700' : 'bg-red-50 border border-red-200 text-red-700'}`}><span>{msg}</span><button onClick={() => setMsg('')} className="font-bold opacity-60">×</button></div>}
 
         {/* 1) Escolha do mês + resumo em uma frase + ação principal */}
@@ -288,14 +290,14 @@ export default function SalaoConferenciaPage() {
                         {cols.has('confianca') && <td className="table-cell text-center">{l.confianca ? <span title={l.sugestaoJustificativa ?? ''} className={`font-semibold ${l.confiancaLabel === 'alta' ? 'text-green-700' : 'text-cyan-700'}`}>{l.confianca}%</span> : '—'}</td>}
                         {cols.has('acoes') && <td className="table-cell text-right whitespace-nowrap">
                           {l.tipo === 'comissao' ? (l.nota_id
-                            ? <button onClick={() => desfazer(l)} className="text-red-500 hover:text-red-700 mr-2 text-xs">Desfazer</button>
+                            ? <button disabled={competenciaFechada} onClick={() => desfazer(l)} className="text-red-500 hover:text-red-700 mr-2 text-xs">Desfazer</button>
                             : <>
-                                {l.sugestaoNotaId && <button onClick={() => confirmarSugestao(l)} className="text-teal-600 hover:text-teal-800 mr-2 text-xs" title={l.sugestaoJustificativa ?? ''}>Confirmar {l.confianca}%</button>}
-                                {l.situacao === 'falta_cnpj' && <button onClick={() => { const d = window.prompt('Informe o CPF/CNPJ (dígitos):') ?? ''; if (d) salvarCnpjRapido(l, d) }} className="text-orange-600 hover:text-orange-800 mr-2 text-xs">Informar CNPJ</button>}
-                                <button onClick={() => abrirVincular(l)} className="text-blue-600 hover:text-blue-800 mr-2 text-xs">Vincular</button>
+                                {l.sugestaoNotaId && <button disabled={competenciaFechada} onClick={() => confirmarSugestao(l)} className="text-teal-600 hover:text-teal-800 mr-2 text-xs" title={l.sugestaoJustificativa ?? ''}>Confirmar {l.confianca}%</button>}
+                                {l.situacao === 'falta_cnpj' && <button disabled={competenciaFechada} onClick={() => { const d = window.prompt('Informe o CPF/CNPJ (dígitos):') ?? ''; if (d) salvarCnpjRapido(l, d) }} className="text-orange-600 hover:text-orange-800 mr-2 text-xs">Informar CNPJ</button>}
+                                <button disabled={competenciaFechada} onClick={() => abrirVincular(l)} className="text-blue-600 hover:text-blue-800 mr-2 text-xs">Vincular</button>
                               </>)
-                            : <button onClick={() => excluir(l)} className="text-red-500 hover:text-red-700 mr-2 text-xs">Excluir</button>}
-                          <button onClick={() => abrirEditar(l)} className="text-gray-500 hover:text-gray-800 text-xs">Editar</button>
+                            : <button disabled={competenciaFechada} onClick={() => excluir(l)} className="text-red-500 hover:text-red-700 mr-2 text-xs">Excluir</button>}
+                          <button disabled={competenciaFechada} onClick={() => abrirEditar(l)} className="text-gray-500 hover:text-gray-800 text-xs">Editar</button>
                         </td>}
                       </tr>
                     ))}
