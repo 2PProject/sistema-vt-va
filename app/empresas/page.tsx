@@ -75,7 +75,8 @@ export default function EmpresasPage() {
   const empresasFiltradas = empresas.filter(
     (e) =>
       e.razao_social.toLowerCase().includes(busca.toLowerCase()) ||
-      e.cnpj.includes(busca)
+      e.cnpj.includes(busca) ||
+      (e.inscricao_municipal || '').includes(busca)
   )
 
   return (
@@ -111,7 +112,7 @@ export default function EmpresasPage() {
             </svg>
             <input
               type="text"
-              placeholder="Buscar por razão social ou CNPJ..."
+              placeholder="Buscar por razão social, CNPJ ou inscrição municipal..."
               value={busca}
               onChange={(e) => setBusca(e.target.value)}
               className="flex-1 border-0 outline-none text-sm text-gray-700 placeholder-gray-400 bg-transparent"
