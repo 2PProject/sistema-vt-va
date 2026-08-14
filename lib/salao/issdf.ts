@@ -8,7 +8,7 @@ export type NotaIssDf = {
 }
 export type ResultadoIssDf = { notas: NotaIssDf[]; paginas: number; status: number; mensagens: string[] }
 
-const endpoint = () => (process.env.SALON_ISSDF_URL || 'https://nfse.fazenda.df.gov.br/nfse.asmx').replace(/\/$/, '')
+const endpoint = () => (process.env.SALON_ISSDF_URL || 'https://nfse.fazenda.df.gov.br/wsnfsenacional/nfse.asmx').replace(/\/$/, '')
 const wsdlNs = () => process.env.SALON_ISSDF_WSDL_NS || 'http://www.sped.fazenda.gov.br/nfse'
 const soapAction = () => process.env.SALON_ISSDF_SOAP_ACTION || `${wsdlNs()}/ConsultarNfseServicoTomado`
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
@@ -29,9 +29,9 @@ function dados(cnpj: string, inscricao: string, inicio: string, fim: string, pag
   return `<ConsultarNfseServicoTomadoEnvio xmlns="${ns}" xmlns:ns2="http://www.w3.org/2000/09/xmldsig#">${filtros}</ConsultarNfseServicoTomadoEnvio>`
 }
 function envelope(cnpj: string, inscricao: string, inicio: string, fim: string, pagina: number) {
-  const cab = '<cabecalho versao="1.00" xmlns="http://www.sped.fazenda.gov.br/nfse"><versaoDados>1.00</versaoDados></cabecalho>'
+  const cab = '<cabecalho versao="1.01" xmlns="http://www.sped.fazenda.gov.br/nfse"><versaoDados>1.01</versaoDados></cabecalho>'
   const xml = dados(cnpj, inscricao, inicio, fim, pagina)
-  return `<?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body><ConsultarNfseServicoTomado xmlns="${wsdlNs()}"><nfseCabecMsg>${esc(cab)}</nfseCabecMsg><nfseDadosMsg>${esc(xml)}</nfseDadosMsg></ConsultarNfseServicoTomado></soap:Body></soap:Envelope>`
+  return `<?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body><ConsultarNfseServicoTomado xmlns="${wsdlNs()}"><nfseCabecMsg><![CDATA[${cab}]]></nfseCabecMsg><nfseDadosMsg><![CDATA[${xml}]]></nfseDadosMsg></ConsultarNfseServicoTomado></soap:Body></soap:Envelope>`
 }
 function post(agent: https.Agent, corpo: string): Promise<{ status: number; corpo: string }> {
   return new Promise((resolve, reject) => {
