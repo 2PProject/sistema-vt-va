@@ -80,12 +80,12 @@ export function dig(s: string | null | undefined): string { return (s ?? '').rep
 
 // ── Classificação e consulta (painel + filtros + tabela) ───────────────────
 export type Situacao =
-  | 'conferido' | 'divergencia_valor' | 'sem_nota' | 'nota_sem_vinculo'
+  | 'conferido' | 'conferido_com_divergencia' | 'divergencia_valor' | 'sem_nota' | 'nota_sem_vinculo'
   | 'falta_cnpj' | 'cnpj_invalido' | 'nota_outra_empresa'
   | 'possivel_duplicidade' | 'vinculo_sugerido' | 'aguardando_confirmacao' | 'corrigido_manual'
 
 export const SITUACAO_LABEL: Record<Situacao, string> = {
-  conferido: 'Conferido', divergencia_valor: 'Divergência de valor', sem_nota: 'Sem nota',
+  conferido: 'Conferido', conferido_com_divergencia: 'Conferido com divergência', divergencia_valor: 'Divergência de valor', sem_nota: 'Sem nota',
   nota_sem_vinculo: 'Nota sem vínculo', falta_cnpj: 'Falta CNPJ', cnpj_invalido: 'CNPJ inválido',
   nota_outra_empresa: 'Nota de outra empresa', possivel_duplicidade: 'Possível duplicidade',
   vinculo_sugerido: 'Vínculo sugerido', aguardando_confirmacao: 'Aguardando confirmação',
@@ -313,7 +313,8 @@ export async function reconciliar(admin: SupabaseClient, competencia: string, em
     await admin.from('salon_notas').update({ conferida: true }).eq('id', nota.id)
     arr.splice(arr.indexOf(nota), 1)
     feitos.add(p.id)
-    if (Math.abs(nota.valor - alvo) >= 0.01) divergencias++
+    const divergente=Math.abs(nota.valor-alvo)>=0.01
+    if(divergente){divergencias++;await admin.from('salon_comissoes').update({observacao:`Conferido com divergência: esperado R$ ${alvo.toFixed(2)} e nota R$ ${nota.valor.toFixed(2)}.`}).eq('id',p.id)}
     if (nota.empresa_id !== p.empresa_id) outraEmpresa++
     conferidas++
   }
@@ -515,7 +516,7 @@ export async function consultar(admin: SupabaseClient, f: Filtros, ord: Ordenaca
       base.outraEmpresa = !!n && n.empresa_id !== c.empresa_id
       base.situacao = duplicada ? 'possivel_duplicidade'
         : base.outraEmpresa ? 'nota_outra_empresa'
-        : Math.abs(base.diferenca) >= 0.01 ? 'divergencia_valor' : 'conferido'
+        : Math.abs(base.diferenca) >= 0.01 ? 'conferido_com_divergencia' : 'conferido'
     } else if (c.pendencia || !c.documento) {
       const doc = dig(c.documento)
       base.situacao = (doc && doc.length !== 11 && doc.length !== 14) ? 'cnpj_invalido' : 'falta_cnpj'
@@ -579,10 +580,10 @@ export async function consultar(admin: SupabaseClient, f: Filtros, ord: Ordenaca
 
   const indicadores: Indicadores = {
     esperados: baseRows.filter((l) => l.tipo === 'comissao').length,
-    conferidos: baseRows.filter((l) => l.situacao === 'conferido' || l.situacao === 'corrigido_manual').length,
+    conferidos: baseRows.filter((l) => l.situacao === 'conferido' || l.situacao === 'conferido_com_divergencia' || l.situacao === 'corrigido_manual').length,
     semNota: baseRows.filter((l) => l.situacao === 'sem_nota').length,
     notasSemVinculo: baseRows.filter((l) => l.situacao === 'nota_sem_vinculo').length,
-    divergencias: baseRows.filter((l) => l.situacao === 'divergencia_valor').length,
+    divergencias: baseRows.filter((l) => l.situacao === 'divergencia_valor' || l.situacao === 'conferido_com_divergencia').length,
     semCnpj: baseRows.filter((l) => l.situacao === 'falta_cnpj' || l.situacao === 'cnpj_invalido').length,
     outraEmpresa: baseRows.filter((l) => l.outraEmpresa).length,
     duplicidades: baseRows.filter((l) => l.duplicada).length,
@@ -645,14 +646,20 @@ export async function notasDoCnpj(admin: SupabaseClient, documento: string | nul
 }
 
 export async function vincular(admin: SupabaseClient, comissaoId: string, notaId: string, usuario?: string): Promise<{ ok: boolean; erro?: string }> {
-  const { data: n } = await admin.from('salon_notas').select('id, numero, valor, data_emissao').eq('id', notaId).maybeSingle()
+  const [{ data: n }, { data: comissao }] = await Promise.all([
+    admin.from('salon_notas').select('id, numero, valor, data_emissao').eq('id', notaId).maybeSingle(),
+    admin.from('salon_comissoes').select('valor_comissao, observacao').eq('id', comissaoId).maybeSingle(),
+  ])
   if (!n) return { ok: false, erro: 'Nota não encontrada.' }
+  if (!comissao) return { ok: false, erro: 'Profissional importado não encontrado.' }
+  const esperado=Number(comissao.valor_comissao)||0,valorNota=Number(n.valor)||0,diferenca=Math.round((valorNota-esperado)*100)/100
+  const notaDivergencia=Math.abs(diferenca)>=0.01?`Conferido com divergência: esperado R$ ${esperado.toFixed(2)}, nota R$ ${valorNota.toFixed(2)}, diferença R$ ${diferenca.toFixed(2)}.`:null
   await admin.from('salon_comissoes').update({
     nota_id: null, status: 'pendente', nf_numero: null, nf_data: null, nf_valor: null, nf_origem: null, confirmado_em: null,
   }).eq('nota_id', notaId).neq('id', comissaoId)
   const { error } = await admin.from('salon_comissoes').update({
     nota_id: n.id, status: 'conferida', nf_numero: n.numero, nf_data: n.data_emissao, nf_valor: n.valor, nf_origem: 'manual',
-    confirmado_em: new Date().toISOString(),
+    confirmado_em: new Date().toISOString(), observacao: notaDivergencia || comissao.observacao || null,
   }).eq('id', comissaoId)
   if (error) return { ok: false, erro: error.message }
   const { error: erroNota } = await admin.from('salon_notas').update({ conferida: true, conferida_em: new Date().toISOString(), conferida_por: usuario ?? null, analise_manual: false, analise_motivo: null }).eq('id', n.id)
