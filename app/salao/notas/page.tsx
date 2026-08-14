@@ -13,6 +13,9 @@ import { MESES } from '../../../utils/calculoVT'
 function mesAtual() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}` }
 function fmtMesLabel(mes: string) { const [a, m] = mes.split('-').map(Number); return m ? `${MESES[m - 1]}/${a}` : mes }
 function fmtData(iso: string | null) { if (!iso) return ''; const [a, m, d] = iso.split('-'); return `${d}/${m}/${a}` }
+function iniciais(nome: string | null) {
+  return (nome || 'Emitente').trim().split(/\s+/).slice(0, 2).map(p => p[0]?.toUpperCase()).join('') || '—'
+}
 function fmtDoc(d: string | null) {
   const s = (d ?? '').replace(/\D/g, '')
   if (s.length === 14) return s.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5')
@@ -92,6 +95,8 @@ export default function SalaoNotasPage() {
     return linhas.filter(l => (l.emitente_nome ?? '').toLowerCase().includes(q) || (l.documento ?? '').includes(q.replace(/\D/g, '')) || (l.numero ?? '').includes(q))
   }, [linhas, busca])
   const total = useMemo(() => filtradas.reduce((s, l) => s + (l.valor || 0), 0), [filtradas])
+  const emitentes = useMemo(() => new Set(filtradas.map(l => l.documento || l.emitente_nome).filter(Boolean)).size, [filtradas])
+  const ticketMedio = filtradas.length ? total / filtradas.length : 0
 
   if (!SALAO_ENABLED) return null
   const alvoNome = empresaId ? (empresas.find(e => e.id === empresaId)?.apelido || empresas.find(e => e.id === empresaId)?.razao_social || '') : 'todas as empresas'
@@ -99,6 +104,17 @@ export default function SalaoNotasPage() {
   return (
     <LayoutAdmin title="Salão — Notas Recebidas">
       <div className="space-y-6">
+        <section className="overflow-hidden rounded-2xl bg-gradient-to-r from-slate-900 via-slate-800 to-emerald-900 px-6 py-7 text-white shadow-sm" aria-labelledby="notas-title">
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-300">Módulo de Notas</p>
+          <div className="mt-2 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+            <div>
+              <h1 id="notas-title" className="text-2xl font-bold">Notas recebidas</h1>
+              <p className="mt-1 max-w-2xl text-sm text-slate-300">Acompanhe as NFS-e importadas do gov.br, confira emitentes e analise os valores do período.</p>
+            </div>
+            <span className="w-fit rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium text-emerald-100 ring-1 ring-white/15">{fmtMesLabel(mes)} · {alvoNome}</span>
+          </div>
+        </section>
+
         {/* 1) Baixar notas do gov.br */}
         <div className="card">
           <h2 className="text-sm font-semibold text-gray-700 mb-1">1. Baixar notas recebidas do gov.br</h2>
@@ -177,30 +193,49 @@ export default function SalaoNotasPage() {
           </div>
         )}
 
+        <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label="Indicadores do período">
+          {[
+            { label: 'Notas recebidas', value: String(filtradas.length), detail: fmtMesLabel(mes), tone: 'text-blue-700 bg-blue-50' },
+            { label: 'Valor total', value: formatarMoeda(total), detail: 'no filtro atual', tone: 'text-emerald-700 bg-emerald-50' },
+            { label: 'Emitentes', value: String(emitentes), detail: 'CPF/CNPJ únicos', tone: 'text-violet-700 bg-violet-50' },
+            { label: 'Ticket médio', value: formatarMoeda(ticketMedio), detail: 'por nota', tone: 'text-amber-700 bg-amber-50' },
+          ].map(item => (
+            <div key={item.label} className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+              <div className={`mb-3 inline-flex rounded-lg px-2.5 py-1 text-xs font-semibold ${item.tone}`}>{item.label}</div>
+              <p className="text-xl font-bold tracking-tight text-gray-900">{item.value}</p>
+              <p className="mt-1 text-xs text-gray-500">{item.detail}</p>
+            </div>
+          ))}
+        </section>
+
         {/* 3) Filtro por mês e lista */}
-        <div className="card">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-            <div><label className="label-field">Mês</label><input type="month" className="input-field" value={mes} onChange={e => setMes(e.target.value)} /></div>
-            <div><label className="label-field">Buscar</label><input className="input-field" placeholder="Emitente, CPF/CNPJ ou nº" value={busca} onChange={e => setBusca(e.target.value)} /></div>
+        <div className="card" aria-labelledby="lista-notas-title">
+          <div className="mb-5 rounded-xl border border-gray-200 bg-gray-50/70 p-4">
+            <div className="mb-3 flex items-center justify-between gap-3"><div><h2 id="lista-notas-title" className="font-semibold text-gray-900">Consultar notas</h2><p className="text-xs text-gray-500">Refine o período e encontre uma nota específica.</p></div>{busca && <button type="button" onClick={() => setBusca('')} className="text-xs font-medium text-emerald-700 hover:text-emerald-800">Limpar busca</button>}</div>
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div><label htmlFor="filtro-mes" className="label-field">Mês de referência</label><input id="filtro-mes" type="month" className="input-field" value={mes} onChange={e => setMes(e.target.value)} /></div>
+              <div><label htmlFor="filtro-busca" className="label-field">Buscar nota</label><input id="filtro-busca" type="search" className="input-field" placeholder="Emitente, CPF/CNPJ ou número" value={busca} onChange={e => setBusca(e.target.value)} autoComplete="off" /></div>
+            </div>
           </div>
 
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-base font-semibold text-gray-800">{filtradas.length} nota(s) · {fmtMesLabel(mes)} · {alvoNome}</h2>
+            <h2 className="text-base font-semibold text-gray-800">Resultados <span className="font-normal text-gray-500">({filtradas.length})</span></h2>
             <span className="text-sm font-semibold text-gray-700">Total: {formatarMoeda(total)}</span>
           </div>
 
           {loading ? (
-            <div className="text-center py-12 text-gray-400 text-sm">Carregando...</div>
+            <div className="text-center py-12 text-gray-400 text-sm" role="status" aria-live="polite">Carregando notas...</div>
           ) : filtradas.length === 0 ? (
             <div className="text-center py-12 text-gray-400 text-sm">Nenhuma nota guardada neste período.<br /><span className="text-xs">Use &quot;Sincronizar&quot; acima para buscar no gov.br.</span></div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full border-collapse">
+                <caption className="sr-only">Notas fiscais recebidas no período selecionado</caption>
                 <thead>
                   <tr className="bg-gray-50 border-b border-gray-200">
-                    <th className="table-header">Empresa</th>
-                    <th className="table-header">Emitida por</th>
-                    <th className="table-header">CPF/CNPJ</th>
+                    <th scope="col" className="table-header">Empresa</th>
+                    <th scope="col" className="table-header">Emitida por</th>
+                    <th scope="col" className="table-header">CPF/CNPJ</th>
                     <th className="table-header text-center">Nº</th>
                     <th className="table-header text-center">Competência</th>
                     <th className="table-header text-center">Emissão</th>
@@ -211,7 +246,12 @@ export default function SalaoNotasPage() {
                   {filtradas.map(l => (
                     <tr key={l.id} className="hover:bg-gray-50">
                       <td className="table-cell text-xs text-gray-500">{l.empresaNome}</td>
-                      <td className="table-cell font-medium text-gray-900">{l.emitente_nome || '—'}</td>
+                      <td className="table-cell">
+                        <div className="flex items-center gap-3">
+                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-xs font-bold text-emerald-700" aria-hidden="true">{iniciais(l.emitente_nome)}</span>
+                          <span className="font-medium text-gray-900">{l.emitente_nome || 'Emitente não identificado'}</span>
+                        </div>
+                      </td>
                       <td className="table-cell text-gray-600">{fmtDoc(l.documento)}</td>
                       <td className="table-cell text-center text-xs">{l.numero || '—'}</td>
                       <td className="table-cell text-center text-xs">{l.competencia || '—'}</td>
