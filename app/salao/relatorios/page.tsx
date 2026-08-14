@@ -1,142 +1,40 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import LayoutAdmin from '../../../components/LayoutAdmin'
-import { supabase, Empresa } from '../../../lib/supabase'
-import { formatarMoeda, MESES } from '../../../utils/calculoVT'
-import { SALAO_ENABLED, STATUS_LABEL } from '../../../lib/salao/config'
-import { listarComissoes, resumoDoMes, listarHistorico } from '../../../lib/salao/comissoes'
+import { supabase, type Empresa } from '../../../lib/supabase'
+import { SALAO_ENABLED } from '../../../lib/salao/config'
+import { consultarConferencia, historicoConferencia, SITUACAO_LABEL, type LinhaConsulta, type Situacao } from '../../../lib/salao/conferencia'
 import { exportarExcel, exportarPDF, type Coluna } from '../../../lib/salao/relatorios'
-import type { Comissao } from '../../../lib/salao/tipos'
+import { formatarMoeda } from '../../../utils/calculoVT'
 
-function competenciaAtual() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}` }
-function fmtMes(m: string) { const [a, mm] = m.split('-').map(Number); return mm ? `${MESES[mm - 1]}/${a}` : m }
-function fmtDataHora(iso: string) { return iso ? new Date(iso).toLocaleString('pt-BR') : '' }
-function fmtData(iso: string | null) { if (!iso) return ''; const [a, m, d] = iso.split('-'); return `${d}/${m}/${a}` }
+type Tipo='completa'|'emitiram'|'sem_nota'|'sem_vinculo'|'divergencias'|'outra_empresa'|'sem_cnpj'|'duplicidades'|'excluidas'|'manuais'|'consolidado'|'comparativo'
+const TIPOS:{v:Tipo;l:string}[]=[['completa','Conferência completa'],['emitiram','Profissionais que emitiram nota'],['sem_nota','Profissionais sem nota'],['sem_vinculo','Notas sem vínculo'],['divergencias','Divergências de valor'],['outra_empresa','Notas de outra empresa'],['sem_cnpj','Registros sem CNPJ'],['duplicidades','Possíveis duplicidades'],['excluidas','Notas excluídas'],['manuais','Alterações manuais'],['consolidado','Consolidado por empresa'],['comparativo','Comparativo entre competências']].map(([v,l])=>({v:v as Tipo,l}))
+function mesAtual(){const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`}
+const SIT:Partial<Record<Tipo,Situacao>>={emitiram:'conferido',sem_nota:'sem_nota',sem_vinculo:'nota_sem_vinculo',divergencias:'divergencia_valor',outra_empresa:'nota_outra_empresa',sem_cnpj:'falta_cnpj',duplicidades:'possivel_duplicidade'}
 
-type RelKey = 'pendencias' | 'recebidas' | 'consolidado' | 'fora_prazo' | 'historico'
-
-export default function SalaoRelatoriosPage() {
-  const router = useRouter()
-  const [empresas, setEmpresas] = useState<Empresa[]>([])
-  const [empresaId, setEmpresaId] = useState('')
-  const [mes, setMes] = useState(competenciaAtual())
-  const [busy, setBusy] = useState('')
-
-  useEffect(() => {
-    if (!SALAO_ENABLED) { router.replace('/dashboard'); return }
-    supabase.from('empresas').select('*').order('razao_social').then(({ data }) => setEmpresas(data ?? []))
-  }, [router])
-
-  async function dados(): Promise<Comissao[]> {
-    return listarComissoes({ empresaId: empresaId || undefined, mes })
-  }
-
-  async function gerar(rel: RelKey, formato: 'pdf' | 'xlsx') {
-    setBusy(rel + formato)
-    try {
-      const sufixo = `${mes}${empresaId ? '_emp' : ''}`
-      if (rel === 'pendencias') {
-        const rows = (await dados()).filter(l => l.status !== 'recebida')
-        const cols: Coluna[] = [
-          { header: 'Empresa', get: r => r.empresaNome }, { header: 'Profissional', get: r => r.profissionalNome },
-          { header: 'CPF/CNPJ', get: r => r.profissionalDoc }, { header: 'Mês', get: r => fmtMes(r.mes_ref) },
-          { header: 'Valor em aberto', get: r => formatarMoeda(r.valor_comissao) }, { header: 'Status', get: r => STATUS_LABEL[r.status as keyof typeof STATUS_LABEL] },
-        ]
-        await run(`Pendências — ${fmtMes(mes)}`, cols, rows, `pendencias_${sufixo}`, formato)
-      } else if (rel === 'recebidas') {
-        const rows = (await dados()).filter(l => l.status === 'recebida')
-        const cols: Coluna[] = [
-          { header: 'Empresa', get: r => r.empresaNome }, { header: 'Profissional', get: r => r.profissionalNome },
-          { header: 'NF Nº', get: r => r.nf_numero ?? '' }, { header: 'Data NF', get: r => fmtData(r.nf_data) },
-          { header: 'Valor NF', get: r => formatarMoeda(r.nf_valor ?? 0) }, { header: 'Origem', get: r => r.nf_origem ?? '' },
-        ]
-        await run(`Notas recebidas — ${fmtMes(mes)}`, cols, rows, `notas_recebidas_${sufixo}`, formato)
-      } else if (rel === 'fora_prazo') {
-        const rows = (await dados()).filter(l => l.status === 'fora_prazo')
-        const cols: Coluna[] = [
-          { header: 'Empresa', get: r => r.empresaNome }, { header: 'Profissional', get: r => r.profissionalNome },
-          { header: 'CPF/CNPJ', get: r => r.profissionalDoc }, { header: 'Mês', get: r => fmtMes(r.mes_ref) },
-          { header: 'Valor', get: r => formatarMoeda(r.valor_comissao) },
-        ]
-        await run(`Fora do prazo — ${fmtMes(mes)}`, cols, rows, `fora_prazo_${sufixo}`, formato)
-      } else if (rel === 'consolidado') {
-        const linhas = await dados()
-        const map = new Map<string, { empresa: string; total: number; recebido: number; qtd: number; qtdRec: number }>()
-        for (const l of linhas) {
-          const g = map.get(l.empresa_id) ?? { empresa: l.empresaNome ?? '', total: 0, recebido: 0, qtd: 0, qtdRec: 0 }
-          g.total += l.valor_comissao || 0; g.qtd++
-          if (l.status === 'recebida') { g.recebido += l.nf_valor ?? l.valor_comissao ?? 0; g.qtdRec++ }
-          map.set(l.empresa_id, g)
-        }
-        const rows = Array.from(map.values())
-        const cols: Coluna[] = [
-          { header: 'Empresa', get: r => r.empresa }, { header: 'Comissões (total)', get: r => formatarMoeda(r.total) },
-          { header: 'Recebido (NF)', get: r => formatarMoeda(r.recebido) },
-          { header: '% Conformidade', get: r => (r.qtd ? Math.round((r.qtdRec / r.qtd) * 100) : 0) + '%' },
-        ]
-        await run(`Consolidado por empresa — ${fmtMes(mes)}`, cols, rows, `consolidado_${sufixo}`, formato)
-      } else if (rel === 'historico') {
-        const rows = await listarHistorico(500)
-        const cols: Coluna[] = [
-          { header: 'Data/Hora', get: r => fmtDataHora(r.criado_em) }, { header: 'Ação', get: r => r.acao },
-          { header: 'Empresa', get: r => r.empresa }, { header: 'Profissional', get: r => r.profissional },
-          { header: 'Detalhe', get: r => r.detalhe ?? '' }, { header: 'Usuário', get: r => r.usuario ?? '' },
-        ]
-        await run('Histórico de ações', cols, rows, 'historico', formato)
-      }
-    } finally { setBusy('') }
-  }
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  async function run(titulo: string, cols: Coluna[], rows: any[], nome: string, formato: 'pdf' | 'xlsx') {
-    if (rows.length === 0) { alert('Nada para exportar neste filtro.'); return }
-    if (formato === 'pdf') await exportarPDF(titulo, cols, rows, nome)
-    else await exportarExcel(titulo, cols, rows, nome)
-  }
-
-  if (!SALAO_ENABLED) return null
-
-  const relatorios: { key: RelKey; titulo: string; desc: string }[] = [
-    { key: 'pendencias', titulo: 'Pendências do mês', desc: 'Profissionais sem NF, com valor em aberto.' },
-    { key: 'recebidas', titulo: 'Notas recebidas', desc: 'NFs confirmadas: número, data, valor.' },
-    { key: 'consolidado', titulo: 'Consolidado por empresa', desc: 'Total de comissões, recebido e % de conformidade.' },
-    { key: 'fora_prazo', titulo: 'Fora do prazo', desc: 'Quem ultrapassou o prazo de emissão.' },
-    { key: 'historico', titulo: 'Histórico', desc: 'Log completo de confirmações e substituições.' },
-  ]
-
-  return (
-    <LayoutAdmin title="Salão — Relatórios">
-      <div className="space-y-6">
-        <div className="card">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="md:col-span-2">
-              <label className="label-field">Empresa</label>
-              <select className="input-field" value={empresaId} onChange={e => setEmpresaId(e.target.value)}>
-                <option value="">Todas as empresas</option>
-                {empresas.map(e => <option key={e.id} value={e.id}>{e.apelido || e.razao_social}</option>)}
-              </select>
-            </div>
-            <div><label className="label-field">Mês de referência</label><input type="month" className="input-field" value={mes} onChange={e => setMes(e.target.value)} /></div>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {relatorios.map(r => (
-            <div key={r.key} className="card flex items-center justify-between gap-4">
-              <div>
-                <div className="font-semibold text-gray-800">{r.titulo}</div>
-                <div className="text-xs text-gray-500 mt-0.5">{r.desc}</div>
-              </div>
-              <div className="flex gap-2 shrink-0">
-                <button className="btn-secondary text-sm" onClick={() => gerar(r.key, 'pdf')} disabled={!!busy}>{busy === r.key + 'pdf' ? '...' : 'PDF'}</button>
-                <button className="btn-secondary text-sm" onClick={() => gerar(r.key, 'xlsx')} disabled={!!busy}>{busy === r.key + 'xlsx' ? '...' : 'Excel'}</button>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </LayoutAdmin>
-  )
+export default function RelatoriosPage(){
+ const router=useRouter();const [tipo,setTipo]=useState<Tipo>('completa');const [mes,setMes]=useState(mesAtual());const [mes2,setMes2]=useState('');const [empresaId,setEmpresaId]=useState('');const [empresas,setEmpresas]=useState<Empresa[]>([])
+ const [linhas,setLinhas]=useState<Record<string,unknown>[]>([]);const [loading,setLoading]=useState(false);const [ordAsc,setOrdAsc]=useState(true);const [erro,setErro]=useState('')
+ useEffect(()=>{if(!SALAO_ENABLED)router.replace('/dashboard');supabase.from('empresas').select('*').order('razao_social').then(({data})=>setEmpresas(data||[]))},[router])
+ const carregar=useCallback(async()=>{setLoading(true);setErro('');try{
+  if(tipo==='excluidas'){let q=supabase.from('salon_notas').select('*, empresas(apelido,razao_social)').not('excluido_em','is',null).order('excluido_em',{ascending:false});if(empresaId)q=q.eq('empresa_id',empresaId);const {data,error}=await q.limit(1000);if(error)throw error;setLinhas((data||[]) as Record<string,unknown>[])}
+  else if(tipo==='manuais'){setLinhas(await historicoConferencia({competencia:mes,limite:1000}) as Record<string,unknown>[])}
+  else if(tipo==='consolidado'){const r=await consultarConferencia({competencia:mes,empresaId},{campo:'empresa',dir:'asc'},1,100000);const m=new Map<string,{empresa:string;qtd:number;esperado:number;notas:number;pendencias:number}>();for(const x of r.linhas){const g=m.get(x.empresa_id)||{empresa:x.empresaNome,qtd:0,esperado:0,notas:0,pendencias:0};g.qtd++;g.esperado+=x.valor_comissao||0;g.notas+=x.nf_valor||0;if(x.situacao!=='conferido')g.pendencias++;m.set(x.empresa_id,g)}setLinhas([...m.values()])}
+  else if(tipo==='comparativo'){const meses=[mes,mes2].filter(Boolean);const all:Record<string,unknown>[]=[];for(const comp of meses){const r=await consultarConferencia({competencia:comp,empresaId},{campo:'empresa',dir:'asc'},1,100000);all.push({competencia:comp,profissionais:r.indicadores.esperados,conferidos:r.indicadores.conferidos,pendencias:r.indicadores.semNota+r.indicadores.notasSemVinculo,esperado:r.indicadores.valorEsperado,notas:r.indicadores.valorVinculado,diferenca:r.indicadores.diferenca})}setLinhas(all)}
+  else{const r=await consultarConferencia({competencia:mes,empresaId,situacao:SIT[tipo]||'todas'},{campo:'nome',dir:'asc'},1,100000);setLinhas(r.linhas as unknown as Record<string,unknown>[])}
+ }catch(e){setErro(e instanceof Error?e.message:'Erro ao gerar relatório.')}finally{setLoading(false)}},[tipo,mes,mes2,empresaId])
+ useEffect(()=>{if(SALAO_ENABLED)carregar()},[carregar])
+ const ordenadas=useMemo(()=>[...linhas].sort((a,b)=>String(a.nome||a.empresa||a.competencia||'').localeCompare(String(b.nome||b.empresa||b.competencia||''),'pt-BR')*(ordAsc?1:-1)),[linhas,ordAsc])
+ const totais=useMemo(()=>({qtd:ordenadas.length,esperado:ordenadas.reduce((s,r)=>s+Number(r.valor_comissao||r.esperado||0),0),notas:ordenadas.reduce((s,r)=>s+Number(r.nf_valor||r.valor||r.notas||0),0)}),[ordenadas])
+ const cols:Coluna[]=[{header:'Profissional/registro',get:r=>r.nome||r.emitente_nome||r.empresa||r.acao||''},{header:'CPF/CNPJ',get:r=>r.documento||''},{header:'Empresa',get:r=>r.empresaNome||r.empresa||''},{header:'Competência',get:r=>r.mes_ref||r.competencia||mes},{header:'Esperado',get:r=>r.valor_comissao!=null?formatarMoeda(Number(r.valor_comissao)):''},{header:'Nota',get:r=>r.nf_numero||r.numero||''},{header:'Valor da nota',get:r=>r.nf_valor!=null?formatarMoeda(Number(r.nf_valor)):r.valor!=null?formatarMoeda(Number(r.valor)):''},{header:'Situação',get:r=>r.situacao?SITUACAO_LABEL[r.situacao as Situacao]:r.acao||''}]
+ async function exportar(formato:'pdf'|'xlsx'){const titulo=TIPOS.find(t=>t.v===tipo)?.l||'Relatório';if(!ordenadas.length)return;if(formato==='pdf')await exportarPDF(titulo,cols,ordenadas,`salao_${tipo}_${mes}`);else await exportarExcel(titulo,cols,ordenadas,`salao_${tipo}_${mes}`)}
+ if(!SALAO_ENABLED)return null
+ return <LayoutAdmin title="Salão — Relatórios"><div className="space-y-4">
+  {erro&&<div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{erro}</div>}
+  <div className="card"><div className="grid gap-3 md:grid-cols-4"><div><label className="label-field">Tipo de relatório</label><select className="input-field" value={tipo} onChange={e=>setTipo(e.target.value as Tipo)}>{TIPOS.map(t=><option key={t.v} value={t.v}>{t.l}</option>)}</select></div><div><label className="label-field">Competência</label><input type="month" className="input-field" value={mes} onChange={e=>setMes(e.target.value)}/></div>{tipo==='comparativo'&&<div><label className="label-field">Comparar com</label><input type="month" className="input-field" value={mes2} onChange={e=>setMes2(e.target.value)}/></div>}<div><label className="label-field">Empresa</label><select className="input-field" value={empresaId} onChange={e=>setEmpresaId(e.target.value)}><option value="">Todas</option>{empresas.map(e=><option key={e.id} value={e.id}>{e.apelido||e.razao_social}</option>)}</select></div></div></div>
+  <div className="grid grid-cols-3 gap-3"><div className="card"><p className="text-xs text-gray-500">Registros</p><b className="text-2xl">{totais.qtd}</b></div><div className="card"><p className="text-xs text-gray-500">Valor esperado</p><b>{formatarMoeda(totais.esperado)}</b></div><div className="card"><p className="text-xs text-gray-500">Valor em notas</p><b>{formatarMoeda(totais.notas)}</b></div></div>
+  <div className="card"><div className="mb-3 flex flex-wrap justify-between gap-2"><button className="text-sm font-medium text-blue-700" onClick={()=>setOrdAsc(v=>!v)}>Ordenação {ordAsc?'A–Z':'Z–A'}</button><div className="flex gap-2"><button className="btn-secondary text-sm" onClick={()=>exportar('pdf')}>PDF</button><button className="btn-secondary text-sm" onClick={()=>exportar('xlsx')}>Excel</button></div></div>{loading?<div className="py-12 text-center text-gray-400">Gerando...</div>:<div className="overflow-x-auto"><table className="w-full"><thead><tr className="border-b bg-gray-50">{cols.map(c=><th key={c.header} className="table-header">{c.header}</th>)}</tr></thead><tbody className="divide-y">{ordenadas.map((r,i)=><tr key={i} className="hover:bg-gray-50">{cols.map(c=><td key={c.header} className="table-cell">{String(c.get(r)??'')}</td>)}</tr>)}</tbody></table></div>}</div>
+ </div></LayoutAdmin>
 }
