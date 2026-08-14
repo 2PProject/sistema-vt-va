@@ -109,6 +109,12 @@ export async function marcarDuplicada(notaId: string, dup: boolean, usuario?: st
 export async function observacaoNota(notaId: string, texto: string, usuario?: string) {
   return post({ acao: 'observacaoNota', notaId, texto, usuario })
 }
+export async function classificarNota(notaId: string, classificacao: 'profissional' | 'outro_servico', opts: { categoria?: string; observacao?: string; usuario?: string } = {}) {
+  return post({ acao: 'classificarNota', notaId, classificacao, categoria: opts.categoria, texto: opts.observacao, usuario: opts.usuario })
+}
+export async function setAnaliseManual(tipo: 'nota' | 'comissao', id: string, ativo: boolean, motivo?: string, usuario?: string) {
+  return post({ acao: 'setAnaliseManual', tipo, notaId: tipo === 'nota' ? id : undefined, comissaoId: tipo === 'comissao' ? id : undefined, ativo, motivo, usuario })
+}
 export async function setStatusCompetencia(competencia: string, status: string, opts: { empresaId?: string; usuario?: string; justificativa?: string } = {}) {
   return post({ acao: 'setStatus', competencia, status, ...opts })
 }
