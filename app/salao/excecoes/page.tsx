@@ -1,8 +1,9 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useDeferredValue, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import LayoutAdmin from '../../../components/LayoutAdmin'
+import { supabase,type Empresa } from '../../../lib/supabase'
 import { SALAO_ENABLED } from '../../../lib/salao/config'
 import { consultarConferencia, editarComissao, refazerConferencia, SITUACAO_LABEL, type LinhaConsulta, type Situacao } from '../../../lib/salao/conferencia'
 
@@ -22,6 +23,10 @@ function mesAtual() { const d = new Date(); return `${d.getFullYear()}-${String(
 export default function ExcecoesPage() {
   const router = useRouter()
   const [competencia, setCompetencia] = useState(mesAtual())
+  const [empresaId,setEmpresaId]=useState('')
+  const [empresas,setEmpresas]=useState<Empresa[]>([])
+  const [busca,setBusca]=useState('');const buscaD=useDeferredValue(busca)
+  const [novaCompetencia,setNovaCompetencia]=useState(mesAtual())
   const [situacao, setSituacao] = useState<Situacao>('falta_cnpj')
   const [linhas, setLinhas] = useState<LinhaConsulta[]>([])
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set())
@@ -29,28 +34,28 @@ export default function ExcecoesPage() {
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
   const [msg, setMsg] = useState('')
+  const [ocupado,setOcupado]=useState(false)
 
-  useEffect(() => { if (!SALAO_ENABLED) router.replace('/dashboard') }, [router])
+  useEffect(() => { if (!SALAO_ENABLED) router.replace('/dashboard'); else supabase.from('empresas').select('*').order('razao_social').then(({data})=>setEmpresas(data||[])) }, [router])
   const carregar = useCallback(async () => {
     setLoading(true)
     try {
-      const r = await consultarConferencia({ competencia, situacao }, { campo: 'nome', dir: 'asc' }, pagina, 50)
+      const r = await consultarConferencia({ competencia, situacao, empresaId:empresaId||undefined, busca:buscaD||undefined }, { campo: 'nome', dir: 'asc' }, pagina, 50)
       setLinhas(r.linhas); setTotal(r.total)
     } catch (e) { setMsg(e instanceof Error ? e.message : 'Erro ao consultar exceções.') }
     finally { setLoading(false) }
-  }, [competencia, situacao, pagina])
+  }, [competencia, situacao, empresaId, buscaD, pagina])
   useEffect(() => { if (SALAO_ENABLED) carregar() }, [carregar])
 
   function alternar(id: string) { setSelecionados(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n }) }
   async function aplicarCompetencia() {
-    const nova = window.prompt('Nova competência (AAAA-MM):', competencia)
-    if (!nova) return
+    if(!novaCompetencia)return
     const alvos = linhas.filter(l => selecionados.has(l.id) && l.tipo === 'comissao')
-    for (const l of alvos) await editarComissao(l.id, { mes_ref: nova }, 'ação em lote')
-    setSelecionados(new Set()); setMsg(`${alvos.length} registro(s) atualizado(s).`); carregar()
+    setOcupado(true);const resultados=await Promise.all(alvos.map(l=>editarComissao(l.id,{mes_ref:novaCompetencia},'ação em lote')));setOcupado(false);const falhas=resultados.filter(r=>!r.ok).length
+    setSelecionados(new Set()); setMsg(`${alvos.length-falhas} registro(s) atualizado(s)${falhas?` · ${falhas} falha(s)`:''}.`); carregar()
   }
   async function reprocessar() {
-    await refazerConferencia(competencia)
+    setOcupado(true);await refazerConferencia(competencia);setOcupado(false)
     setMsg('Vínculos da competência reprocessados.'); setSelecionados(new Set()); carregar()
   }
   function exportar() {
@@ -66,17 +71,17 @@ export default function ExcecoesPage() {
       {msg && <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">{msg}</div>}
       <div className="card">
         <div className="flex flex-wrap items-end gap-3">
-          <div><label className="label-field">Competência</label><input type="month" className="input-field" value={competencia} onChange={e=>{setCompetencia(e.target.value);setPagina(1)}} /></div>
+          <div><label className="label-field">Competência</label><input type="month" className="input-field" value={competencia} onChange={e=>{setCompetencia(e.target.value);setPagina(1)}} /></div><div className="min-w-[200px]"><label className="label-field">Empresa</label><select className="input-field" value={empresaId} onChange={e=>{setEmpresaId(e.target.value);setPagina(1)}}><option value="">Todas</option>{empresas.map(e=><option key={e.id} value={e.id}>{e.apelido||e.razao_social}</option>)}</select></div><div className="min-w-[220px] flex-1"><label className="label-field">Buscar</label><input type="search" className="input-field" placeholder="Nome, CNPJ ou nota" value={busca} onChange={e=>{setBusca(e.target.value);setPagina(1)}}/></div>
           <div className="min-w-[240px]"><label className="label-field">Tipo de pendência</label><select className="input-field" value={situacao} onChange={e=>{setSituacao(e.target.value as Situacao);setPagina(1);setSelecionados(new Set())}}>{EXCECOES.map(x=><option key={x.valor} value={x.valor}>{x.label}</option>)}</select></div>
-          <div className="flex-1" />
+          <div className="w-full border-t pt-3 md:w-auto md:border-0 md:pt-0"><label className="label-field">Mover selecionados para</label><input type="month" className="input-field" value={novaCompetencia} onChange={e=>setNovaCompetencia(e.target.value)}/></div>
           <button className="btn-secondary text-sm" onClick={exportar}>Exportar pendências</button>
-          <button className="btn-secondary text-sm" onClick={reprocessar}>Reprocessar vínculos</button>
-          <button className="btn-primary text-sm" disabled={!selecionados.size} onClick={aplicarCompetencia}>Aplicar competência</button>
+          <button className="btn-secondary text-sm" disabled={ocupado} onClick={reprocessar}>{ocupado?'Processando…':'Reprocessar vínculos'}</button>
+          <button className="btn-primary text-sm" disabled={!selecionados.size||ocupado} onClick={aplicarCompetencia}>Mover competência</button>
         </div>
       </div>
       <div className="card">
         <div className="mb-3 flex justify-between text-sm"><strong>{total} pendência(s)</strong><span>{selecionados.size} selecionada(s)</span></div>
-        {loading ? <div className="py-10 text-center text-gray-400">Carregando...</div> : <div className="overflow-x-auto"><table className="w-full">
+        {loading ? <div className="py-10 text-center text-gray-400">Carregando...</div> : linhas.length===0?<div className="py-14 text-center text-sm text-gray-500">Nenhuma pendência encontrada com estes filtros.</div>:<div className="overflow-x-auto"><table className="w-full">
           <thead><tr className="border-b bg-gray-50"><th className="table-header"><input type="checkbox" aria-label="Selecionar página" checked={linhas.length>0&&linhas.every(l=>selecionados.has(l.id))} onChange={e=>setSelecionados(e.target.checked?new Set(linhas.map(l=>l.id)):new Set())}/></th><th className="table-header">Profissional/emitente</th><th className="table-header">CPF/CNPJ</th><th className="table-header">Empresa</th><th className="table-header">Competência</th><th className="table-header">Pendência</th></tr></thead>
           <tbody className="divide-y">{linhas.map(l=><tr key={l.tipo+l.id} className="hover:bg-gray-50"><td className="table-cell"><input type="checkbox" aria-label={`Selecionar ${l.nome||'registro'}`} checked={selecionados.has(l.id)} onChange={()=>alternar(l.id)}/></td><td className="table-cell font-medium">{l.nome||'—'}</td><td className="table-cell">{l.documento||'—'}</td><td className="table-cell">{l.empresaNome}</td><td className="table-cell">{l.mes_ref}</td><td className="table-cell"><span className="rounded-full bg-amber-100 px-2 py-1 text-xs text-amber-800">{SITUACAO_LABEL[l.situacao]}</span></td></tr>)}</tbody>
         </table></div>}
