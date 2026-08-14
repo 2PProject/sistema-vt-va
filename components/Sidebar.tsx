@@ -94,7 +94,8 @@ const secoesSalao: { title: string; items: Item[] }[] = SALAO_ENABLED ? [
     title: 'Salão (NFS-e)',
     items: [
       { href: '/salao', label: 'Painel NFS-e', icon: ICON.salao },
-      { href: '/salao/notas', label: 'Notas Recebidas', icon: ICON.recibo },
+      { href: '/salao/notas', label: 'Notas Baixadas', icon: ICON.recibo },
+      { href: '/salao/outros-servicos', label: 'Outros Serviços', icon: ICON.ajuste },
       { href: '/salao/conferencia', label: 'Conferência', icon: ICON.competencia },
       { href: '/salao/excecoes', label: 'Central de Exceções', icon: ICON.ajuste },
       { href: '/salao/competencia', label: 'Competências', icon: ICON.fechamento },
