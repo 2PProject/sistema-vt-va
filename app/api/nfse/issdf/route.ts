@@ -11,9 +11,7 @@ export async function POST(req: Request) {
   const empresaId = String(body.empresa_id || '')
   const inicio = String(body.inicio || '')
   const fim = String(body.fim || '')
-  const inscricaoMunicipal = String(body.inscricao_municipal || '').replace(/\D/g, '')
   if (!empresaId) return Response.json({ erro: 'Selecione uma unidade.' }, { status: 400 })
-  if (!inscricaoMunicipal) return Response.json({ erro: 'Informe a inscrição municipal da unidade no ISS-DF.' }, { status: 400 })
   if (!/^\d{4}-\d{2}-\d{2}$/.test(inicio) || !/^\d{4}-\d{2}-\d{2}$/.test(fim) || inicio > fim)
     return Response.json({ erro: 'Informe um período válido.' }, { status: 400 })
 
@@ -21,8 +19,11 @@ export async function POST(req: Request) {
     const admin = getAdminClient()
     const [{ data: cert }, { data: empresa }] = await Promise.all([
       admin.from('salon_certificados').select('cert_cnpj, cert_pfx_b64, cert_senha_enc, cert_validade').eq('empresa_id', empresaId).maybeSingle(),
-      admin.from('empresas').select('razao_social, apelido').eq('id', empresaId).maybeSingle(),
+      admin.from('empresas').select('razao_social, apelido, inscricao_municipal').eq('id', empresaId).maybeSingle(),
     ])
+    if (!empresa) return Response.json({ erro: 'Unidade não encontrada.' }, { status: 404 })
+    const inscricaoMunicipal = String(empresa.inscricao_municipal || '').replace(/\D/g, '')
+    if (!inscricaoMunicipal) return Response.json({ erro: 'Cadastre a inscrição municipal desta unidade em Cadastros → Empresas.' }, { status: 400 })
     if (!cert) return Response.json({ erro: 'A unidade não possui certificado A1 cadastrado.' }, { status: 400 })
     if (cert.cert_validade && cert.cert_validade < new Date().toISOString().slice(0, 10))
       return Response.json({ erro: `Certificado vencido em ${cert.cert_validade}.` }, { status: 400 })
