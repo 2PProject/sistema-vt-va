@@ -10,7 +10,7 @@ function mesAtual(){const d=new Date();return `${d.getFullYear()}-${String(d.get
 type NotaUI={id:string;nome:string;documento:string|null;numero:string|null;data:string|null;valor:number|null;competencia:string;situacao:string;analise?:boolean;conferida?:boolean}
 type Ordem='prioridade'|'nome'|'valor'|'competencia'
 function ordenar<T extends {situacao:string;nome:string|null;valor_comissao?:number|null;nf_valor?:number|null;mes_ref?:string;competencia?:string}>(rows:T[],ordem:Ordem){
- const prioridade=(s:string)=>({falta_cnpj:1,cnpj_invalido:2,sem_nota:3,nota_sem_vinculo:4,nota_outra_empresa:5,possivel_duplicidade:6,vinculo_sugerido:7,aguardando_confirmacao:8,divergencia_valor:9,conferido_com_divergencia:10,conferido:20,corrigido_manual:21}[s]||15)
+ const pesos:Record<string,number>={falta_cnpj:1,cnpj_invalido:2,sem_nota:3,nota_sem_vinculo:4,nota_outra_empresa:5,possivel_duplicidade:6,vinculo_sugerido:7,aguardando_confirmacao:8,divergencia_valor:9,conferido_com_divergencia:10,conferido:20,corrigido_manual:21};const prioridade=(s:string)=>pesos[s]||15
  return rows.sort((a,b)=>ordem==='nome'?String(a.nome||'').localeCompare(String(b.nome||''),'pt-BR'):ordem==='valor'?Number(b.valor_comissao||b.nf_valor||0)-Number(a.valor_comissao||a.nf_valor||0):ordem==='competencia'?String(a.mes_ref||a.competencia||'').localeCompare(String(b.mes_ref||b.competencia||'')):prioridade(a.situacao)-prioridade(b.situacao)||String(a.nome||'').localeCompare(String(b.nome||''),'pt-BR'))
 }
 type AbaNota='todas'|'pendentes'|'sem_profissional'|'divergentes'|'conferidas';type AbaPro='todos'|'sem_nota'|'sugestao'|'divergentes'|'conferidos'
