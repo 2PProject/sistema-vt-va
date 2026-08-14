@@ -1,0 +1,69 @@
+// Consulta exclusiva de NFS-e RECEBIDAS (serviços tomados) no ISS-DF.
+// SERVER-ONLY: SOAP + mTLS com o certificado A1 já cadastrado.
+import https from 'https'
+
+export type NotaIssDf = {
+  chave: string; documento: string; emitenteNome: string; numero: string
+  dataEmissao: string; competencia: string; valor: number
+}
+export type ResultadoIssDf = { notas: NotaIssDf[]; paginas: number; status: number; mensagens: string[] }
+
+const endpoint = () => (process.env.SALON_ISSDF_URL || 'https://nfse.fazenda.df.gov.br/wsnfsenacional/nfse.asmx').replace(/\/$/, '')
+const wsdlNs = () => process.env.SALON_ISSDF_WSDL_NS || 'http://www.sped.fazenda.gov.br/nfse'
+const soapAction = () => process.env.SALON_ISSDF_SOAP_ACTION || `${wsdlNs()}/ConsultarNfseServicoTomado`
+const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+const unesc = (s: string) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&')
+const tag = (xml: string, nome: string) => xml.match(new RegExp(`<[\\w:]*${nome}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/[\\w:]*${nome}>`, 'i'))?.[1]?.trim() || ''
+const blocos = (xml: string, nome: string) => [...xml.matchAll(new RegExp(`<[\\w:]*${nome}(?:\\s[^>]*)?>[\\s\\S]*?<\\/[\\w:]*${nome}>`, 'gi'))].map(m => m[0])
+const doc = (xml: string) => (tag(xml, 'CNPJ') || tag(xml, 'CPF')).replace(/\D/g, '')
+const numero = (xml: string) => tag(xml, 'nNFSe') || tag(xml, 'nDFSe') || tag(xml, 'Numero')
+const data = (xml: string) => (tag(xml, 'dhEmi') || tag(xml, 'dhProc') || tag(xml, 'DataEmissao')).slice(0, 10)
+const valor = (xml: string) => Number((tag(xml, 'vLiq') || tag(xml, 'vServ') || tag(xml, 'ValorServicos') || '0').replace(',', '.')) || 0
+
+function dados(cnpj: string, inicio: string, fim: string, pagina: number) {
+  return `<ConsultarNfseEnvio xmlns="http://www.sped.fazenda.gov.br/nfse"><Consulente><CNPJ>${cnpj}</CNPJ></Consulente><PeriodoEmissao><DataInicial>${inicio}</DataInicial><DataFinal>${fim}</DataFinal></PeriodoEmissao><Tomador><CNPJ>${cnpj}</CNPJ></Tomador><Pagina>${pagina}</Pagina></ConsultarNfseEnvio>`
+}
+function envelope(cnpj: string, inicio: string, fim: string, pagina: number) {
+  const cab = '<cabecalho versao="1.01" xmlns="http://www.sped.fazenda.gov.br/nfse"><versaoDados>1.01</versaoDados></cabecalho>'
+  return `<?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body><ConsultarNfseServicoTomado xmlns="${wsdlNs()}"><nfseCabecMsg xmlns="">${esc(cab)}</nfseCabecMsg><nfseDadosMsg xmlns="">${esc(dados(cnpj, inicio, fim, pagina))}</nfseDadosMsg></ConsultarNfseServicoTomado></soap:Body></soap:Envelope>`
+}
+function post(agent: https.Agent, corpo: string): Promise<{ status: number; corpo: string }> {
+  return new Promise((resolve, reject) => {
+    const u = new URL(endpoint())
+    const req = https.request(u, { method: 'POST', agent, timeout: 30000, headers: {
+      'content-type': 'text/xml; charset=utf-8', SOAPAction: `"${soapAction()}"`, 'content-length': Buffer.byteLength(corpo),
+    }}, res => {
+      const partes: Buffer[] = []; res.on('data', p => partes.push(Buffer.from(p)))
+      res.on('end', () => resolve({ status: res.statusCode || 0, corpo: Buffer.concat(partes).toString('utf8') }))
+    })
+    req.on('timeout', () => req.destroy(new Error('Tempo limite ao consultar o ISS-DF.')))
+    req.on('error', reject); req.end(corpo)
+  })
+}
+function interpretar(soap: string): { notas: NotaIssDf[]; mensagens: string[] } {
+  const saida = unesc(tag(soap, 'ConsultarNfseServicoTomadoResult') || tag(soap, 'outputXML') || soap)
+  const mensagens = blocos(saida, 'MensagemRetorno').map(x => [tag(x, 'Codigo'), tag(x, 'Mensagem'), tag(x, 'Correcao')].filter(Boolean).join(' - '))
+  const itens = blocos(saida, 'CompNfse')
+  const notas = itens.map(item => {
+    const nf = blocos(item, 'NFSe')[0] || item
+    const prest = blocos(nf, 'emit')[0] || blocos(nf, 'PrestadorServico')[0] || blocos(nf, 'Prestador')[0] || nf
+    const emissao = data(nf)
+    const compet = (tag(nf, 'dCompet') || tag(nf, 'Competencia') || emissao).slice(0, 7)
+    const chave = (nf.match(/<[\w:]*infNFSe[^>]*\bId="([^"]+)"/i)?.[1] || tag(nf, 'chNFSe') || '').trim()
+    return { chave, documento: doc(prest), emitenteNome: tag(prest, 'xNome') || tag(prest, 'RazaoSocial'), numero: numero(nf), dataEmissao: emissao, competencia: compet, valor: valor(nf) }
+  }).filter(n => n.numero || n.chave)
+  return { notas, mensagens }
+}
+export async function consultarRecebidasIssDf(params: { pfxBase64: string; senha: string; cnpj: string; inicio: string; fim: string; maxPaginas?: number }): Promise<ResultadoIssDf> {
+  const agent = new https.Agent({ pfx: Buffer.from(params.pfxBase64, 'base64'), passphrase: params.senha, keepAlive: true })
+  const todas: NotaIssDf[] = []; const mensagens: string[] = []; let status = 0, paginas = 0
+  for (let pagina = 1; pagina <= (params.maxPaginas || 40); pagina++) {
+    const r = await post(agent, envelope(params.cnpj.replace(/\D/g, ''), params.inicio, params.fim, pagina))
+    status = r.status; paginas++
+    if (r.status >= 400) throw new Error(`ISS-DF respondeu HTTP ${r.status}: ${r.corpo.slice(0, 300)}`)
+    const x = interpretar(r.corpo); todas.push(...x.notas); mensagens.push(...x.mensagens)
+    if (x.notas.length < 50) break
+  }
+  const unicas = new Map(todas.map(n => [n.chave || `${n.documento}|${n.numero}|${n.dataEmissao}|${n.valor}`, n]))
+  return { notas: [...unicas.values()], paginas, status, mensagens: [...new Set(mensagens)] }
+}
