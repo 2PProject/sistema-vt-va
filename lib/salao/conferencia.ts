@@ -63,7 +63,7 @@ export async function notasDoCnpj(_empresaId: string, documento: string | null):
 
 export async function vincularNota(comissaoId: string, nota: { id: string; numero: string | null; valor: number | null; data_emissao: string | null }):
   Promise<{ ok: boolean; erro?: string }> {
-  return post({ acao: 'vincular', comissaoId, notaId: nota.id })
+  return post({ acao: 'vincular', comissaoId, notaId: nota.id, usuario: arguments[2] })
 }
 
 export async function desvincular(comissaoId: string, _notaId?: string | null): Promise<{ ok: boolean; erro?: string }> {
