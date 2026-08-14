@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import LayoutAdmin from '../../../components/LayoutAdmin'
 import { supabase,type Empresa } from '../../../lib/supabase'
 import { SALAO_ENABLED } from '../../../lib/salao/config'
-import { consultarConferencia, editarComissao, refazerConferencia, SITUACAO_LABEL, type LinhaConsulta, type Situacao } from '../../../lib/salao/conferencia'
+import { consultarConferencia, editarComissao, editarNota, excluirComissao, excluirNota, classificarNota, setAnaliseManual, refazerConferencia, SITUACAO_LABEL, type LinhaConsulta, type Situacao } from '../../../lib/salao/conferencia'
 
 const EXCECOES: { valor: Situacao; label: string }[] = [
   { valor: 'falta_cnpj', label: 'Sem CNPJ' },
@@ -35,8 +35,11 @@ export default function ExcecoesPage() {
   const [loading, setLoading] = useState(false)
   const [msg, setMsg] = useState('')
   const [ocupado,setOcupado]=useState(false)
+  const [usuario,setUsuario]=useState<string|undefined>()
+  const [editando,setEditando]=useState<LinhaConsulta|null>(null)
+  const [form,setForm]=useState<Record<string,string>>({})
 
-  useEffect(() => { if (!SALAO_ENABLED) router.replace('/dashboard'); else supabase.from('empresas').select('*').order('razao_social').then(({data})=>setEmpresas(data||[])) }, [router])
+  useEffect(() => { if (!SALAO_ENABLED) router.replace('/dashboard'); else {supabase.from('empresas').select('*').order('razao_social').then(({data})=>setEmpresas(data||[]));supabase.auth.getUser().then(({data})=>setUsuario(data.user?.email))} }, [router])
   const carregar = useCallback(async () => {
     setLoading(true)
     try {
@@ -47,6 +50,11 @@ export default function ExcecoesPage() {
   }, [competencia, situacao, empresaId, buscaD, pagina])
   useEffect(() => { if (SALAO_ENABLED) carregar() }, [carregar])
 
+  function abrirEdicao(l:LinhaConsulta){setEditando(l);setForm(l.tipo==='nota'?{emitente_nome:l.nome||'',documento:l.documento||'',numero:l.nf_numero||'',data_emissao:l.nf_data||'',competencia:l.nota_competencia||l.mes_ref,valor:String(l.nf_valor||'')}:{nome:l.nome||'',documento:l.documento||'',mes_ref:l.mes_ref,valor_comissao:String(l.valor_comissao||''),observacao:l.observacao||''})}
+  async function salvarEdicao(){if(!editando||ocupado)return;setOcupado(true);const r=editando.tipo==='nota'?await editarNota(editando.id,form,usuario):await editarComissao(editando.id,form,usuario);setOcupado(false);if(!r.ok){setMsg(r.erro||'Erro ao salvar.');return}setEditando(null);setMsg('Registro corrigido e reavaliado.');carregar()}
+  async function analisar(l:LinhaConsulta){setLinhas(v=>v.filter(x=>x.id!==l.id));const r=await setAnaliseManual(l.tipo==='nota'?'nota':'comissao',l.id,true,'Separado na Central de Exceções',usuario);if(!r.ok){setMsg(r.erro||'Erro.');carregar();return}setMsg('Registro separado para análise.')}
+  async function remover(l:LinhaConsulta){setLinhas(v=>v.filter(x=>x.id!==l.id));const r=l.tipo==='nota'?await excluirNota(l.id,'Exclusão pela Central de Exceções',usuario):await excluirComissao(l.id,usuario);if(!r.ok){setMsg(r.erro||'Erro ao excluir.');carregar();return}setMsg(l.tipo==='nota'?'Nota removida e enviada à auditoria.':'Profissional removido dos dados importados.')}
+  async function outroServico(l:LinhaConsulta){if(l.tipo!=='nota')return;setLinhas(v=>v.filter(x=>x.id!==l.id));const r=await classificarNota(l.id,'outro_servico',{categoria:'Outro serviço',observacao:'Classificado pela Central de Exceções',usuario});if(!r.ok){setMsg(r.erro||'Erro.');carregar();return}setMsg('Nota movida para Outros Serviços.')}
   function alternar(id: string) { setSelecionados(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n }) }
   async function aplicarCompetencia() {
     if(!novaCompetencia)return
@@ -79,11 +87,12 @@ export default function ExcecoesPage() {
           <button className="btn-primary text-sm" disabled={!selecionados.size||ocupado} onClick={aplicarCompetencia}>Mover competência</button>
         </div>
       </div>
+      {editando&&<section className="rounded-xl border border-blue-200 bg-blue-50/50 p-4"><div className="mb-3 flex items-center justify-between"><div><h2 className="font-semibold">Corrigir {editando.tipo==='nota'?'nota':'profissional importado'}</h2><p className="text-xs text-slate-500">O registro será reavaliado após salvar.</p></div><button onClick={()=>setEditando(null)}>×</button></div><div className="grid gap-3 md:grid-cols-4">{Object.entries(form).map(([k,v])=><div key={k}><label className="label-field">{k.replaceAll('_',' ')}</label><input className="input-field" type={k.includes('data')?'date':k.includes('mes_ref')||k==='competencia'?'month':'text'} value={v} onChange={e=>setForm({...form,[k]:e.target.value})}/></div>)}</div><div className="mt-3 flex justify-end gap-2"><button className="btn-secondary" onClick={()=>setEditando(null)}>Cancelar</button><button className="btn-primary" disabled={ocupado} onClick={salvarEdicao}>{ocupado?'Salvando…':'Salvar correção'}</button></div></section>}
       <div className="card">
         <div className="mb-3 flex justify-between text-sm"><strong>{total} pendência(s)</strong><span>{selecionados.size} selecionada(s)</span></div>
         {loading ? <div className="py-10 text-center text-gray-400">Carregando...</div> : linhas.length===0?<div className="py-14 text-center text-sm text-gray-500">Nenhuma pendência encontrada com estes filtros.</div>:<div className="overflow-x-auto"><table className="w-full">
-          <thead><tr className="border-b bg-gray-50"><th className="table-header"><input type="checkbox" aria-label="Selecionar página" checked={linhas.length>0&&linhas.every(l=>selecionados.has(l.id))} onChange={e=>setSelecionados(e.target.checked?new Set(linhas.map(l=>l.id)):new Set())}/></th><th className="table-header">Profissional/emitente</th><th className="table-header">CPF/CNPJ</th><th className="table-header">Empresa</th><th className="table-header">Competência</th><th className="table-header">Pendência</th></tr></thead>
-          <tbody className="divide-y">{linhas.map(l=><tr key={l.tipo+l.id} className="hover:bg-gray-50"><td className="table-cell"><input type="checkbox" aria-label={`Selecionar ${l.nome||'registro'}`} checked={selecionados.has(l.id)} onChange={()=>alternar(l.id)}/></td><td className="table-cell font-medium">{l.nome||'—'}</td><td className="table-cell">{l.documento||'—'}</td><td className="table-cell">{l.empresaNome}</td><td className="table-cell">{l.mes_ref}</td><td className="table-cell"><span className="rounded-full bg-amber-100 px-2 py-1 text-xs text-amber-800">{SITUACAO_LABEL[l.situacao]}</span></td></tr>)}</tbody>
+          <thead><tr className="border-b bg-gray-50"><th className="table-header"><input type="checkbox" aria-label="Selecionar página" checked={linhas.length>0&&linhas.every(l=>selecionados.has(l.id))} onChange={e=>setSelecionados(e.target.checked?new Set(linhas.map(l=>l.id)):new Set())}/></th><th className="table-header">Profissional/emitente</th><th className="table-header">CPF/CNPJ</th><th className="table-header">Empresa</th><th className="table-header">Competência</th><th className="table-header">Pendência</th><th className="table-header text-right">Tratar</th></tr></thead>
+          <tbody className="divide-y">{linhas.map(l=><tr key={l.tipo+l.id} className="hover:bg-gray-50"><td className="table-cell"><input type="checkbox" aria-label={`Selecionar ${l.nome||'registro'}`} checked={selecionados.has(l.id)} onChange={()=>alternar(l.id)}/></td><td className="table-cell font-medium">{l.nome||'—'}</td><td className="table-cell">{l.documento||'—'}</td><td className="table-cell">{l.empresaNome}</td><td className="table-cell">{l.mes_ref}</td><td className="table-cell"><span className="rounded-full bg-amber-100 px-2 py-1 text-xs text-amber-800">{SITUACAO_LABEL[l.situacao]}</span></td><td className="table-cell text-right whitespace-nowrap"><button className="mr-3 text-xs font-semibold text-blue-700" onClick={()=>abrirEdicao(l)}>Editar</button><button className="mr-3 text-xs font-semibold text-slate-600" onClick={()=>analisar(l)}>Analisar</button>{l.tipo==='nota'&&<button className="mr-3 text-xs font-semibold text-amber-700" onClick={()=>outroServico(l)}>Outro serviço</button>}<button className="text-xs font-semibold text-red-600" onClick={()=>remover(l)}>Excluir</button></td></tr>)}</tbody>
         </table></div>}
         <div className="mt-4 flex justify-end gap-2"><button className="btn-secondary text-sm" disabled={pagina===1} onClick={()=>setPagina(p=>p-1)}>Anterior</button><span className="px-3 py-2 text-sm">Página {pagina}</span><button className="btn-secondary text-sm" disabled={pagina*50>=total} onClick={()=>setPagina(p=>p+1)}>Próxima</button></div>
       </div>
