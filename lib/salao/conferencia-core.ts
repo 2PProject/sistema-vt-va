@@ -644,7 +644,7 @@ export async function notasDoCnpj(admin: SupabaseClient, documento: string | nul
     .sort((a, b) => (notaComp(b) || '').localeCompare(notaComp(a) || ''))
 }
 
-export async function vincular(admin: SupabaseClient, comissaoId: string, notaId: string): Promise<{ ok: boolean; erro?: string }> {
+export async function vincular(admin: SupabaseClient, comissaoId: string, notaId: string, usuario?: string): Promise<{ ok: boolean; erro?: string }> {
   const { data: n } = await admin.from('salon_notas').select('id, numero, valor, data_emissao').eq('id', notaId).maybeSingle()
   if (!n) return { ok: false, erro: 'Nota não encontrada.' }
   await admin.from('salon_comissoes').update({
@@ -655,7 +655,8 @@ export async function vincular(admin: SupabaseClient, comissaoId: string, notaId
     confirmado_em: new Date().toISOString(),
   }).eq('id', comissaoId)
   if (error) return { ok: false, erro: error.message }
-  await admin.from('salon_notas').update({ conferida: true }).eq('id', n.id)
+  const { error: erroNota } = await admin.from('salon_notas').update({ conferida: true, conferida_em: new Date().toISOString(), conferida_por: usuario ?? null, analise_manual: false, analise_motivo: null }).eq('id', n.id)
+  if (erroNota) return { ok: false, erro: erroNota.message }
   return { ok: true }
 }
 
