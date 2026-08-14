@@ -61,9 +61,9 @@ export async function notasDoCnpj(_empresaId: string, documento: string | null):
   return j?.ok ? j.notas : []
 }
 
-export async function vincularNota(comissaoId: string, nota: { id: string; numero: string | null; valor: number | null; data_emissao: string | null }):
+export async function vincularNota(comissaoId: string, nota: { id: string; numero: string | null; valor: number | null; data_emissao: string | null }, usuario?: string):
   Promise<{ ok: boolean; erro?: string }> {
-  return post({ acao: 'vincular', comissaoId, notaId: nota.id, usuario: arguments[2] })
+  return post({ acao: 'vincular', comissaoId, notaId: nota.id, usuario })
 }
 
 export async function desvincular(comissaoId: string, _notaId?: string | null): Promise<{ ok: boolean; erro?: string }> {
