@@ -88,6 +88,7 @@ export async function POST(req: Request) {
       case 'vincular': { const r = await core.vincular(admin, comissaoId, notaId, usuario); return Response.json(r, { status: r.ok ? 200 : 400 }) }
       case 'desvincular': { const r = await core.desvincular(admin, comissaoId); return Response.json(r, { status: r.ok ? 200 : 400 }) }
       case 'corrigirCnpj': { const r = await core.corrigirCnpj(admin, comissaoId, documento); return Response.json(r, { status: r.ok ? 200 : 400 }) }
+      case 'excluirComissao': { const r = await acoes.excluirComissao(admin, comissaoId, usuario); return Response.json(r, { status: r.ok ? 200 : 400 }) }
       case 'editarComissao': { const r = await acoes.editarComissao(admin, comissaoId, campos ?? {}, usuario); return Response.json(r, { status: r.ok ? 200 : 400 }) }
       case 'editarNota': { const r = await acoes.editarNota(admin, notaId, campos ?? {}, usuario); return Response.json(r, { status: r.ok ? 200 : 400 }) }
       case 'excluirNota': { const r = await acoes.excluirNota(admin, notaId, motivo ?? '', usuario); return Response.json(r, { status: r.ok ? 200 : 400 }) }
