@@ -22,6 +22,17 @@ export async function registrarHistorico(admin: SupabaseClient, h: {
 const CAMPOS_COM = ['nome', 'documento', 'valor_comissao', 'empresa_id', 'mes_ref', 'observacao'] as const
 type CampoCom = typeof CAMPOS_COM[number]
 
+export async function excluirComissao(admin: SupabaseClient, id: string, usuario?: string): Promise<OK> {
+  const { data: atual, error: e0 } = await admin.from('salon_comissoes').select('*').eq('id', id).maybeSingle()
+  if (e0) return { ok: false, erro: e0.message }
+  if (!atual) return { ok: false, erro: 'Profissional importado não encontrado.' }
+  if (atual.nota_id) await admin.from('salon_notas').update({ conferida: false, conferida_em: null, conferida_por: null }).eq('id', atual.nota_id)
+  const { error } = await admin.from('salon_comissoes').delete().eq('id', id)
+  if (error) return { ok: false, erro: error.message }
+  await registrarHistorico(admin, { tipo: 'comissao', ref_id: id, empresa_id: atual.empresa_id, competencia: atual.mes_ref, acao: 'exclusao_dado_importado', valor_anterior: atual, valor_novo: null, usuario, justificativa: 'Exclusão pela gestão de dados importados' })
+  return { ok: true }
+}
+
 /** Edita uma linha da planilha (comissão). Reprocessa só ela: desfaz o vínculo se ficar incompatível. */
 export async function editarComissao(admin: SupabaseClient, id: string, campos: Partial<Record<CampoCom, unknown>>, usuario?: string): Promise<OK & { desvinculou?: boolean }> {
   const { data: atual, error: e0 } = await admin.from('salon_comissoes').select('*').eq('id', id).maybeSingle()
