@@ -76,6 +76,9 @@ function envioAssinado(privateKeyPem: string, certPem: string, cnpj: string, im:
     xpath: alvo,
     transforms: ['http://www.w3.org/2000/09/xmldsig#enveloped-signature', 'http://www.w3.org/TR/2001/REC-xml-c14n-20010315'],
     digestAlgorithm: 'http://www.w3.org/2000/09/xmldsig#sha1',
+    // URI="" (documento inteiro) SEM adicionar atributo Id — o XSD do ABRASF não
+    // define Id nesse elemento; qualquer atributo extra derruba o schema (E160).
+    isEmptyUri: true,
   })
   sig.computeSignature(envio, { location: { reference: alvo, action: 'append' } })
   return sig.getSignedXml()
