@@ -1,4 +1,5 @@
 // Consulta exclusiva de NFS-e RECEBIDAS (serviços tomados) no ISS-DF.
+// Integração SOAP compatível com o cabeçalho 1.00 para consultas sem IBSCBS.
 // SERVER-ONLY: SOAP + mTLS com o certificado A1 já cadastrado.
 import https from 'https'
 
