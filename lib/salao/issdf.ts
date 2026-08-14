@@ -8,7 +8,7 @@ export type NotaIssDf = {
 }
 export type ResultadoIssDf = { notas: NotaIssDf[]; paginas: number; status: number; mensagens: string[] }
 
-const endpoint = () => (process.env.SALON_ISSDF_URL || 'https://iss.fazenda.df.gov.br/wsnfsenacional/nfse.asmx').replace(/\/$/, '')
+const endpoint = () => (process.env.SALON_ISSDF_URL || 'https://nfse.fazenda.df.gov.br/wsnfsenacional/nfse.asmx').replace(/\/$/, '')
 const wsdlNs = () => process.env.SALON_ISSDF_WSDL_NS || 'http://www.sped.fazenda.gov.br/nfse'
 const soapAction = () => process.env.SALON_ISSDF_SOAP_ACTION || `${wsdlNs()}/ConsultarNfseServicoTomado`
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
@@ -82,6 +82,7 @@ export async function consultarRecebidasIssDf(params: { pfxBase64: string; senha
       const corpo = envelope(params.cnpj.replace(/\D/g, ''), params.inscricaoMunicipal, periodo.inicio, periodo.fim, pagina)
       const r = await post(agent, corpo)
       status = r.status; paginas++
+      if (r.status === 403) throw new Error('O ISS-DF recusou o certificado A1 no endpoint nacional (HTTP 403). Verifique se o certificado é e-CNPJ ICP-Brasil válido da empresa, matriz ou filial da mesma raiz, e se o primeiro acesso foi liberado no portal ISS-DF.')
       if (r.status >= 400) throw new Error(`ISS-DF respondeu HTTP ${r.status}: ${r.corpo.slice(0, 300)}`)
       const x = interpretar(r.corpo)
       todas.push(...x.notas)
