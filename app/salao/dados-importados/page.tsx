@@ -20,7 +20,7 @@ export default function DadosImportadosPage(){
  useEffect(()=>setPagina(1),[inicio,fim,empresaId,status,buscaD])
  const porPagina=50,totalPag=Math.max(1,Math.ceil(filtradas.length/porPagina)),visiveis=filtradas.slice((pagina-1)*porPagina,pagina*porPagina)
  const totais=useMemo(()=>({total:filtradas.length,comNota:filtradas.filter(l=>l.nota_id).length,semNota:filtradas.filter(l=>!l.nota_id).length,valor:filtradas.reduce((s,l)=>s+(l.valor_comissao||0),0)}),[filtradas])
- function editar(l:LinhaConsulta){setSelecionada(l);setForm({nome:l.nome||'',documento:l.documento||'',mes_ref:l.mes_ref,valor_comissao:String(l.valor_comissao||''),observacao:l.pendencia||''})}
+ function editar(l:LinhaConsulta){setSelecionada(l);setForm({nome:l.nome||'',documento:l.documento||'',mes_ref:l.mes_ref,valor_comissao:String(l.valor_comissao||''),observacao:l.observacao||''})}
  async function salvar(){if(!selecionada||acao)return;setAcao('salvar');const r=await editarComissao(selecionada.id,form,usuario);setAcao('');if(!r.ok){setMsg(r.erro||'Erro ao salvar.');return}setMsg('Registro importado atualizado e reavaliado.');setSelecionada(null);carregar()}
  async function analisar(l:LinhaConsulta){if(acao)return;setAcao(l.id);const r=await setAnaliseManual('comissao',l.id,true,'Revisar dado importado',usuario);setAcao('');if(!r.ok){setMsg(r.erro||'Erro.');return}setMsg('Registro enviado para análise.');carregar()}
  async function removerVinculo(l:LinhaConsulta){if(!l.nota_id||acao)return;setAcao(l.id);const r=await desvincular(l.id,l.nota_id);setAcao('');if(!r.ok){setMsg(r.erro||'Erro.');return}setMsg('Vínculo removido. O registro voltou para pendências.');carregar()}
