@@ -8,12 +8,7 @@ export type NotaIssDf = {
 }
 export type ResultadoIssDf = { notas: NotaIssDf[]; paginas: number; status: number; mensagens: string[] }
 
-const endpoint = () => {
-  const configurado = (process.env.SALON_ISSDF_URL || 'https://iss.fazenda.df.gov.br/wsnfsenacional/nfse.asmx').replace(/\/$/, '')
-  // O host nfse.fazenda.df.gov.br pertence à publicação anterior. O ISS-DF
-  // passou a divulgar iss.fazenda.df.gov.br para o padrão nacional RTC.
-  return configurado.replace(/^https:\/\/nfse\.fazenda\.df\.gov\.br(?=\/wsnfsenacional)/i, 'https://iss.fazenda.df.gov.br')
-}
+const endpoint = () => (process.env.SALON_ISSDF_URL || 'https://nfse.fazenda.df.gov.br/wsnfsenacional/nfse.asmx').replace(/\/$/, '')
 const wsdlNs = () => process.env.SALON_ISSDF_WSDL_NS || 'http://www.sped.fazenda.gov.br/nfse'
 const soapAction = () => process.env.SALON_ISSDF_SOAP_ACTION || `${wsdlNs()}/ConsultarNfseServicoTomado`
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
