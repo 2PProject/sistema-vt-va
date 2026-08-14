@@ -28,6 +28,7 @@ export default function TableEmpresas({ empresas, onEdit, onDelete }: TableEmpre
             <th className="table-header">#</th>
             <th className="table-header">Razão Social</th>
             <th className="table-header">CNPJ</th>
+            <th className="table-header">Inscrição municipal</th>
             <th className="table-header text-right">Ações</th>
           </tr>
         </thead>
@@ -37,6 +38,7 @@ export default function TableEmpresas({ empresas, onEdit, onDelete }: TableEmpre
               <td className="table-cell text-gray-400 w-12">{i + 1}</td>
               <td className="table-cell font-medium text-gray-900">{empresa.razao_social}</td>
               <td className="table-cell text-gray-500 font-mono text-xs">{empresa.cnpj}</td>
+              <td className="table-cell text-gray-500 font-mono text-xs">{empresa.inscricao_municipal || '—'}</td>
               <td className="table-cell text-right">
                 <button
                   onClick={() => onEdit(empresa)}
