@@ -42,12 +42,12 @@ export default function LayoutAdmin({ children, title, actions }: LayoutAdminPro
   return (
     <div className="flex min-h-screen bg-gray-50">
       <Sidebar />
-      <main className="flex-1 flex flex-col overflow-hidden">
-        <header className="bg-white border-b border-gray-200 px-8 py-5 flex items-center justify-between">
-          <h1 className="text-2xl font-bold text-gray-800">{title}</h1>
+      <main className="min-w-0 flex-1 flex flex-col overflow-hidden">
+        <header className="sticky top-0 z-30 flex items-center justify-between border-b border-gray-200 bg-white/95 px-4 py-4 backdrop-blur md:px-8 md:py-5">
+          <h1 className="truncate text-xl font-bold text-gray-800 md:text-2xl">{title}</h1>
           {actions && <div className="flex items-center gap-3">{actions}</div>}
         </header>
-        <div className="flex-1 p-8 overflow-auto">{children}</div>
+        <div className="flex-1 overflow-auto p-3 sm:p-5 md:p-8">{children}</div>
       </main>
     </div>
   )
