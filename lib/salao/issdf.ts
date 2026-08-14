@@ -8,7 +8,7 @@ export type NotaIssDf = {
 }
 export type ResultadoIssDf = { notas: NotaIssDf[]; paginas: number; status: number; mensagens: string[] }
 
-const endpoint = () => (process.env.SALON_ISSDF_URL || 'https://nfse.fazenda.df.gov.br/wsnfsenacional/nfse.asmx').replace(/\/$/, '')
+const endpoint = () => {\n  const configurado = (process.env.SALON_ISSDF_URL || 'https://iss.fazenda.df.gov.br/wsnfsenacional/nfse.asmx').replace(/\\/$/, '')\n  // O host nfse.fazenda.df.gov.br pertence à publicação anterior. O ISS-DF\n  // passou a divulgar iss.fazenda.df.gov.br para o padrão nacional RTC.\n  return configurado.replace(/^https:\\/\\/nfse\\.fazenda\\.df\\.gov\\.br(?=\\/wsnfsenacional)/i, 'https://iss.fazenda.df.gov.br')\n}
 const wsdlNs = () => process.env.SALON_ISSDF_WSDL_NS || 'http://www.sped.fazenda.gov.br/nfse'
 const soapAction = () => process.env.SALON_ISSDF_SOAP_ACTION || `${wsdlNs()}/ConsultarNfseServicoTomado`
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
@@ -22,14 +22,14 @@ const valor = (xml: string) => Number((tag(xml, 'vLiq') || tag(xml, 'vServ') || 
 
 function dados(cnpj: string, inscricao: string, inicio: string, fim: string, pagina: number) {
   const ns = 'http://www.sped.fazenda.gov.br/nfse'
-  // Padrão nacional RTC vigente no DF desde 02/08/2026. Neste schema,
+  // Padrão nacional RTC 1.01, obrigatório no DF desde 03/08/2026. Neste schema,
   // tcIdentificacaoPessoaEmpresa usa CNPJ/CPF e IM diretamente.
   const identificacao = `<CNPJ>${cnpj}</CNPJ><IM>${esc(inscricao)}</IM>`
   const filtros = `<Consulente>${identificacao}</Consulente><PeriodoEmissao><DataInicial>${inicio}</DataInicial><DataFinal>${fim}</DataFinal></PeriodoEmissao><Tomador>${identificacao}</Tomador><Pagina>${pagina}</Pagina>`
   return `<ConsultarNfseServicoTomadoEnvio xmlns="${ns}" xmlns:ns2="http://www.w3.org/2000/09/xmldsig#">${filtros}</ConsultarNfseServicoTomadoEnvio>`
 }
 function envelope(cnpj: string, inscricao: string, inicio: string, fim: string, pagina: number) {
-  const cab = '<cabecalho versao="1.00" xmlns="http://www.sped.fazenda.gov.br/nfse"><versaoDados>1.00</versaoDados></cabecalho>'
+  const cab = '<cabecalho versao="1.01" xmlns="http://www.sped.fazenda.gov.br/nfse"><versaoDados>1.01</versaoDados></cabecalho>'
   const xml = dados(cnpj, inscricao, inicio, fim, pagina)
   return `<?xml version="1.0" encoding="utf-8"?><soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body><ConsultarNfseServicoTomado xmlns="${wsdlNs()}"><nfseCabecMsg><![CDATA[${cab}]]></nfseCabecMsg><nfseDadosMsg><![CDATA[${xml}]]></nfseDadosMsg></ConsultarNfseServicoTomado></soap:Body></soap:Envelope>`
 }
