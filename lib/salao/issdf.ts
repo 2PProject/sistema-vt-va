@@ -87,7 +87,7 @@ export async function consultarRecebidasIssDf(params: { pfxBase64: string; senha
       const corpo = envelope(params.cnpj.replace(/\D/g, ''), params.inscricaoMunicipal, periodo.inicio, periodo.fim, pagina)
       const r = await post(agent, corpo)
       status = r.status; paginas++
-      if (r.status === 403) throw new Error('O ISS-DF recusou o certificado A1 no endpoint nacional (HTTP 403). Verifique se o certificado é e-CNPJ ICP-Brasil válido da empresa, matriz ou filial da mesma raiz, e se o primeiro acesso foi liberado no portal ISS-DF.')
+      if (r.status === 403) throw new Error(`O ISS-DF não autenticou o certificado A1 (HTTP 403). O arquivo foi aberto com a senha cadastrada, mas o servidor recusou a identidade apresentada para o CNPJ final ${cnpj.slice(-4)}. Confirme que esse mesmo e-CNPJ consegue entrar em “Logar com certificado digital” no portal ISS-DF. e-CNPJ não exige primeiro acesso. Se funcionar no portal, o bloqueio é do acesso do servidor/Vercel e deve ser liberado pelo suporte.df@notacontrol.com.br.`)
       if (r.status >= 400) {
         const fault = tag(r.corpo, 'faultstring') || tag(r.corpo, 'Message') || r.corpo.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
         throw new Error(`ISS-DF respondeu HTTP ${r.status}: ${fault.slice(0, 1200)}`)
