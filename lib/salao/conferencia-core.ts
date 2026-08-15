@@ -685,7 +685,17 @@ export async function desvincular(admin: SupabaseClient, comissaoId: string): Pr
     nota_id: null, status: 'pendente', nf_numero: null, nf_data: null, nf_valor: null, nf_origem: null, confirmado_em: null,
   }).eq('id', comissaoId)
   if (error) return { ok: false, erro: error.message }
-  if (c?.nota_id) await admin.from('salon_notas').update({ conferida: false }).eq('id', c.nota_id)
+  if (c?.nota_id) {
+    const { error: notaError } = await admin.from('salon_notas').update({
+      conferida: false, conferida_em: null, conferida_por: null,
+    }).eq('id', c.nota_id)
+    if (notaError) {
+      await admin.from('salon_comissoes').update({
+        nota_id: c.nota_id, status: 'conferida',
+      }).eq('id', comissaoId)
+      return { ok: false, erro: `Não foi possível reabrir a nota: ${notaError.message}` }
+    }
+  }
   return { ok: true }
 }
 
