@@ -487,16 +487,18 @@ export async function consultar(admin: SupabaseClient, f: Filtros, ord: Ordenaca
   const porDocPend = new Map<string, NotaRow[]>()
   for (const n of notasPend) { const k = dig(n.documento); if (!k) continue; (porDocPend.get(k) ?? porDocPend.set(k, []).get(k)!).push(n) }
 
-  // Duplicidades: mesma empresa + competência + CNPJ aparecendo mais de uma vez
+  // Duplicidade real exige repetição integral do registro importado.
+  // O mesmo profissional pode possuir mais de um lançamento legítimo no mês.
+  const chaveComissao = (c: NotaRow) => [c.empresa_id, dig(c.documento), norm(c.nome), Number(c.valor_comissao || 0).toFixed(2)].join('|')
   const dupCount = new Map<string, number>()
-  for (const c of coms) { if (!c.documento) continue; const k = c.empresa_id + '|' + dig(c.documento); dupCount.set(k, (dupCount.get(k) ?? 0) + 1) }
+  for (const c of coms) { if (!c.documento) continue; const k = chaveComissao(c); dupCount.set(k, (dupCount.get(k) ?? 0) + 1) }
 
   const linhas: LinhaConsulta[] = []
 
   for (const c of coms) {
     const e = Array.isArray(c.empresas) ? c.empresas[0] : c.empresas
     const empresaNome = e?.apelido || e?.razao_social || ''
-    const duplicada = !!c.documento && (dupCount.get(c.empresa_id + '|' + dig(c.documento)) ?? 0) > 1
+    const duplicada = !!c.documento && (dupCount.get(chaveComissao(c)) ?? 0) > 1
     const base: LinhaConsulta = {
       tipo: 'comissao', id: c.id, empresa_id: c.empresa_id, empresaNome, mes_ref: c.mes_ref,
       documento: c.documento, nome: c.nome, valor_comissao: Number(c.valor_comissao) || 0,
