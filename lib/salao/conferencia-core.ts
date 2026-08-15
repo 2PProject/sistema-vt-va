@@ -287,16 +287,14 @@ export async function reconciliar(admin: SupabaseClient, competencia: string, em
   const usadas = await notasUsadas(admin, competencia)
   const notas = await notasDaCompetencia(admin, competencia, true) // só as notas do mês, com valor > 0
 
-  type Cand = { id: string; empresa_id: string; valor: number; numero: string | null; data_emissao: string | null; emitente_nome: string | null }
+  type Cand = { id: string; empresa_id: string; valor: number; numero: string | null; data_emissao: string | null }
   const porDoc = new Map<string, Cand[]>()
-  const porNome = new Map<string, Cand[]>()
   for (const n of notas) {
     if (usadas.has(n.id) || n.excluida) continue
-    const cand: Cand = { id: n.id, empresa_id: n.empresa_id, valor: Number(n.valor) || 0, numero: n.numero, data_emissao: n.data_emissao, emitente_nome: n.emitente_nome ?? null }
     const k = dig(n.documento)
-    if (k) { const arr = porDoc.get(k) ?? []; arr.push(cand); porDoc.set(k, arr) }
-    const kn = norm(n.emitente_nome)
-    if (kn) { const arr = porNome.get(kn) ?? []; arr.push(cand); porNome.set(kn, arr) }
+    if (!k) continue
+    const cand: Cand = { id: n.id, empresa_id: n.empresa_id, valor: Number(n.valor) || 0, numero: n.numero, data_emissao: n.data_emissao }
+    const arr = porDoc.get(k) ?? []; arr.push(cand); porDoc.set(k, arr)
   }
 
   let conferidas = 0, divergencias = 0, outraEmpresa = 0
@@ -326,22 +324,17 @@ export async function reconciliar(admin: SupabaseClient, competencia: string, em
     conferidas++
   }
 
-  // 1ª passada: mesma unidade
+  // Automático estrito: documento, competência, unidade e valor devem coincidir.
+  // Casos sem documento ou com qualquer divergência permanecem pendentes para decisão manual.
   for (const p of pend) {
-    const porDocumento = porDoc.get(dig(p.documento)); const arr = porDocumento?.length ? porDocumento : porNome.get(norm(p.nome)); if (!arr || arr.length === 0) continue
+    const documento = dig(p.documento)
+    if (!documento) continue
+    const arr = porDoc.get(documento)
+    if (!arr?.length) continue
     const alvo = Number(p.valor_comissao) || 0
-    const mine = arr.filter((n) => n.empresa_id === p.empresa_id)
-    if (mine.length === 0) continue
-    mine.sort((a, b) => Math.abs(a.valor - alvo) - Math.abs(b.valor - alvo))
-    await casar(p, arr, mine[0])
-  }
-  // 2ª passada: qualquer unidade
-  for (const p of pend) {
-    if (feitos.has(p.id)) continue
-    const porDocumento = porDoc.get(dig(p.documento)); const arr = porDocumento?.length ? porDocumento : porNome.get(norm(p.nome)); if (!arr || arr.length === 0) continue
-    const alvo = Number(p.valor_comissao) || 0
-    arr.sort((a, b) => Math.abs(a.valor - alvo) - Math.abs(b.valor - alvo))
-    await casar(p, arr, arr[0])
+    const exatas = arr.filter((n) => n.empresa_id === p.empresa_id && Math.abs(n.valor - alvo) < 0.01)
+    if (exatas.length !== 1) continue
+    await casar(p, arr, exatas[0])
   }
 
   return { conferidas, pendentes: pend.length - conferidas, divergencias, outraEmpresa }
