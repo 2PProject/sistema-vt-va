@@ -93,17 +93,13 @@ const secoesSalao: { title: string; items: Item[] }[] = SALAO_ENABLED ? [
   {
     title: 'Salão (NFS-e)',
     items: [
-      { href: '/salao', label: 'Painel NFS-e', icon: ICON.salao },
-      { href: '/salao/notas', label: 'Notas Baixadas', icon: ICON.recibo },
-      { href: '/salao/outros-servicos', label: 'Outros Serviços', icon: ICON.ajuste },
+      { href: '/salao', label: 'Painel', icon: ICON.salao },
+      { href: '/salao/notas', label: 'Notas', icon: ICON.recibo },
       { href: '/salao/conferencia', label: 'Conferência', icon: ICON.competencia },
-      { href: '/salao/excecoes', label: 'Central de Exceções', icon: ICON.ajuste },
-      { href: '/salao/competencia', label: 'Competências', icon: ICON.fechamento },
-      { href: '/salao/importar', label: 'Importar Planilha', icon: ICON.pagamento },
-      { href: '/salao/dados-importados', label: 'Dados Importados', icon: ICON.func },
-      { href: '/salao/certificados', label: 'Certificados', icon: ICON.cargo },
+      { href: '/salao/excecoes', label: 'Pendências', icon: ICON.ajuste },
+      { href: '/salao/importar', label: 'Importar dados', icon: ICON.pagamento },
+      { href: '/salao/dados-importados', label: 'Profissionais', icon: ICON.func },
       { href: '/salao/relatorios', label: 'Relatórios', icon: ICON.recibo },
-      { href: '/salao/auditoria', label: 'Histórico / Excluídas', icon: ICON.recibo },
     ],
   },
 ] : []
