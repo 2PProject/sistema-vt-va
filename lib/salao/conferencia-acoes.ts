@@ -45,7 +45,13 @@ export async function editarComissao(admin: SupabaseClient, id: string, campos: 
     const d = dig(String(novo.documento)); novo.documento = d || null
     novo.pendencia = (d.length === 11 || d.length === 14) ? null : (atual.pendencia ?? 'CNPJ/CPF inválido')
   }
-  if ('valor_comissao' in novo) novo.valor_comissao = Number(novo.valor_comissao) || 0
+  if ('valor_comissao' in novo) {
+    const bruto = novo.valor_comissao
+    const texto = String(bruto ?? '').trim()
+    const normalizado = typeof bruto === 'number' ? bruto : Number(texto.includes(',') ? texto.replace(/\./g, '').replace(',', '.') : texto)
+    if (!Number.isFinite(normalizado) || normalizado < 0) return { ok: false, erro: 'Informe um valor de comissão válido.' }
+    novo.valor_comissao = Math.round(normalizado * 100) / 100
+  }
   if (Object.keys(novo).length === 0) return { ok: true }
   novo.corrigido_manual = true
 
