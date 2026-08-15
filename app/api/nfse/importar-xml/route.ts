@@ -1,5 +1,6 @@
 import { getAdminClient } from '../../../../lib/salao/server'
 import * as XLSX from 'xlsx'
+import { reconciliar } from '../../../../lib/salao/conferencia-core'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -134,10 +135,20 @@ export async function POST(req: Request) {
       if (error) throw error
     }
 
+    let conferidas = 0, pendentes = 0, divergencias = 0
+    const competencias = Array.from(new Set(novas.map(n => n.competencia).filter(Boolean))).sort()
+    for (const competencia of competencias) {
+      const resultado = await reconciliar(admin, competencia, empresaId)
+      conferidas += resultado.conferidas
+      pendentes += resultado.pendentes
+      divergencias += resultado.divergencias
+    }
+
     return Response.json({
       ok: true, empresa: empresa.apelido || empresa.razao_social,
       arquivos: xmls.length, validas: lidas.length, importadas: novas.length,
       duplicadas: lidas.length - novas.length, rejeitadas: erros.length, erros: erros.slice(0, 30),
+      conferencia: { competencias, conferidas, pendentes, divergencias },
     })
   } catch (e) {
     return Response.json({ erro: e instanceof Error ? e.message : 'Falha ao importar XML.' }, { status: 500 })
