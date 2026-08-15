@@ -95,6 +95,7 @@ const secoesSalao: { title: string; items: Item[] }[] = SALAO_ENABLED ? [
     items: [
       { href: '/salao', label: 'Painel', icon: ICON.salao },
       { href: '/salao/notas', label: 'Notas', icon: ICON.recibo },
+      { href: '/salao/outros-servicos', label: 'Outros Serviços', icon: ICON.ajuste },
       { href: '/salao/conferencia', label: 'Conferência', icon: ICON.competencia },
       { href: '/salao/excecoes', label: 'Pendências', icon: ICON.ajuste },
       { href: '/salao/importar', label: 'Importar dados', icon: ICON.pagamento },
