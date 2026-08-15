@@ -516,9 +516,12 @@ export async function consultar(admin: SupabaseClient, f: Filtros, ord: Ordenaca
       base.nf_valor = vNota
       base.diferenca = Math.round((vNota - (base.valor_comissao || 0)) * 100) / 100
       base.outraEmpresa = !!n && n.empresa_id !== c.empresa_id
-      base.situacao = duplicada ? 'possivel_duplicidade'
-        : base.outraEmpresa ? 'nota_outra_empresa'
-        : Math.abs(base.diferenca) >= 0.01 ? 'conferido_com_divergencia' : 'conferido'
+      const motivosVinculo: string[] = []
+      if (duplicada) motivosVinculo.push('registro importado possivelmente duplicado')
+      if (base.outraEmpresa) motivosVinculo.push('nota vinculada pertence a outra unidade')
+      if (Math.abs(base.diferenca) >= 0.01) motivosVinculo.push(`valor divergente em R$ ${Math.abs(base.diferenca).toFixed(2)}`)
+      base.situacao = motivosVinculo.length ? 'conferido_com_divergencia' : 'conferido'
+      if (motivosVinculo.length && !base.observacao) base.observacao = `Vínculo confirmado: ${motivosVinculo.join('; ')}.`
     } else if (c.pendencia || !c.documento) {
       const doc = dig(c.documento)
       base.situacao = (doc && doc.length !== 11 && doc.length !== 14) ? 'cnpj_invalido' : 'falta_cnpj'
