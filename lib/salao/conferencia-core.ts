@@ -680,7 +680,7 @@ export async function vincular(admin: SupabaseClient, comissaoId: string, notaId
 }
 
 export async function desvincular(admin: SupabaseClient, comissaoId: string): Promise<{ ok: boolean; erro?: string }> {
-  const { data: c } = await admin.from('salon_comissoes').select('nota_id').eq('id', comissaoId).maybeSingle()
+  const { data: c } = await admin.from('salon_comissoes').select('nota_id, status, nf_numero, nf_data, nf_valor, nf_origem, confirmado_em').eq('id', comissaoId).maybeSingle()
   const { error } = await admin.from('salon_comissoes').update({
     nota_id: null, status: 'pendente', nf_numero: null, nf_data: null, nf_valor: null, nf_origem: null, confirmado_em: null,
   }).eq('id', comissaoId)
@@ -691,7 +691,8 @@ export async function desvincular(admin: SupabaseClient, comissaoId: string): Pr
     }).eq('id', c.nota_id)
     if (notaError) {
       await admin.from('salon_comissoes').update({
-        nota_id: c.nota_id, status: 'conferida',
+        nota_id: c.nota_id, status: c.status ?? 'conferida', nf_numero: c.nf_numero, nf_data: c.nf_data,
+        nf_valor: c.nf_valor, nf_origem: c.nf_origem, confirmado_em: c.confirmado_em,
       }).eq('id', comissaoId)
       return { ok: false, erro: `Não foi possível reabrir a nota: ${notaError.message}` }
     }
