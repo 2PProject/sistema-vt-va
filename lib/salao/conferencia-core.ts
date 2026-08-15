@@ -663,7 +663,11 @@ export async function vincular(admin: SupabaseClient, comissaoId: string, notaId
   }).eq('id', comissaoId)
   if (error) return { ok: false, erro: error.message }
   const { error: erroNota } = await admin.from('salon_notas').update({ conferida: true, conferida_em: new Date().toISOString(), conferida_por: usuario ?? null, analise_manual: false, analise_motivo: null }).eq('id', n.id)
-  if (erroNota) return { ok: false, erro: erroNota.message }
+  if (erroNota) {
+    // Não deixar vínculo pela metade quando a atualização da nota falhar.
+    await admin.from('salon_comissoes').update({ nota_id: null, status: 'pendente', nf_numero: null, nf_data: null, nf_valor: null, nf_origem: null, confirmado_em: null }).eq('id', comissaoId)
+    return { ok: false, erro: erroNota.message }
+  }
   return { ok: true }
 }
 
