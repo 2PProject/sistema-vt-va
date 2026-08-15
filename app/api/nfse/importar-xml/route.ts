@@ -21,28 +21,40 @@ const texto = (v: string) => v
   .replace(/&quot;/g, '"').replace(/&apos;/g, "'").trim()
 
 function parseNota(xml: string): { nota?: NotaXml; tomador?: string; erro?: string } {
-  const inf = bloco(xml, 'InfNfse') || bloco(xml, 'infNFSe')
-  if (!inf) return { erro: 'Não contém InfNfse.' }
+  const inf = bloco(xml, 'InfNfse')
+  if (!inf) return { erro: 'Não contém InfNfse/infNFSe.' }
+
+  // O ZIP do ISS-DF pode misturar ABRASF 2.04 e o leiaute nacional RTC 1.01.
+  const nacional = /<(?:(?:[\w-]+):)?infNFSe\b/i.test(inf) && /<(?:(?:[\w-]+):)?nNFSe>/i.test(inf)
   const prestadorIdent = bloco(inf, 'Prestador') || bloco(xml, 'Prestador')
   const prestadorDados = bloco(inf, 'PrestadorServico') || bloco(xml, 'PrestadorServico')
+  const emitente = bloco(inf, 'emit')
   const tomadorDados = bloco(inf, 'TomadorServico') || bloco(xml, 'TomadorServico')
-  const documento = soDigitos(tag(prestadorIdent || prestadorDados, 'Cnpj') || tag(prestadorIdent || prestadorDados, 'Cpf'))
-  const tomador = soDigitos(tag(tomadorDados, 'Cnpj') || tag(tomadorDados, 'Cpf'))
-  const numero = texto(tag(inf, 'Numero'))
-  const dataEmissao = tag(inf, 'DataEmissao').slice(0, 10)
-  const competenciaData = (tag(inf, 'Competencia') || dataEmissao).slice(0, 10)
+  const tomadorNacional = bloco(bloco(inf, 'infDPS'), 'toma') || bloco(inf, 'toma')
+
+  const origemPrestador = nacional ? emitente : (prestadorIdent || prestadorDados)
+  const documento = soDigitos(tag(origemPrestador, 'Cnpj') || tag(origemPrestador, 'Cpf'))
+  const tomadorOrigem = nacional ? tomadorNacional : tomadorDados
+  const tomador = soDigitos(tag(tomadorOrigem, 'Cnpj') || tag(tomadorOrigem, 'Cpf'))
+  const numero = texto(tag(inf, 'nNFSe') || tag(inf, 'Numero'))
+  const dataEmissao = (tag(inf, 'dhProc') || tag(inf, 'DataEmissao') || tag(inf, 'dhEmi')).slice(0, 10)
+  const competenciaData = (tag(inf, 'dCompet') || tag(inf, 'Competencia') || dataEmissao).slice(0, 10)
   const competencia = competenciaData.slice(0, 7)
-  const valorTexto = tag(bloco(inf, 'ValoresNfse'), 'ValorLiquidoNfse')
+  const valorTexto = tag(bloco(inf, 'valores'), 'vLiq')
+    || tag(bloco(inf, 'ValoresNfse'), 'ValorLiquidoNfse')
     || tag(bloco(inf, 'Valores'), 'ValorServicos') || '0'
   const valor = Number(valorTexto.replace(',', '.'))
-  const emitente_nome = texto(tag(prestadorDados, 'RazaoSocial') || tag(prestadorDados, 'NomeFantasia'))
+  const emitente_nome = texto(nacional
+    ? (tag(emitente, 'xNome') || tag(emitente, 'xFant'))
+    : (tag(prestadorDados, 'RazaoSocial') || tag(prestadorDados, 'NomeFantasia')))
   if (!numero || !dataEmissao || !documento) return { tomador, erro: 'Número, emissão ou documento do prestador não identificado.' }
   if (!Number.isFinite(valor)) return { tomador, erro: 'Valor da nota inválido.' }
+  const idNacional = inf.match(/<(?:(?:[\w-]+):)?infNFSe\b[^>]*\bId="([^"]+)"/i)?.[1] || ''
   const verificacao = texto(tag(inf, 'CodigoVerificacao'))
   return {
     tomador,
     nota: {
-      chave: `XML-ABRASF|${documento}|${numero}|${dataEmissao}|${verificacao}`,
+      chave: idNacional || `XML-ABRASF|${documento}|${numero}|${dataEmissao}|${verificacao}`,
       documento, emitente_nome, numero, valor, data_emissao: dataEmissao, competencia,
     },
   }
