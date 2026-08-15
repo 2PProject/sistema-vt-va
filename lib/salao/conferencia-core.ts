@@ -278,7 +278,7 @@ async function comissoesDaCompetencia(admin: SupabaseClient, competencia: string
  */
 export async function reconciliar(admin: SupabaseClient, competencia: string, empresaId?: string):
   Promise<{ conferidas: number; pendentes: number; divergencias: number; outraEmpresa: number }> {
-  let cq = admin.from('salon_comissoes').select('id, empresa_id, documento, valor_comissao')
+  let cq = admin.from('salon_comissoes').select('id, empresa_id, documento, nome, valor_comissao')
     .eq('mes_ref', competencia).is('nota_id', null)
   if (empresaId) cq = cq.eq('empresa_id', empresaId)
   const { data: pend } = await cq
@@ -287,14 +287,16 @@ export async function reconciliar(admin: SupabaseClient, competencia: string, em
   const usadas = await notasUsadas(admin, competencia)
   const notas = await notasDaCompetencia(admin, competencia, true) // só as notas do mês, com valor > 0
 
-  type Cand = { id: string; empresa_id: string; valor: number; numero: string | null; data_emissao: string | null }
+  type Cand = { id: string; empresa_id: string; valor: number; numero: string | null; data_emissao: string | null; emitente_nome: string | null }
   const porDoc = new Map<string, Cand[]>()
+  const porNome = new Map<string, Cand[]>()
   for (const n of notas) {
     if (usadas.has(n.id) || n.excluida) continue
-    const k = dig(n.documento); if (!k) continue
-    const arr = porDoc.get(k) ?? []
-    arr.push({ id: n.id, empresa_id: n.empresa_id, valor: Number(n.valor) || 0, numero: n.numero, data_emissao: n.data_emissao })
-    porDoc.set(k, arr)
+    const cand: Cand = { id: n.id, empresa_id: n.empresa_id, valor: Number(n.valor) || 0, numero: n.numero, data_emissao: n.data_emissao, emitente_nome: n.emitente_nome ?? null }
+    const k = dig(n.documento)
+    if (k) { const arr = porDoc.get(k) ?? []; arr.push(cand); porDoc.set(k, arr) }
+    const kn = norm(n.emitente_nome)
+    if (kn) { const arr = porNome.get(kn) ?? []; arr.push(cand); porNome.set(kn, arr) }
   }
 
   let conferidas = 0, divergencias = 0, outraEmpresa = 0
@@ -321,7 +323,7 @@ export async function reconciliar(admin: SupabaseClient, competencia: string, em
 
   // 1ª passada: mesma unidade
   for (const p of pend) {
-    const arr = porDoc.get(dig(p.documento)); if (!arr || arr.length === 0) continue
+    const porDocumento = porDoc.get(dig(p.documento)); const arr = porDocumento?.length ? porDocumento : porNome.get(norm(p.nome)); if (!arr || arr.length === 0) continue
     const alvo = Number(p.valor_comissao) || 0
     const mine = arr.filter((n) => n.empresa_id === p.empresa_id)
     if (mine.length === 0) continue
@@ -331,7 +333,7 @@ export async function reconciliar(admin: SupabaseClient, competencia: string, em
   // 2ª passada: qualquer unidade
   for (const p of pend) {
     if (feitos.has(p.id)) continue
-    const arr = porDoc.get(dig(p.documento)); if (!arr || arr.length === 0) continue
+    const porDocumento = porDoc.get(dig(p.documento)); const arr = porDocumento?.length ? porDocumento : porNome.get(norm(p.nome)); if (!arr || arr.length === 0) continue
     const alvo = Number(p.valor_comissao) || 0
     arr.sort((a, b) => Math.abs(a.valor - alvo) - Math.abs(b.valor - alvo))
     await casar(p, arr, arr[0])
@@ -648,7 +650,7 @@ export async function notasDoCnpj(admin: SupabaseClient, documento: string | nul
 export async function vincular(admin: SupabaseClient, comissaoId: string, notaId: string, usuario?: string): Promise<{ ok: boolean; erro?: string }> {
   const [{ data: n }, { data: comissao }] = await Promise.all([
     admin.from('salon_notas').select('id, numero, valor, data_emissao').eq('id', notaId).maybeSingle(),
-    admin.from('salon_comissoes').select('valor_comissao, observacao').eq('id', comissaoId).maybeSingle(),
+    admin.from('salon_comissoes').select('valor_comissao, observacao, nota_id').eq('id', comissaoId).maybeSingle(),
   ])
   if (!n) return { ok: false, erro: 'Nota não encontrada.' }
   if (!comissao) return { ok: false, erro: 'Profissional importado não encontrado.' }
@@ -668,6 +670,7 @@ export async function vincular(admin: SupabaseClient, comissaoId: string, notaId
     await admin.from('salon_comissoes').update({ nota_id: null, status: 'pendente', nf_numero: null, nf_data: null, nf_valor: null, nf_origem: null, confirmado_em: null }).eq('id', comissaoId)
     return { ok: false, erro: erroNota.message }
   }
+  if (comissao.nota_id && comissao.nota_id !== n.id) await admin.from('salon_notas').update({ conferida: false, conferida_em: null, conferida_por: null }).eq('id', comissao.nota_id)
   return { ok: true }
 }
 
