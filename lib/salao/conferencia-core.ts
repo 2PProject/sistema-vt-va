@@ -232,7 +232,7 @@ function empresaNomeDe(row: NotaRow): string {
 /** Notas de UMA competência (todas as unidades). Filtra no banco. */
 async function notasDaCompetencia(admin: SupabaseClient, competencia: string, soComValor = false, empresaId?: string): Promise<NotaRow[]> {
   return paginado((de, ate) => {
-    let q = admin.from('salon_notas').select(NOTA_COLS).or(`competencia.eq.${competencia},competencia_conf.eq.${competencia}`).eq('excluida',false).eq('classificacao','profissional').order('id', { ascending: true }).range(de, ate)
+    let q = admin.from('salon_notas').select(NOTA_COLS).or(`competencia.eq.${competencia},competencia_conf.eq.${competencia}`).eq('excluida',false).eq('classificacao','profissional').eq('analise_manual',false).order('id', { ascending: true }).range(de, ate)
     if (empresaId) q = q.eq('empresa_id', empresaId)
     if (soComValor) q = q.gt('valor', 0)
     return q as unknown as QB
@@ -246,7 +246,7 @@ async function notasDosDocumentos(admin: SupabaseClient, docs: string[], empresa
   for (let i = 0; i < docs.length; i += 200) {           // .in() em blocos
     const lote = docs.slice(i, i + 200)
     const parte = await paginado((de, ate) =>
-      (() => { let q=admin.from('salon_notas').select(NOTA_COLS).in('documento', lote).eq('excluida',false).eq('classificacao','profissional').order('id',{ascending:true}).range(de,ate);if(empresaId)q=q.eq('empresa_id',empresaId);return q as unknown as QB })())
+      (() => { let q=admin.from('salon_notas').select(NOTA_COLS).in('documento', lote).eq('excluida',false).eq('classificacao','profissional').eq('analise_manual',false).order('id',{ascending:true}).range(de,ate);if(empresaId)q=q.eq('empresa_id',empresaId);return q as unknown as QB })())
     out.push(...parte)
   }
   return out
