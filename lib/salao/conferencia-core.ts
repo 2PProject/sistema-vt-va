@@ -304,19 +304,24 @@ export async function reconciliar(admin: SupabaseClient, competencia: string, em
 
   async function casar(p: { id: string; empresa_id: string; valor_comissao: number }, arr: Cand[], nota: Cand) {
     const alvo = Number(p.valor_comissao) || 0
-    await admin.from('salon_comissoes').update({
-      nota_id: null, status: 'pendente', nf_numero: null, nf_data: null, nf_valor: null, nf_origem: null, confirmado_em: null,
-    }).eq('nota_id', nota.id).neq('id', p.id)
-    await admin.from('salon_comissoes').update({
-      nota_id: nota.id, status: 'conferida',
-      nf_numero: nota.numero ?? null, nf_data: nota.data_emissao ?? null, nf_valor: nota.valor, nf_origem: 'adn',
-      confirmado_em: new Date().toISOString(),
-    }).eq('id', p.id)
-    await admin.from('salon_notas').update({ conferida: true }).eq('id', nota.id)
+    const divergente = Math.abs(nota.valor - alvo) >= 0.01
+    const observacao = divergente ? `Conferido com divergência: esperado R$ ${alvo.toFixed(2)} e nota R$ ${nota.valor.toFixed(2)}.` : null
+    const resultados = await Promise.all([
+      admin.from('salon_comissoes').update({
+        nota_id: null, status: 'pendente', nf_numero: null, nf_data: null, nf_valor: null, nf_origem: null, confirmado_em: null,
+      }).eq('nota_id', nota.id).neq('id', p.id),
+      admin.from('salon_comissoes').update({
+        nota_id: nota.id, status: 'conferida',
+        nf_numero: nota.numero ?? null, nf_data: nota.data_emissao ?? null, nf_valor: nota.valor, nf_origem: 'adn',
+        confirmado_em: new Date().toISOString(), observacao,
+      }).eq('id', p.id),
+      admin.from('salon_notas').update({ conferida: true }).eq('id', nota.id),
+    ])
+    const falha = resultados.find((r) => r.error)?.error
+    if (falha) throw new Error(`Falha ao reconciliar: ${falha.message}`)
     arr.splice(arr.indexOf(nota), 1)
     feitos.add(p.id)
-    const divergente=Math.abs(nota.valor-alvo)>=0.01
-    if(divergente){divergencias++;await admin.from('salon_comissoes').update({observacao:`Conferido com divergência: esperado R$ ${alvo.toFixed(2)} e nota R$ ${nota.valor.toFixed(2)}.`}).eq('id',p.id)}
+    if (divergente) divergencias++
     if (nota.empresa_id !== p.empresa_id) outraEmpresa++
     conferidas++
   }
