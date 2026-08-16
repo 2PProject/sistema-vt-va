@@ -15,10 +15,11 @@ export async function exportarExcel(titulo: string, colunas: Coluna[], rows: any
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export async function exportarPDF(titulo: string, colunas: Coluna[], rows: any[], nomeArq: string) {
+export async function exportarPDF(titulo: string, colunas: Coluna[], rows: any[], nomeArq: string, opcoes: { orientation?: 'portrait' | 'landscape' } = {}) {
   const { default: jsPDF } = await import('jspdf')
-  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
-  const larg = 297, margem = 10
+  const vertical = opcoes.orientation === 'portrait'
+  const doc = new jsPDF({ orientation: vertical ? 'portrait' : 'landscape', unit: 'mm', format: 'a4' })
+  const larg = vertical ? 210 : 297, limiteY = vertical ? 282 : 195, margem = 12
   let y = 16
   doc.setFontSize(13); doc.setFont('helvetica', 'bold'); doc.text(titulo, margem, y); y += 8
   doc.setFontSize(8)
@@ -27,7 +28,7 @@ export async function exportarPDF(titulo: string, colunas: Coluna[], rows: any[]
     doc.setFont('helvetica', bold ? 'bold' : 'normal')
     vals.forEach((v, i) => doc.text(String(v).slice(0, 40), margem + i * colW, y))
     y += 6
-    if (y > 195) { doc.addPage(); y = 16 }
+    if (y > limiteY) { doc.addPage(); y = 16 }
   }
   linha(colunas.map(c => c.header), true)
   doc.setDrawColor(210); doc.line(margem, y - 4, larg - margem, y - 4)
