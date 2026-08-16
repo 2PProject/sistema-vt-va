@@ -3,12 +3,11 @@
 // recebidas (salon_notas). Toda gravação passa por aqui, no servidor — o cliente
 // nunca escreve direto no banco (evita falha silenciosa por RLS).
 //
-// Regra de casamento (definitiva):
-//   CNPJ do emitente (documento) + competência (dCompet da nota = mes_ref da
-//   planilha). O VALOR é comparação, nunca filtro (o crédito da planilha pode
-//   diferir do valor bruto da NFS-e). Notas de valor 0 (canceladas) são ignoradas.
-//   "Nota usada" conta só dentro da MESMA competência (vínculo de outro mês não
-//   bloqueia). Casa em 2 passadas: mesma unidade primeiro, depois qualquer unidade.
+// Regra automática (conservadora):
+//   mesma unidade + mesmo CNPJ/CPF + valor exato + uma única candidata disponível.
+//   A competência oficial é a da planilha (mes_ref); a competência declarada na
+//   NFS-e não bloqueia o vínculo porque pode vir preenchida incorretamente.
+//   Qualquer ambiguidade ou divergência permanece pendente para decisão manual.
 //
 // EFICIÊNCIA: as consultas FILTRAM no banco (por competência e por CNPJ) — nunca
 // carregam a tabela inteira. E paginam com .range(): o PostgREST devolve no
@@ -278,8 +277,8 @@ async function comissoesDaCompetencia(admin: SupabaseClient, competencia: string
 }
 
 /**
- * Reconcilia a competência (CNPJ + competência, valor informativo).
- * Duas passadas: mesma unidade → qualquer unidade. Auto-cura vínculos de outro mês.
+ * Reconcilia uma competência usando somente correspondências automáticas inequívocas.
+ * Não classifica como processada uma nota que permaneceu sem vínculo.
  */
 export async function reconciliar(admin: SupabaseClient, competencia: string, empresaId?: string):
   Promise<{ conferidas: number; pendentes: number; divergencias: number; outraEmpresa: number }> {
