@@ -354,7 +354,14 @@ export async function limpar(admin: SupabaseClient, competencia?: string, empres
     if (empresaId) sel = sel.eq('empresa_id', empresaId)
     return sel as unknown as QB
   })
-  const notaIds = Array.from(new Set(rows.map((r) => r.nota_id).filter(Boolean))) as string[]
+  const comissaoIds = rows.map((r) => r.id)
+  const { data: relacoes } = comissaoIds.length
+    ? await admin.from('salon_comissao_notas').select('comissao_id, nota_id').in('comissao_id', comissaoIds)
+    : { data: [] as { comissao_id: string; nota_id: string }[] }
+  const notaIds = Array.from(new Set([
+    ...rows.map((r) => r.nota_id),
+    ...(relacoes ?? []).map((r) => r.nota_id),
+  ].filter(Boolean))) as string[]
 
   let upd = admin.from('salon_comissoes').update({
     nota_id: null, status: 'pendente', nf_numero: null, nf_data: null, nf_valor: null, nf_origem: null, confirmado_em: null,
@@ -363,8 +370,9 @@ export async function limpar(admin: SupabaseClient, competencia?: string, empres
   if (empresaId) upd = upd.eq('empresa_id', empresaId)
   await upd
 
+  if (comissaoIds.length) await admin.from('salon_comissao_notas').delete().in('comissao_id', comissaoIds)
   for (let i = 0; i < notaIds.length; i += 200) {
-    await admin.from('salon_notas').update({ conferida: false }).in('id', notaIds.slice(i, i + 200))
+    await admin.from('salon_notas').update({ conferida: false, conferida_em: null, conferida_por: null }).in('id', notaIds.slice(i, i + 200))
   }
   return { limpos: rows.length }
 }
