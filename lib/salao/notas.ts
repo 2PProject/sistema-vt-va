@@ -1,4 +1,5 @@
 import { supabase } from '../supabase'
+import { competenciaNoEscopo } from './config'
 
 export type NotaRecebida = {
   id: string
@@ -69,6 +70,10 @@ export async function listarNotas(f: FiltroNotas): Promise<NotaRecebida[]> {
     const e = Array.isArray(n.empresas) ? n.empresas[0] : n.empresas
     return { ...n, empresaNome: e?.apelido || e?.razao_social || '', competenciaEfetiva: n.competencia_conf || n.competencia || null }
   })
+
+  // O módulo começa em 01/2026. Competências anteriores permanecem no
+  // histórico, mas não participam da operação nem geram pendências.
+  linhas = linhas.filter(l => competenciaNoEscopo(l.competenciaEfetiva))
 
   if (f.mes) {
     const mes = f.mes
