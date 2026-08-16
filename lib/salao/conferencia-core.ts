@@ -310,6 +310,7 @@ export async function reconciliar(admin: SupabaseClient, competencia: string, em
     const alvo = Number(p.valor_comissao) || 0
     const divergente = Math.abs(nota.valor - alvo) >= 0.01
     const observacao = divergente ? `Conferido com divergência: esperado R$ ${alvo.toFixed(2)} e nota R$ ${nota.valor.toFixed(2)}.` : null
+    await admin.from('salon_comissao_notas').delete().eq('comissao_id', p.id)
     const resultados = await Promise.all([
       admin.from('salon_comissoes').update({
         nota_id: null, status: 'pendente', nf_numero: null, nf_data: null, nf_valor: null, nf_origem: null, confirmado_em: null,
@@ -320,6 +321,7 @@ export async function reconciliar(admin: SupabaseClient, competencia: string, em
         confirmado_em: new Date().toISOString(), observacao,
       }).eq('id', p.id),
       admin.from('salon_notas').update({ conferida: true }).eq('id', nota.id),
+      admin.from('salon_comissao_notas').upsert({ comissao_id: p.id, nota_id: nota.id }, { onConflict: 'comissao_id,nota_id' }),
     ])
     const falha = resultados.find((r) => r.error)?.error
     if (falha) throw new Error(`Falha ao reconciliar: ${falha.message}`)
@@ -673,11 +675,21 @@ export async function vincular(admin: SupabaseClient, comissaoId: string, notaId
   ])
   if (!n) return { ok: false, erro: 'Nota não encontrada.' }
   if (!comissao) return { ok: false, erro: 'Profissional importado não encontrado.' }
+  const [{ data: relOcupada }, { data: legadoOcupado }, { data: relAntigas }] = await Promise.all([
+    admin.from('salon_comissao_notas').select('comissao_id').eq('nota_id', notaId).neq('comissao_id', comissaoId),
+    admin.from('salon_comissoes').select('id').eq('nota_id', notaId).neq('id', comissaoId),
+    admin.from('salon_comissao_notas').select('nota_id').eq('comissao_id', comissaoId),
+  ])
+  if ((relOcupada?.length ?? 0) || (legadoOcupado?.length ?? 0)) return { ok: false, erro: 'Esta nota já está vinculada a outro profissional.' }
+  const notasAnteriores = Array.from(new Set([comissao.nota_id, ...(relAntigas ?? []).map(r => r.nota_id)].filter(Boolean))) as string[]
   const esperado=Number(comissao.valor_comissao)||0,valorNota=Number(n.valor)||0,diferenca=Math.round((valorNota-esperado)*100)/100
   const notaDivergencia=Math.abs(diferenca)>=0.01?`Conferido com divergência: esperado R$ ${esperado.toFixed(2)}, nota R$ ${valorNota.toFixed(2)}, diferença R$ ${diferenca.toFixed(2)}.`:null
   await admin.from('salon_comissoes').update({
     nota_id: null, status: 'pendente', nf_numero: null, nf_data: null, nf_valor: null, nf_origem: null, confirmado_em: null,
   }).eq('nota_id', notaId).neq('id', comissaoId)
+  await admin.from('salon_comissao_notas').delete().eq('comissao_id', comissaoId)
+  const { error: erroRel } = await admin.from('salon_comissao_notas').upsert({ comissao_id: comissaoId, nota_id: notaId, criado_por: usuario ?? null }, { onConflict: 'comissao_id,nota_id' })
+  if (erroRel) return { ok: false, erro: `Aplique a migração supabase_salao_v8_multiplas_notas.sql: ${erroRel.message}` }
   const { error } = await admin.from('salon_comissoes').update({
     nota_id: n.id, status: 'conferida', nf_numero: n.numero, nf_data: n.data_emissao, nf_valor: n.valor, nf_origem: 'manual',
     confirmado_em: new Date().toISOString(), observacao: notaDivergencia || comissao.observacao || null,
@@ -689,7 +701,8 @@ export async function vincular(admin: SupabaseClient, comissaoId: string, notaId
     await admin.from('salon_comissoes').update({ nota_id: null, status: 'pendente', nf_numero: null, nf_data: null, nf_valor: null, nf_origem: null, confirmado_em: null }).eq('id', comissaoId)
     return { ok: false, erro: erroNota.message }
   }
-  if (comissao.nota_id && comissao.nota_id !== n.id) await admin.from('salon_notas').update({ conferida: false, conferida_em: null, conferida_por: null }).eq('id', comissao.nota_id)
+  const reabrir = notasAnteriores.filter(x => x !== n.id)
+  if (reabrir.length) await admin.from('salon_notas').update({ conferida: false, conferida_em: null, conferida_por: null }).in('id', reabrir)
   return { ok: true }
 }
 
@@ -707,8 +720,11 @@ export async function vincularMultiplas(admin: SupabaseClient, comissaoId: strin
   const total = Math.round(notas.reduce((s, n) => s + Number(n.valor || 0), 0) * 100) / 100
   const esperado = Math.round(Number(comissao.valor_comissao || 0) * 100) / 100
   if (Math.abs(total - esperado) >= 0.01) return { ok: false, erro: `A soma das notas (${total.toFixed(2)}) não corresponde ao valor importado (${esperado.toFixed(2)}).` }
-  const { data: ocupadas } = await admin.from('salon_comissao_notas').select('nota_id, comissao_id').in('nota_id', ids)
-  if ((ocupadas ?? []).some(x => x.comissao_id !== comissaoId)) return { ok: false, erro: 'Uma das notas já está vinculada a outro profissional.' }
+  const [{ data: ocupadas }, { data: legadas }] = await Promise.all([
+    admin.from('salon_comissao_notas').select('nota_id, comissao_id').in('nota_id', ids),
+    admin.from('salon_comissoes').select('id, nota_id').in('nota_id', ids).neq('id', comissaoId),
+  ])
+  if ((ocupadas ?? []).some(x => x.comissao_id !== comissaoId) || (legadas?.length ?? 0) > 0) return { ok: false, erro: 'Uma das notas já está vinculada a outro profissional.' }
   const primeira = notas[0]
   const numeros = notas.map(n => n.numero || 's/n').join(', ')
   const { error: erroRel } = await admin.from('salon_comissao_notas').upsert(ids.map(nota_id => ({ comissao_id: comissaoId, nota_id, criado_por: usuario ?? null })), { onConflict: 'comissao_id,nota_id' })
