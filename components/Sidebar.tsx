@@ -97,6 +97,7 @@ const secoesSalao: { title: string; items: Item[] }[] = SALAO_ENABLED ? [
       { href: '/salao/notas', label: 'Notas', icon: ICON.recibo },
       { href: '/salao/outros-servicos', label: 'Outros Serviços', icon: ICON.ajuste },
       { href: '/salao/conferencia', label: 'Conferência', icon: ICON.competencia },
+      { href: '/salao/pre-vinculacao', label: 'Pré-vinculação', icon: ICON.fechamento },
       { href: '/salao/excecoes', label: 'Pendências', icon: ICON.ajuste },
       { href: '/salao/importar', label: 'Importar dados', icon: ICON.pagamento },
       { href: '/salao/dados-importados', label: 'Profissionais', icon: ICON.func },
