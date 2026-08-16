@@ -729,7 +729,7 @@ export async function vincularMultiplas(admin: SupabaseClient, comissaoId: strin
   const ids = Array.from(new Set(notaIds.filter(Boolean)))
   if (ids.length < 2) return { ok: false, erro: 'Selecione pelo menos duas notas.' }
   const [{ data: comissao }, { data: notas, error: erroNotas }] = await Promise.all([
-    admin.from('salon_comissoes').select('id, empresa_id, mes_ref, valor_comissao, nota_id, observacao').eq('id', comissaoId).maybeSingle(),
+    admin.from('salon_comissoes').select('id, empresa_id, mes_ref, valor_comissao, nota_id, observacao, documento').eq('id', comissaoId).maybeSingle(),
     admin.from('salon_notas').select('id, empresa_id, numero, valor, data_emissao, documento, emitente_nome, excluida, classificacao, analise_manual').in('id', ids),
   ])
   if (!comissao) return { ok: false, erro: 'Profissional importado não encontrado.' }
