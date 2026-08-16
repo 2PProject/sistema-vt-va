@@ -810,13 +810,30 @@ export async function desvincular(admin: SupabaseClient, comissaoId: string, not
       await admin.from('salon_comissao_notas').upsert({ comissao_id: comissaoId, nota_id: notaId, criado_por: antiga?.criado_por ?? null }, { onConflict: 'comissao_id,nota_id' })
       return { ok: false, erro: erroAtualizaConjunto.message }
     }
-    const [{ data: relAinda }, { data: legadoAinda }] = await Promise.all([
+    const [{ data: relAinda, error: erroRelAinda }, { data: legadoAinda, error: erroLegadoAinda }] = await Promise.all([
       admin.from('salon_comissao_notas').select('nota_id').eq('nota_id', notaId),
       admin.from('salon_comissoes').select('nota_id').eq('nota_id', notaId),
     ])
+    if (erroRelAinda || erroLegadoAinda) {
+      await admin.from('salon_comissoes').update({
+        nota_id: registro.nota_id, status: registro.status, nf_numero: registro.nf_numero, nf_data: registro.nf_data,
+        nf_valor: registro.nf_valor, nf_origem: registro.nf_origem, confirmado_em: registro.confirmado_em, observacao: registro.observacao,
+      }).eq('id', comissaoId)
+      const antiga = (relacoes ?? []).find(r => r.nota_id === notaId)
+      await admin.from('salon_comissao_notas').upsert({ comissao_id: comissaoId, nota_id: notaId, criado_por: antiga?.criado_por ?? null }, { onConflict: 'comissao_id,nota_id' })
+      return { ok: false, erro: (erroRelAinda || erroLegadoAinda)?.message }
+    }
     if (!(relAinda?.length || legadoAinda?.length)) {
       const { error: erroReabrirUma } = await admin.from('salon_notas').update({ conferida: false, conferida_em: null, conferida_por: null }).eq('id', notaId)
-      if (erroReabrirUma) return { ok: false, erro: erroReabrirUma.message }
+      if (erroReabrirUma) {
+        await admin.from('salon_comissoes').update({
+          nota_id: registro.nota_id, status: registro.status, nf_numero: registro.nf_numero, nf_data: registro.nf_data,
+          nf_valor: registro.nf_valor, nf_origem: registro.nf_origem, confirmado_em: registro.confirmado_em, observacao: registro.observacao,
+        }).eq('id', comissaoId)
+        const antiga = (relacoes ?? []).find(r => r.nota_id === notaId)
+        await admin.from('salon_comissao_notas').upsert({ comissao_id: comissaoId, nota_id: notaId, criado_por: antiga?.criado_por ?? null }, { onConflict: 'comissao_id,nota_id' })
+        return { ok: false, erro: erroReabrirUma.message }
+      }
     }
     return { ok: true }
   }
