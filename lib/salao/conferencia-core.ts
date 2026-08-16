@@ -288,7 +288,10 @@ export async function reconciliar(admin: SupabaseClient, competencia: string, em
   if (!pend || pend.length === 0) return { conferidas: 0, pendentes: 0, divergencias: 0, outraEmpresa: 0 }
 
   const usadas = await notasUsadas(admin, competencia)
-  const notas = await notasDaCompetencia(admin, competencia, true) // só as notas do mês, com valor > 0
+  // A competência oficial vem da comissão importada. A competência/data da nota
+  // não restringe o casamento: buscamos notas recebidas pelos documentos pendentes.
+  const docsPendentes = Array.from(new Set(pend.map(p => dig(p.documento)).filter(Boolean)))
+  const notas = (await notasDosDocumentos(admin, docsPendentes, empresaId)).filter(n => Number(n.valor) > 0)
 
   type Cand = { id: string; empresa_id: string; valor: number; numero: string | null; data_emissao: string | null }
   const porDoc = new Map<string, Cand[]>()
@@ -552,8 +555,10 @@ export async function consultar(admin: SupabaseClient, f: Filtros, ord: Ordenaca
     linhas.push(base)
   }
 
-  // Notas sem vínculo (do mês) → linhas tipo 'nota'
-  for (const n of notasMes) {
+  // Notas livres relevantes: notas do mês e notas de qualquer data dos
+  // profissionais pendentes. A competência da nota é apenas informativa.
+  const notasRelevantes = Array.from(new Map([...notasMes, ...notasPend].map(n => [n.id, n])).values())
+  for (const n of notasRelevantes) {
     if (usadasGlobal.has(n.id)) continue
     if (!(Number(n.valor) > 0)) continue
     const e = Array.isArray(n.empresas) ? n.empresas[0] : n.empresas
