@@ -199,6 +199,7 @@ export async function setNotaConferida(admin: SupabaseClient, id: string, confer
   const { data: atual, error: e0 } = await admin.from('salon_notas').select('id, empresa_id, competencia, competencia_conf, data_emissao, conferida').eq('id', id).maybeSingle()
   if (e0) return { ok: false, erro: e0.message }
   if (!atual) return { ok: false, erro: 'Nota não encontrada.' }
+  if (!conferida) await desvincularComissoes(admin, await comissoesDaNota(admin, id))
   const novo = { conferida, conferida_em: conferida ? new Date().toISOString() : null, conferida_por: conferida ? (usuario ?? null) : null }
   const { error } = await admin.from('salon_notas').update(novo).eq('id', id)
   if (error) return { ok: false, erro: error.message }
@@ -212,6 +213,7 @@ export async function setAnaliseManual(admin: SupabaseClient, tipo: 'nota' | 'co
   const { data: atual, error: e0 } = await admin.from(tabela).select('*').eq('id', id).maybeSingle()
   if (e0) return { ok: false, erro: e0.message }
   if (!atual) return { ok: false, erro: 'Registro não encontrado.' }
+  if (tipo === 'nota' && ativo) await desvincularComissoes(admin, await comissoesDaNota(admin, id))
   const { error } = await admin.from(tabela).update({ analise_manual: ativo, analise_motivo: ativo ? (motivo?.trim() || 'Analisar posteriormente') : null }).eq('id', id)
   if (error) return { ok: false, erro: error.message }
   await registrarHistorico(admin, { tipo, ref_id: id, empresa_id: atual.empresa_id, competencia: tipo === 'nota' ? notaComp(atual) : atual.mes_ref, acao: ativo ? 'enviado_analise' : 'retirado_analise', usuario, justificativa: motivo })
