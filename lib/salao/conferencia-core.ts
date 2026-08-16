@@ -287,7 +287,7 @@ export async function reconciliar(admin: SupabaseClient, competencia: string, em
   const { data: pend } = await cq
   if (!pend || pend.length === 0) return { conferidas: 0, pendentes: 0, divergencias: 0, outraEmpresa: 0 }
 
-  const usadas = await notasUsadas(admin, competencia)
+  const usadas = await notasUsadas(admin)
   // A competência oficial vem da comissão importada. A competência/data da nota
   // não restringe o casamento: buscamos notas recebidas pelos documentos pendentes.
   const docsPendentes = Array.from(new Set(pend.map(p => dig(p.documento)).filter(Boolean)))
