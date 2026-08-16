@@ -87,14 +87,14 @@ export async function editarComissao(admin: SupabaseClient, id: string, campos: 
   if (Object.keys(novo).length === 0) return { ok: true }
   novo.corrigido_manual = true
 
-  // vínculo fica incompatível se mudou CNPJ, empresa ou competência
+  // A competência oficial é a da planilha. Alterá-la não invalida a nota:
+  // somente documento ou unidade diferentes tornam o vínculo incompatível.
   let desvinculou = false
-  if (atual.nota_id && ('documento' in novo || 'empresa_id' in novo || 'mes_ref' in novo)) {
+  if (atual.nota_id && ('documento' in novo || 'empresa_id' in novo)) {
     const { data: n } = await admin.from('salon_notas').select('id, documento, empresa_id, competencia, competencia_conf, data_emissao').eq('id', atual.nota_id).maybeSingle()
     const docFinal = 'documento' in novo ? dig(String(novo.documento ?? '')) : dig(atual.documento)
     const empFinal = 'empresa_id' in novo ? novo.empresa_id : atual.empresa_id
-    const compFinal = 'mes_ref' in novo ? novo.mes_ref : atual.mes_ref
-    const incompat = !n || dig(n.documento) !== docFinal || (n.empresa_id !== empFinal) || (notaComp(n) !== compFinal)
+    const incompat = !n || dig(n.documento) !== docFinal || (n.empresa_id !== empFinal)
     if (incompat) {
       Object.assign(novo, { nota_id: null, status: 'pendente', nf_numero: null, nf_data: null, nf_valor: null, nf_origem: null, confirmado_em: null })
       await desvincularComissoes(admin, [id])
@@ -131,7 +131,7 @@ export async function editarNota(admin: SupabaseClient, id: string, campos: Part
 
   // Qualquer alteração de dado usado na conferência invalida o vínculo inteiro,
   // inclusive quando esta nota compõe um vínculo com várias notas.
-  if ('documento' in novo || 'competencia' in novo || 'valor' in novo) {
+  if ('documento' in novo || 'valor' in novo) {
     await desvincularComissoes(admin, await comissoesDaNota(admin, id))
   }
   await registrarHistorico(admin, { tipo: 'nota', ref_id: id, empresa_id: atual.empresa_id, competencia: notaComp(atual), acao: 'edicao', valor_anterior: pick(atual, [...CAMPOS_NOTA]), valor_novo: novo, usuario })
