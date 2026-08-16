@@ -70,8 +70,8 @@ export async function vincularMultiplas(comissaoId: string, notaIds: string[], u
   return post({ acao: 'vincularMultiplas', comissaoId, notaIds, usuario })
 }
 
-export async function desvincular(comissaoId: string, _notaId?: string | null): Promise<{ ok: boolean; erro?: string }> {
-  return post({ acao: 'desvincular', comissaoId })
+export async function desvincular(comissaoId: string, notaId?: string | null): Promise<{ ok: boolean; erro?: string }> {
+  return post({ acao: 'desvincular', comissaoId, notaId: notaId || undefined })
 }
 
 export async function corrigirCnpj(comissaoId: string, documento: string): Promise<{ ok: boolean; erro?: string }> {
