@@ -74,7 +74,7 @@ export async function POST(req: Request) {
   try { admin = getAdminClient() } catch (e) { return erroConfig(e) }
   const b = await req.json().catch(() => null)
   if (!b?.acao) return Response.json({ ok: false, erro: 'Ação ausente.' }, { status: 400 })
-  const { acao, competencia, empresaId, comissaoId, notaId, documento, campos, motivo, usuario, status, justificativa, dup, texto, classificacao, categoria, tipo, ativo } = b
+  const { acao, competencia, empresaId, comissaoId, notaId, notaIds, documento, campos, motivo, usuario, status, justificativa, dup, texto, classificacao, categoria, tipo, ativo } = b
 
   try {
     switch (acao) {
@@ -86,6 +86,7 @@ export async function POST(req: Request) {
       }
       case 'limpar': return Response.json({ ok: true, ...(await core.limpar(admin, competencia || undefined, empresaId || undefined)) })
       case 'vincular': { const r = await core.vincular(admin, comissaoId, notaId, usuario); return Response.json(r, { status: r.ok ? 200 : 400 }) }
+      case 'vincularMultiplas': { const r = await core.vincularMultiplas(admin, comissaoId, Array.isArray(notaIds) ? notaIds : [], usuario); return Response.json(r, { status: r.ok ? 200 : 400 }) }
       case 'desvincular': { const r = await core.desvincular(admin, comissaoId); return Response.json(r, { status: r.ok ? 200 : 400 }) }
       case 'corrigirCnpj': { const r = await core.corrigirCnpj(admin, comissaoId, documento); return Response.json(r, { status: r.ok ? 200 : 400 }) }
       case 'excluirComissao': { const r = await acoes.excluirComissao(admin, comissaoId, usuario); return Response.json(r, { status: r.ok ? 200 : 400 }) }
