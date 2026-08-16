@@ -774,7 +774,7 @@ export async function vincularMultiplas(admin: SupabaseClient, comissaoId: strin
   return { ok: true }
 }
 
-export async function desvincular(admin: SupabaseClient, comissaoId: string): Promise<{ ok: boolean; erro?: string }> {
+export async function desvincular(admin: SupabaseClient, comissaoId: string, notaId?: string | null): Promise<{ ok: boolean; erro?: string }> {
   const [{ data: registro, error: erroRegistro }, { data: relacoes, error: erroRelacoes }] = await Promise.all([
     admin.from('salon_comissoes').select('id, nota_id, status, nf_numero, nf_data, nf_valor, nf_origem, confirmado_em, observacao').eq('id', comissaoId).maybeSingle(),
     admin.from('salon_comissao_notas').select('nota_id, criado_por').eq('comissao_id', comissaoId),
@@ -784,6 +784,42 @@ export async function desvincular(admin: SupabaseClient, comissaoId: string): Pr
   if (!registro) return { ok: false, erro: 'Profissional importado não encontrado.' }
 
   const notaIds = Array.from(new Set([registro.nota_id, ...(relacoes ?? []).map(r => r.nota_id)].filter(Boolean))) as string[]
+  if (notaId && !notaIds.includes(notaId)) return { ok: false, erro: 'A nota informada não pertence a este vínculo.' }
+
+  // No quadro de notas, remover UMA nota de um conjunto múltiplo preserva as demais.
+  if (notaId && notaIds.length > 1) {
+    const restantes = notaIds.filter(id => id !== notaId)
+    const { data: notasRestantes, error: erroBuscaNotas } = await admin.from('salon_notas')
+      .select('id, numero, valor, data_emissao').in('id', restantes)
+    if (erroBuscaNotas) return { ok: false, erro: erroBuscaNotas.message }
+    if (!notasRestantes || notasRestantes.length !== restantes.length) return { ok: false, erro: 'Não foi possível reconstruir o vínculo restante.' }
+    const ordenadas = restantes.map(id => notasRestantes.find(n => n.id === id)).filter(Boolean) as { id: string; numero: string | null; valor: number | null; data_emissao: string | null }[]
+    const primeira = ordenadas[0]
+    const total = Math.round(ordenadas.reduce((s, n) => s + Number(n.valor || 0), 0) * 100) / 100
+    const numeros = ordenadas.map(n => n.numero || 's/n').join(', ')
+    const { error: erroDeleteUma } = await admin.from('salon_comissao_notas').delete().eq('comissao_id', comissaoId).eq('nota_id', notaId)
+    if (erroDeleteUma) return { ok: false, erro: erroDeleteUma.message }
+    const { error: erroAtualizaConjunto } = await admin.from('salon_comissoes').update({
+      nota_id: primeira.id, status: 'conferida', nf_numero: numeros, nf_data: primeira.data_emissao,
+      nf_valor: total, nf_origem: ordenadas.length > 1 ? 'manual_multiplo' : 'manual',
+      confirmado_em: new Date().toISOString(),
+      observacao: ordenadas.length > 1 ? `${ordenadas.length} notas vinculadas: ${numeros}. Soma R$ ${total.toFixed(2)}.` : registro.observacao,
+    }).eq('id', comissaoId)
+    if (erroAtualizaConjunto) {
+      const antiga = (relacoes ?? []).find(r => r.nota_id === notaId)
+      await admin.from('salon_comissao_notas').upsert({ comissao_id: comissaoId, nota_id: notaId, criado_por: antiga?.criado_por ?? null }, { onConflict: 'comissao_id,nota_id' })
+      return { ok: false, erro: erroAtualizaConjunto.message }
+    }
+    const [{ data: relAinda }, { data: legadoAinda }] = await Promise.all([
+      admin.from('salon_comissao_notas').select('nota_id').eq('nota_id', notaId),
+      admin.from('salon_comissoes').select('nota_id').eq('nota_id', notaId),
+    ])
+    if (!(relAinda?.length || legadoAinda?.length)) {
+      const { error: erroReabrirUma } = await admin.from('salon_notas').update({ conferida: false, conferida_em: null, conferida_por: null }).eq('id', notaId)
+      if (erroReabrirUma) return { ok: false, erro: erroReabrirUma.message }
+    }
+    return { ok: true }
+  }
   // Primeiro remove as relações explícitas. Se qualquer etapa posterior falhar,
   // restaura-se exatamente o estado anterior para não deixar vínculo fantasma.
   const { error: erroDelete } = await admin.from('salon_comissao_notas').delete().eq('comissao_id', comissaoId)
