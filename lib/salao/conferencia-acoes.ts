@@ -2,7 +2,7 @@
 // Toda alteração registra o ANTES e o DEPOIS em salon_historico. Sem falha
 // silenciosa: erros do Supabase são devolvidos.
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { dig, notaComp } from './conferencia-core'
+import { desvincular as desvincularNucleo, dig, notaComp } from './conferencia-core'
 
 type OK = { ok: boolean; erro?: string }
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -10,23 +10,10 @@ type Row = any
 
 async function desvincularComissoes(admin: SupabaseClient, comissaoIds: string[]): Promise<void> {
   const ids = Array.from(new Set(comissaoIds.filter(Boolean)))
-  if (!ids.length) return
-  const [{ data: coms }, { data: rels }] = await Promise.all([
-    admin.from('salon_comissoes').select('id, nota_id').in('id', ids),
-    admin.from('salon_comissao_notas').select('comissao_id, nota_id').in('comissao_id', ids),
-  ])
-  const notaIds = Array.from(new Set([
-    ...(coms ?? []).map(c => c.nota_id),
-    ...(rels ?? []).map(r => r.nota_id),
-  ].filter(Boolean))) as string[]
-  await admin.from('salon_comissoes').update({
-    nota_id: null, status: 'pendente', nf_numero: null, nf_data: null, nf_valor: null,
-    nf_origem: null, confirmado_em: null,
-  }).in('id', ids)
-  await admin.from('salon_comissao_notas').delete().in('comissao_id', ids)
-  if (notaIds.length) await admin.from('salon_notas').update({
-    conferida: false, conferida_em: null, conferida_por: null,
-  }).in('id', notaIds)
+  for (const id of ids) {
+    const resultado = await desvincularNucleo(admin, id)
+    if (!resultado.ok) throw new Error(resultado.erro || 'Não foi possível desfazer o vínculo.')
+  }
 }
 
 async function comissoesDaNota(admin: SupabaseClient, notaId: string): Promise<string[]> {
