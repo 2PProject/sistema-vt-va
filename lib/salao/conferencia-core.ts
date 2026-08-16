@@ -261,6 +261,9 @@ async function notasUsadas(admin: SupabaseClient, competencia?: string): Promise
   })
   const set = new Set<string>()
   for (const r of rows) if (r.nota_id) set.add(r.nota_id)
+  // Vínculos múltiplos. A consulta é tolerante enquanto a migração v8 ainda não foi aplicada.
+  const { data: multiplas } = await admin.from('salon_comissao_notas').select('nota_id').limit(10000)
+  for (const r of multiplas ?? []) if (r.nota_id) set.add(r.nota_id)
   return set
 }
 
@@ -674,6 +677,42 @@ export async function vincular(admin: SupabaseClient, comissaoId: string, notaId
     return { ok: false, erro: erroNota.message }
   }
   if (comissao.nota_id && comissao.nota_id !== n.id) await admin.from('salon_notas').update({ conferida: false, conferida_em: null, conferida_por: null }).eq('id', comissao.nota_id)
+  return { ok: true }
+}
+
+export async function vincularMultiplas(admin: SupabaseClient, comissaoId: string, notaIds: string[], usuario?: string): Promise<{ ok: boolean; erro?: string }> {
+  const ids = Array.from(new Set(notaIds.filter(Boolean)))
+  if (ids.length < 2) return { ok: false, erro: 'Selecione pelo menos duas notas.' }
+  const [{ data: comissao }, { data: notas, error: erroNotas }] = await Promise.all([
+    admin.from('salon_comissoes').select('id, empresa_id, mes_ref, valor_comissao, nota_id, observacao').eq('id', comissaoId).maybeSingle(),
+    admin.from('salon_notas').select('id, empresa_id, numero, valor, data_emissao, documento, emitente_nome').in('id', ids),
+  ])
+  if (!comissao) return { ok: false, erro: 'Profissional importado não encontrado.' }
+  if (erroNotas) return { ok: false, erro: erroNotas.message }
+  if (!notas || notas.length !== ids.length) return { ok: false, erro: 'Uma ou mais notas não foram encontradas.' }
+  if (notas.some(n => n.empresa_id !== comissao.empresa_id)) return { ok: false, erro: 'Todas as notas devem pertencer à mesma unidade do profissional.' }
+  const total = Math.round(notas.reduce((s, n) => s + Number(n.valor || 0), 0) * 100) / 100
+  const esperado = Math.round(Number(comissao.valor_comissao || 0) * 100) / 100
+  if (Math.abs(total - esperado) >= 0.01) return { ok: false, erro: `A soma das notas (${total.toFixed(2)}) não corresponde ao valor importado (${esperado.toFixed(2)}).` }
+  const { data: ocupadas } = await admin.from('salon_comissao_notas').select('nota_id, comissao_id').in('nota_id', ids)
+  if ((ocupadas ?? []).some(x => x.comissao_id !== comissaoId)) return { ok: false, erro: 'Uma das notas já está vinculada a outro profissional.' }
+  const primeira = notas[0]
+  const numeros = notas.map(n => n.numero || 's/n').join(', ')
+  const { error: erroRel } = await admin.from('salon_comissao_notas').upsert(ids.map(nota_id => ({ comissao_id: comissaoId, nota_id, criado_por: usuario ?? null })), { onConflict: 'comissao_id,nota_id' })
+  if (erroRel) return { ok: false, erro: `Aplique a migração supabase_salao_v8_multiplas_notas.sql: ${erroRel.message}` }
+  const agora = new Date().toISOString()
+  const [{ error: erroCom }, { error: erroNf }] = await Promise.all([
+    admin.from('salon_comissoes').update({
+      nota_id: primeira.id, status: 'conferida', nf_numero: numeros, nf_data: primeira.data_emissao,
+      nf_valor: total, nf_origem: 'manual_multiplo', confirmado_em: agora,
+      observacao: `${ids.length} notas vinculadas: ${numeros}. Soma R$ ${total.toFixed(2)}.`,
+    }).eq('id', comissaoId),
+    admin.from('salon_notas').update({ conferida: true, conferida_em: agora, conferida_por: usuario ?? null }).in('id', ids),
+  ])
+  if (erroCom || erroNf) {
+    await admin.from('salon_comissao_notas').delete().eq('comissao_id', comissaoId).in('nota_id', ids)
+    return { ok: false, erro: (erroCom || erroNf)?.message }
+  }
   return { ok: true }
 }
 
