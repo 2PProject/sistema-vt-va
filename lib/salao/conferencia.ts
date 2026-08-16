@@ -66,6 +66,10 @@ export async function vincularNota(comissaoId: string, nota: { id: string; numer
   return post({ acao: 'vincular', comissaoId, notaId: nota.id, usuario })
 }
 
+export async function vincularMultiplas(comissaoId: string, notaIds: string[], usuario?: string): Promise<{ ok: boolean; erro?: string }> {
+  return post({ acao: 'vincularMultiplas', comissaoId, notaIds, usuario })
+}
+
 export async function desvincular(comissaoId: string, _notaId?: string | null): Promise<{ ok: boolean; erro?: string }> {
   return post({ acao: 'desvincular', comissaoId })
 }
