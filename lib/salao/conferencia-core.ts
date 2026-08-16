@@ -683,11 +683,14 @@ export async function notasDoCnpj(admin: SupabaseClient, documento: string | nul
 
 export async function vincular(admin: SupabaseClient, comissaoId: string, notaId: string, usuario?: string): Promise<{ ok: boolean; erro?: string }> {
   const [{ data: n }, { data: comissao }] = await Promise.all([
-    admin.from('salon_notas').select('id, numero, valor, data_emissao').eq('id', notaId).maybeSingle(),
-    admin.from('salon_comissoes').select('valor_comissao, observacao, nota_id').eq('id', comissaoId).maybeSingle(),
+    admin.from('salon_notas').select('id, empresa_id, documento, numero, valor, data_emissao, excluida, classificacao, analise_manual').eq('id', notaId).maybeSingle(),
+    admin.from('salon_comissoes').select('empresa_id, documento, valor_comissao, observacao, nota_id').eq('id', comissaoId).maybeSingle(),
   ])
   if (!n) return { ok: false, erro: 'Nota não encontrada.' }
   if (!comissao) return { ok: false, erro: 'Profissional importado não encontrado.' }
+  if (n.excluida || n.classificacao !== 'profissional' || n.analise_manual) return { ok: false, erro: 'A nota não está disponível para conferência.' }
+  if (n.empresa_id !== comissao.empresa_id) return { ok: false, erro: 'Nota e profissional pertencem a unidades diferentes.' }
+  if (dig(n.documento) !== dig(comissao.documento)) return { ok: false, erro: 'O CNPJ/CPF da nota não corresponde ao profissional. Corrija o cadastro antes de vincular.' }
   const [{ data: relOcupada }, { data: legadoOcupado }, { data: relAntigas }] = await Promise.all([
     admin.from('salon_comissao_notas').select('comissao_id').eq('nota_id', notaId).neq('comissao_id', comissaoId),
     admin.from('salon_comissoes').select('id').eq('nota_id', notaId).neq('id', comissaoId),
@@ -707,7 +710,10 @@ export async function vincular(admin: SupabaseClient, comissaoId: string, notaId
     nota_id: n.id, status: 'conferida', nf_numero: n.numero, nf_data: n.data_emissao, nf_valor: n.valor, nf_origem: 'manual',
     confirmado_em: new Date().toISOString(), observacao: notaDivergencia || comissao.observacao || null,
   }).eq('id', comissaoId)
-  if (error) return { ok: false, erro: error.message }
+  if (error) {
+    await admin.from('salon_comissao_notas').delete().eq('comissao_id', comissaoId).eq('nota_id', notaId)
+    return { ok: false, erro: error.message }
+  }
   const { error: erroNota } = await admin.from('salon_notas').update({ conferida: true, conferida_em: new Date().toISOString(), conferida_por: usuario ?? null, analise_manual: false, analise_motivo: null }).eq('id', n.id)
   if (erroNota) {
     // Não deixar vínculo pela metade quando a atualização da nota falhar.
@@ -724,12 +730,14 @@ export async function vincularMultiplas(admin: SupabaseClient, comissaoId: strin
   if (ids.length < 2) return { ok: false, erro: 'Selecione pelo menos duas notas.' }
   const [{ data: comissao }, { data: notas, error: erroNotas }] = await Promise.all([
     admin.from('salon_comissoes').select('id, empresa_id, mes_ref, valor_comissao, nota_id, observacao').eq('id', comissaoId).maybeSingle(),
-    admin.from('salon_notas').select('id, empresa_id, numero, valor, data_emissao, documento, emitente_nome').in('id', ids),
+    admin.from('salon_notas').select('id, empresa_id, numero, valor, data_emissao, documento, emitente_nome, excluida, classificacao, analise_manual').in('id', ids),
   ])
   if (!comissao) return { ok: false, erro: 'Profissional importado não encontrado.' }
   if (erroNotas) return { ok: false, erro: erroNotas.message }
   if (!notas || notas.length !== ids.length) return { ok: false, erro: 'Uma ou mais notas não foram encontradas.' }
+  if (notas.some(n => n.excluida || n.classificacao !== 'profissional' || n.analise_manual)) return { ok: false, erro: 'Uma das notas não está disponível para conferência.' }
   if (notas.some(n => n.empresa_id !== comissao.empresa_id)) return { ok: false, erro: 'Todas as notas devem pertencer à mesma unidade do profissional.' }
+  if (notas.some(n => dig(n.documento) !== dig(comissao.documento))) return { ok: false, erro: 'Todas as notas devem possuir o mesmo CNPJ/CPF do profissional.' }
   const total = Math.round(notas.reduce((s, n) => s + Number(n.valor || 0), 0) * 100) / 100
   const esperado = Math.round(Number(comissao.valor_comissao || 0) * 100) / 100
   if (Math.abs(total - esperado) >= 0.01) return { ok: false, erro: `A soma das notas (${total.toFixed(2)}) não corresponde ao valor importado (${esperado.toFixed(2)}).` }
@@ -738,6 +746,9 @@ export async function vincularMultiplas(admin: SupabaseClient, comissaoId: strin
     admin.from('salon_comissoes').select('id, nota_id').in('nota_id', ids).neq('id', comissaoId),
   ])
   if ((ocupadas ?? []).some(x => x.comissao_id !== comissaoId) || (legadas?.length ?? 0) > 0) return { ok: false, erro: 'Uma das notas já está vinculada a outro profissional.' }
+  const { data: relAntigas } = await admin.from('salon_comissao_notas').select('nota_id').eq('comissao_id', comissaoId)
+  const notasAnteriores = Array.from(new Set([comissao.nota_id, ...(relAntigas ?? []).map(r => r.nota_id)].filter(Boolean))) as string[]
+  await admin.from('salon_comissao_notas').delete().eq('comissao_id', comissaoId)
   const primeira = notas[0]
   const numeros = notas.map(n => n.numero || 's/n').join(', ')
   const { error: erroRel } = await admin.from('salon_comissao_notas').upsert(ids.map(nota_id => ({ comissao_id: comissaoId, nota_id, criado_por: usuario ?? null })), { onConflict: 'comissao_id,nota_id' })
@@ -755,6 +766,8 @@ export async function vincularMultiplas(admin: SupabaseClient, comissaoId: strin
     await admin.from('salon_comissao_notas').delete().eq('comissao_id', comissaoId).in('nota_id', ids)
     return { ok: false, erro: (erroCom || erroNf)?.message }
   }
+  const reabrir = notasAnteriores.filter(id => !ids.includes(id))
+  if (reabrir.length) await admin.from('salon_notas').update({ conferida: false, conferida_em: null, conferida_por: null }).in('id', reabrir)
   return { ok: true }
 }
 
