@@ -775,28 +775,61 @@ export async function vincularMultiplas(admin: SupabaseClient, comissaoId: strin
 }
 
 export async function desvincular(admin: SupabaseClient, comissaoId: string): Promise<{ ok: boolean; erro?: string }> {
-  const [{ data: registro }, { data: relacoes }] = await Promise.all([
-    admin.from('salon_comissoes').select('nota_id, status, nf_numero, nf_data, nf_valor, nf_origem, confirmado_em').eq('id', comissaoId).maybeSingle(),
-    admin.from('salon_comissao_notas').select('nota_id').eq('comissao_id', comissaoId),
+  const [{ data: registro, error: erroRegistro }, { data: relacoes, error: erroRelacoes }] = await Promise.all([
+    admin.from('salon_comissoes').select('id, nota_id, status, nf_numero, nf_data, nf_valor, nf_origem, confirmado_em, observacao').eq('id', comissaoId).maybeSingle(),
+    admin.from('salon_comissao_notas').select('nota_id, criado_por').eq('comissao_id', comissaoId),
   ])
-  const notaIds = Array.from(new Set([registro?.nota_id, ...(relacoes ?? []).map(r => r.nota_id)].filter(Boolean))) as string[]
-  const { error } = await admin.from('salon_comissoes').update({
+  if (erroRegistro) return { ok: false, erro: erroRegistro.message }
+  if (erroRelacoes) return { ok: false, erro: erroRelacoes.message }
+  if (!registro) return { ok: false, erro: 'Profissional importado não encontrado.' }
+
+  const notaIds = Array.from(new Set([registro.nota_id, ...(relacoes ?? []).map(r => r.nota_id)].filter(Boolean))) as string[]
+  // Primeiro remove as relações explícitas. Se qualquer etapa posterior falhar,
+  // restaura-se exatamente o estado anterior para não deixar vínculo fantasma.
+  const { error: erroDelete } = await admin.from('salon_comissao_notas').delete().eq('comissao_id', comissaoId)
+  if (erroDelete) return { ok: false, erro: `Não foi possível remover as relações do vínculo: ${erroDelete.message}` }
+
+  const { error: erroComissao } = await admin.from('salon_comissoes').update({
     nota_id: null, status: 'pendente', nf_numero: null, nf_data: null, nf_valor: null, nf_origem: null, confirmado_em: null,
   }).eq('id', comissaoId)
-  if (error) return { ok: false, erro: error.message }
+  if (erroComissao) {
+    if (relacoes?.length) await admin.from('salon_comissao_notas').upsert(relacoes.map(r => ({ comissao_id: comissaoId, nota_id: r.nota_id, criado_por: r.criado_por ?? null })), { onConflict: 'comissao_id,nota_id' })
+    return { ok: false, erro: erroComissao.message }
+  }
+
   if (notaIds.length) {
-    const { error: notaError } = await admin.from('salon_notas').update({
-      conferida: false, conferida_em: null, conferida_por: null,
-    }).in('id', notaIds)
-    if (notaError) {
-      if (registro?.nota_id) await admin.from('salon_comissoes').update({
-        nota_id: registro.nota_id, status: registro.status ?? 'conferida', nf_numero: registro.nf_numero, nf_data: registro.nf_data,
+    // Uma nota só volta para Pendente se nenhuma comissão ainda a utilizar,
+    // seja pela relação nova ou pela coluna legada nota_id.
+    const [{ data: relRestantes, error: erroRestantes }, { data: legados, error: erroLegados }] = await Promise.all([
+      admin.from('salon_comissao_notas').select('nota_id').in('nota_id', notaIds),
+      admin.from('salon_comissoes').select('nota_id').in('nota_id', notaIds).not('nota_id', 'is', null),
+    ])
+    if (erroRestantes || erroLegados) {
+      await admin.from('salon_comissoes').update({
+        nota_id: registro.nota_id, status: registro.status, nf_numero: registro.nf_numero, nf_data: registro.nf_data,
         nf_valor: registro.nf_valor, nf_origem: registro.nf_origem, confirmado_em: registro.confirmado_em,
+        observacao: registro.observacao,
       }).eq('id', comissaoId)
-      return { ok: false, erro: `Não foi possível reabrir as notas: ${notaError.message}` }
+      if (relacoes?.length) await admin.from('salon_comissao_notas').upsert(relacoes.map(r => ({ comissao_id: comissaoId, nota_id: r.nota_id, criado_por: r.criado_por ?? null })), { onConflict: 'comissao_id,nota_id' })
+      return { ok: false, erro: (erroRestantes || erroLegados)?.message }
+    }
+    const aindaUsadas = new Set([...(relRestantes ?? []).map(r => r.nota_id), ...(legados ?? []).map(r => r.nota_id)].filter(Boolean))
+    const livres = notaIds.filter(id => !aindaUsadas.has(id))
+    if (livres.length) {
+      const { error: erroNotas } = await admin.from('salon_notas').update({
+        conferida: false, conferida_em: null, conferida_por: null,
+      }).in('id', livres)
+      if (erroNotas) {
+        await admin.from('salon_comissoes').update({
+          nota_id: registro.nota_id, status: registro.status, nf_numero: registro.nf_numero, nf_data: registro.nf_data,
+          nf_valor: registro.nf_valor, nf_origem: registro.nf_origem, confirmado_em: registro.confirmado_em,
+          observacao: registro.observacao,
+        }).eq('id', comissaoId)
+        if (relacoes?.length) await admin.from('salon_comissao_notas').upsert(relacoes.map(r => ({ comissao_id: comissaoId, nota_id: r.nota_id, criado_por: r.criado_por ?? null })), { onConflict: 'comissao_id,nota_id' })
+        return { ok: false, erro: `Não foi possível reabrir as notas: ${erroNotas.message}` }
+      }
     }
   }
-  await admin.from('salon_comissao_notas').delete().eq('comissao_id', comissaoId)
   return { ok: true }
 }
 
