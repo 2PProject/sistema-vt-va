@@ -107,6 +107,7 @@ export type LinhaConsulta = {
   nf_valor: number | null
   nota_competencia?: string | null
   nota_empresaNome?: string | null
+  notas_vinculadas?: { id: string; numero: string | null; valor: number | null; data_emissao: string | null; competencia: string | null }[]
   diferenca: number | null
   situacao: Situacao
   outraEmpresa: boolean
@@ -486,8 +487,17 @@ export async function consultar(admin: SupabaseClient, f: Filtros, ord: Ordenaca
   const notasMesTodas = await notasDaCompetencia(admin, competencia, false, f.empresaId)
   const notasMes = notasMesTodas.filter((n) => !n.excluida)
 
-  // Notas vinculadas (detalhe, inclusive de outra competência)
-  const linkIds = Array.from(new Set(coms.filter((c) => c.nota_id).map((c) => c.nota_id))) as string[]
+  // Notas vinculadas (detalhe de todas as notas do conjunto, não só a principal).
+  const comissaoIds = coms.filter(c => c.nota_id).map(c => c.id)
+  const { data: relacoesVinculo } = comissaoIds.length
+    ? await admin.from('salon_comissao_notas').select('comissao_id, nota_id').in('comissao_id', comissaoIds)
+    : { data: [] as { comissao_id: string; nota_id: string }[] }
+  const relPorComissao = new Map<string, string[]>()
+  for (const r of relacoesVinculo ?? []) { const a = relPorComissao.get(r.comissao_id) ?? []; a.push(r.nota_id); relPorComissao.set(r.comissao_id, a) }
+  const linkIds = Array.from(new Set([
+    ...coms.filter((c) => c.nota_id).map((c) => c.nota_id),
+    ...(relacoesVinculo ?? []).map(r => r.nota_id),
+  ].filter(Boolean))) as string[]
   const notaById = new Map<string, NotaRow>()
   for (let i = 0; i < linkIds.length; i += 200) {
     const { data } = await admin.from('salon_notas').select(NOTA_COLS).in('id', linkIds.slice(i, i + 200))
@@ -526,7 +536,10 @@ export async function consultar(admin: SupabaseClient, f: Filtros, ord: Ordenaca
     if (c.nota_id) {
       const n = notaById.get(c.nota_id)
       const ne = n && (Array.isArray(n.empresas) ? n.empresas[0] : n.empresas)
-      base.nota_competencia = n ? notaComp(n) : null
+      const idsVinculados = Array.from(new Set([...(relPorComissao.get(c.id) ?? []), c.nota_id].filter(Boolean))) as string[]
+      const notasVinculadas = idsVinculados.map(id => notaById.get(id)).filter(Boolean) as NotaRow[]
+      base.notas_vinculadas = notasVinculadas.map(x => ({ id: x.id, numero: x.numero, valor: x.valor, data_emissao: x.data_emissao, competencia: notaComp(x) || null }))
+      base.nota_competencia = notasVinculadas.length === 1 ? notaComp(notasVinculadas[0]) : null
       base.nota_empresaNome = ne?.apelido || ne?.razao_social || ''
       const vNota = Number(c.nf_valor ?? n?.valor ?? 0)
       base.nf_valor = vNota
