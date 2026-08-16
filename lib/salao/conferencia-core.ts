@@ -732,7 +732,7 @@ export async function vincularMultiplas(admin: SupabaseClient, comissaoId: strin
   if (notas.some(n => n.empresa_id !== comissao.empresa_id)) return { ok: false, erro: 'Todas as notas devem pertencer à mesma unidade do profissional.' }
   const total = Math.round(notas.reduce((s, n) => s + Number(n.valor || 0), 0) * 100) / 100
   const esperado = Math.round(Number(comissao.valor_comissao || 0) * 100) / 100
-  if (Math.abs(total - esperado) >= 0.01) return { ok: false, erro: `A soma das notas (${total.toFixed(2)}) não corresponde ao valor importado (${esperado.toFixed(2)}).` }
+  const diferenca = Math.round((total - esperado) * 100) / 100
   const [{ data: ocupadas }, { data: legadas }] = await Promise.all([
     admin.from('salon_comissao_notas').select('nota_id, comissao_id').in('nota_id', ids),
     admin.from('salon_comissoes').select('id, nota_id').in('nota_id', ids).neq('id', comissaoId),
@@ -747,7 +747,9 @@ export async function vincularMultiplas(admin: SupabaseClient, comissaoId: strin
     admin.from('salon_comissoes').update({
       nota_id: primeira.id, status: 'conferida', nf_numero: numeros, nf_data: primeira.data_emissao,
       nf_valor: total, nf_origem: 'manual_multiplo', confirmado_em: agora,
-      observacao: `${ids.length} notas vinculadas: ${numeros}. Soma R$ ${total.toFixed(2)}.`,
+      observacao: Math.abs(diferenca) >= 0.01
+        ? `${ids.length} notas vinculadas com divergência aceita manualmente: ${numeros}. Competência R$ ${esperado.toFixed(2)}, soma das notas R$ ${total.toFixed(2)}, diferença R$ ${diferenca.toFixed(2)}.`
+        : `${ids.length} notas vinculadas: ${numeros}. Soma R$ ${total.toFixed(2)}.`,
     }).eq('id', comissaoId),
     admin.from('salon_notas').update({ conferida: true, conferida_em: agora, conferida_por: usuario ?? null }).in('id', ids),
   ])
