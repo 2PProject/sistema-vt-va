@@ -15,6 +15,7 @@
 // máximo 1000 linhas por requisição (era esta a causa de "Notas no mês: 2" —
 // só as 1000 notas mais antigas vinham, e as do mês ficavam de fora).
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { SALAO_COMPETENCIA_INICIAL } from './config'
 
 export type Esperada = {
   id: string
@@ -282,6 +283,7 @@ async function comissoesDaCompetencia(admin: SupabaseClient, competencia: string
  */
 export async function reconciliar(admin: SupabaseClient, competencia: string, empresaId?: string):
   Promise<{ conferidas: number; pendentes: number; divergencias: number; outraEmpresa: number }> {
+  if (competencia < SALAO_COMPETENCIA_INICIAL) return { conferidas: 0, pendentes: 0, divergencias: 0, outraEmpresa: 0 }
   let cq = admin.from('salon_comissoes').select('id, empresa_id, documento, nome, valor_comissao')
     .eq('mes_ref', competencia).is('nota_id', null)
   if (empresaId) cq = cq.eq('empresa_id', empresaId)
@@ -684,10 +686,11 @@ export async function notasDoCnpj(admin: SupabaseClient, documento: string | nul
 export async function vincular(admin: SupabaseClient, comissaoId: string, notaId: string, usuario?: string): Promise<{ ok: boolean; erro?: string }> {
   const [{ data: n }, { data: comissao }] = await Promise.all([
     admin.from('salon_notas').select('id, empresa_id, documento, numero, valor, data_emissao, excluida, classificacao, analise_manual').eq('id', notaId).maybeSingle(),
-    admin.from('salon_comissoes').select('empresa_id, documento, valor_comissao, observacao, nota_id').eq('id', comissaoId).maybeSingle(),
+    admin.from('salon_comissoes').select('empresa_id, documento, valor_comissao, observacao, nota_id, mes_ref').eq('id', comissaoId).maybeSingle(),
   ])
   if (!n) return { ok: false, erro: 'Nota não encontrada.' }
   if (!comissao) return { ok: false, erro: 'Profissional importado não encontrado.' }
+  if (comissao.mes_ref < SALAO_COMPETENCIA_INICIAL) return { ok: false, erro: 'Competências anteriores a janeiro/2026 ficam somente no histórico.' }
   if (n.excluida || n.classificacao !== 'profissional' || n.analise_manual) return { ok: false, erro: 'A nota não está disponível para conferência.' }
   if (n.empresa_id !== comissao.empresa_id) return { ok: false, erro: 'Nota e profissional pertencem a unidades diferentes.' }
   if (dig(n.documento) !== dig(comissao.documento)) return { ok: false, erro: 'O CNPJ/CPF da nota não corresponde ao profissional. Corrija o cadastro antes de vincular.' }
@@ -733,6 +736,7 @@ export async function vincularMultiplas(admin: SupabaseClient, comissaoId: strin
     admin.from('salon_notas').select('id, empresa_id, numero, valor, data_emissao, documento, emitente_nome, excluida, classificacao, analise_manual').in('id', ids),
   ])
   if (!comissao) return { ok: false, erro: 'Profissional importado não encontrado.' }
+  if (comissao.mes_ref < SALAO_COMPETENCIA_INICIAL) return { ok: false, erro: 'Competências anteriores a janeiro/2026 ficam somente no histórico.' }
   if (erroNotas) return { ok: false, erro: erroNotas.message }
   if (!notas || notas.length !== ids.length) return { ok: false, erro: 'Uma ou mais notas não foram encontradas.' }
   if (notas.some(n => n.excluida || n.classificacao !== 'profissional' || n.analise_manual)) return { ok: false, erro: 'Uma das notas não está disponível para conferência.' }
