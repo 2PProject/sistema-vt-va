@@ -8,6 +8,38 @@ type OK = { ok: boolean; erro?: string }
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Row = any
 
+async function desvincularComissoes(admin: SupabaseClient, comissaoIds: string[]): Promise<void> {
+  const ids = Array.from(new Set(comissaoIds.filter(Boolean)))
+  if (!ids.length) return
+  const [{ data: coms }, { data: rels }] = await Promise.all([
+    admin.from('salon_comissoes').select('id, nota_id').in('id', ids),
+    admin.from('salon_comissao_notas').select('comissao_id, nota_id').in('comissao_id', ids),
+  ])
+  const notaIds = Array.from(new Set([
+    ...(coms ?? []).map(c => c.nota_id),
+    ...(rels ?? []).map(r => r.nota_id),
+  ].filter(Boolean))) as string[]
+  await admin.from('salon_comissoes').update({
+    nota_id: null, status: 'pendente', nf_numero: null, nf_data: null, nf_valor: null,
+    nf_origem: null, confirmado_em: null,
+  }).in('id', ids)
+  await admin.from('salon_comissao_notas').delete().in('comissao_id', ids)
+  if (notaIds.length) await admin.from('salon_notas').update({
+    conferida: false, conferida_em: null, conferida_por: null,
+  }).in('id', notaIds)
+}
+
+async function comissoesDaNota(admin: SupabaseClient, notaId: string): Promise<string[]> {
+  const [{ data: legadas }, { data: rels }] = await Promise.all([
+    admin.from('salon_comissoes').select('id').eq('nota_id', notaId),
+    admin.from('salon_comissao_notas').select('comissao_id').eq('nota_id', notaId),
+  ])
+  return Array.from(new Set([
+    ...(legadas ?? []).map(x => x.id),
+    ...(rels ?? []).map(x => x.comissao_id),
+  ].filter(Boolean)))
+}
+
 export async function registrarHistorico(admin: SupabaseClient, h: {
   tipo: 'comissao' | 'nota' | 'competencia'; ref_id: string; empresa_id?: string | null; competencia?: string | null
   acao: string; valor_anterior?: unknown; valor_novo?: unknown; usuario?: string | null; justificativa?: string | null
@@ -26,7 +58,7 @@ export async function excluirComissao(admin: SupabaseClient, id: string, usuario
   const { data: atual, error: e0 } = await admin.from('salon_comissoes').select('*').eq('id', id).maybeSingle()
   if (e0) return { ok: false, erro: e0.message }
   if (!atual) return { ok: false, erro: 'Profissional importado não encontrado.' }
-  if (atual.nota_id) await admin.from('salon_notas').update({ conferida: false, conferida_em: null, conferida_por: null }).eq('id', atual.nota_id)
+  await desvincularComissoes(admin, [id])
   const { error } = await admin.from('salon_comissoes').delete().eq('id', id)
   if (error) return { ok: false, erro: error.message }
   await registrarHistorico(admin, { tipo: 'comissao', ref_id: id, empresa_id: atual.empresa_id, competencia: atual.mes_ref, acao: 'exclusao_dado_importado', valor_anterior: atual, valor_novo: null, usuario, justificativa: 'Exclusão pela gestão de dados importados' })
@@ -65,7 +97,7 @@ export async function editarComissao(admin: SupabaseClient, id: string, campos: 
     const incompat = !n || dig(n.documento) !== docFinal || (n.empresa_id !== empFinal) || (notaComp(n) !== compFinal)
     if (incompat) {
       Object.assign(novo, { nota_id: null, status: 'pendente', nf_numero: null, nf_data: null, nf_valor: null, nf_origem: null, confirmado_em: null })
-      if (atual.nota_id) await admin.from('salon_notas').update({ conferida: false }).eq('id', atual.nota_id)
+      await desvincularComissoes(admin, [id])
       desvinculou = true
     }
   }
@@ -97,16 +129,10 @@ export async function editarNota(admin: SupabaseClient, id: string, campos: Part
   const { error } = await admin.from('salon_notas').update(novo).eq('id', id)
   if (error) return { ok: false, erro: error.message }
 
-  // desfaz vínculo se CNPJ/competência mudaram
+  // Qualquer alteração de dado usado na conferência invalida o vínculo inteiro,
+  // inclusive quando esta nota compõe um vínculo com várias notas.
   if ('documento' in novo || 'competencia' in novo || 'valor' in novo) {
-    const { data: coms } = await admin.from('salon_comissoes').select('id, documento, mes_ref, empresa_id').eq('nota_id', id)
-    for (const c of coms ?? []) {
-      const docFinal = 'documento' in novo ? String(novo.documento ?? '') : atual.documento
-      const compFinal = 'competencia' in novo ? String(novo.competencia ?? '') : notaComp(atual)
-      if (dig(c.documento) !== dig(docFinal) || c.mes_ref !== compFinal) {
-        await admin.from('salon_comissoes').update({ nota_id: null, status: 'pendente', nf_numero: null, nf_data: null, nf_valor: null, nf_origem: null, confirmado_em: null }).eq('id', c.id)
-      }
-    }
+    await desvincularComissoes(admin, await comissoesDaNota(admin, id))
   }
   await registrarHistorico(admin, { tipo: 'nota', ref_id: id, empresa_id: atual.empresa_id, competencia: notaComp(atual), acao: 'edicao', valor_anterior: pick(atual, [...CAMPOS_NOTA]), valor_novo: novo, usuario })
   return { ok: true }
@@ -117,7 +143,7 @@ export async function excluirNota(admin: SupabaseClient, id: string, motivo: str
   if (!motivo?.trim()) return { ok: false, erro: 'Informe o motivo da exclusão.' }
   const { data: atual } = await admin.from('salon_notas').select('*').eq('id', id).maybeSingle()
   if (!atual) return { ok: false, erro: 'Nota não encontrada.' }
-  await admin.from('salon_comissoes').update({ nota_id: null, status: 'pendente', nf_numero: null, nf_data: null, nf_valor: null, nf_origem: null, confirmado_em: null }).eq('nota_id', id)
+  await desvincularComissoes(admin, await comissoesDaNota(admin, id))
   const { error } = await admin.from('salon_notas').update({ excluida: true, conferida: false, excluida_motivo: motivo.trim(), excluida_por: usuario ?? null, excluida_em: new Date().toISOString() }).eq('id', id)
   if (error) return { ok: false, erro: error.message }
   await registrarHistorico(admin, { tipo: 'nota', ref_id: id, empresa_id: atual.empresa_id, competencia: notaComp(atual), acao: 'exclusao', valor_anterior: { excluida: false }, valor_novo: { excluida: true }, usuario, justificativa: motivo.trim() })
@@ -153,7 +179,7 @@ export async function classificarNota(admin: SupabaseClient, id: string, classif
   if (e0) return { ok: false, erro: e0.message }
   if (!atual) return { ok: false, erro: 'Nota não encontrada.' }
   if (classificacao === 'outro_servico') {
-    await admin.from('salon_comissoes').update({ nota_id: null, status: 'pendente', nf_numero: null, nf_data: null, nf_valor: null, nf_origem: null, confirmado_em: null }).eq('nota_id', id)
+    await desvincularComissoes(admin, await comissoesDaNota(admin, id))
   }
   const novo = {
     classificacao,
