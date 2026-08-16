@@ -297,7 +297,7 @@ export async function reconciliar(admin: SupabaseClient, competencia: string, em
   type Cand = { id: string; empresa_id: string; valor: number; numero: string | null; data_emissao: string | null }
   const porDoc = new Map<string, Cand[]>()
   for (const n of notas) {
-    if (usadas.has(n.id) || n.excluida) continue
+    if (usadas.has(n.id) || n.excluida || n.conferida) continue
     const k = dig(n.documento)
     if (!k) continue
     const cand: Cand = { id: n.id, empresa_id: n.empresa_id, valor: Number(n.valor) || 0, numero: n.numero, data_emissao: n.data_emissao }
@@ -557,7 +557,7 @@ export async function consultar(admin: SupabaseClient, f: Filtros, ord: Ordenaca
     } else {
       // pendente com CNPJ: melhor sugestão dentro da janela de ±1 mês, nota livre
       const cands = (porDocPend.get(dig(c.documento)) ?? []).filter((n) =>
-        Number(n.valor) > 0 && !usadasGlobal.has(n.id) && mesesDiff(notaComp(n), c.mes_ref) <= 1)
+        Number(n.valor) > 0 && !n.conferida && !usadasGlobal.has(n.id) && mesesDiff(notaComp(n), c.mes_ref) <= 1)
       let melhor: { nota: NotaRow; p: ReturnType<typeof pontuarVinculo> } | null = null
       for (const n of cands) {
         const p = pontuarVinculo({ empresa_id: c.empresa_id, mes_ref: c.mes_ref, valor_comissao: base.valor_comissao || 0, nome: c.nome }, n)
@@ -676,7 +676,7 @@ export async function notasDoCnpj(admin: SupabaseClient, documento: string | nul
   const usadas = await notasUsadas(admin) // global: p/ manual, não mostrar já usadas
   const notas = await notasDosDocumentos(admin, [doc])
   return notas
-    .filter((n) => !usadas.has(n.id))
+    .filter((n) => !usadas.has(n.id) && !n.conferida)
     .map((n) => ({ ...n, empresaNome: empresaNomeDe(n) }))
     .sort((a, b) => (notaComp(b) || '').localeCompare(notaComp(a) || ''))
 }
