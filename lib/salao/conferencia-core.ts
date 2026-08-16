@@ -717,23 +717,28 @@ export async function vincularMultiplas(admin: SupabaseClient, comissaoId: strin
 }
 
 export async function desvincular(admin: SupabaseClient, comissaoId: string): Promise<{ ok: boolean; erro?: string }> {
-  const { data: c } = await admin.from('salon_comissoes').select('nota_id, status, nf_numero, nf_data, nf_valor, nf_origem, confirmado_em').eq('id', comissaoId).maybeSingle()
+  const [{ data: registro }, { data: relacoes }] = await Promise.all([
+    admin.from('salon_comissoes').select('nota_id, status, nf_numero, nf_data, nf_valor, nf_origem, confirmado_em').eq('id', comissaoId).maybeSingle(),
+    admin.from('salon_comissao_notas').select('nota_id').eq('comissao_id', comissaoId),
+  ])
+  const notaIds = Array.from(new Set([registro?.nota_id, ...(relacoes ?? []).map(r => r.nota_id)].filter(Boolean))) as string[]
   const { error } = await admin.from('salon_comissoes').update({
     nota_id: null, status: 'pendente', nf_numero: null, nf_data: null, nf_valor: null, nf_origem: null, confirmado_em: null,
   }).eq('id', comissaoId)
   if (error) return { ok: false, erro: error.message }
-  if (c?.nota_id) {
+  if (notaIds.length) {
     const { error: notaError } = await admin.from('salon_notas').update({
       conferida: false, conferida_em: null, conferida_por: null,
-    }).eq('id', c.nota_id)
+    }).in('id', notaIds)
     if (notaError) {
-      await admin.from('salon_comissoes').update({
-        nota_id: c.nota_id, status: c.status ?? 'conferida', nf_numero: c.nf_numero, nf_data: c.nf_data,
-        nf_valor: c.nf_valor, nf_origem: c.nf_origem, confirmado_em: c.confirmado_em,
+      if (registro?.nota_id) await admin.from('salon_comissoes').update({
+        nota_id: registro.nota_id, status: registro.status ?? 'conferida', nf_numero: registro.nf_numero, nf_data: registro.nf_data,
+        nf_valor: registro.nf_valor, nf_origem: registro.nf_origem, confirmado_em: registro.confirmado_em,
       }).eq('id', comissaoId)
-      return { ok: false, erro: `Não foi possível reabrir a nota: ${notaError.message}` }
+      return { ok: false, erro: `Não foi possível reabrir as notas: ${notaError.message}` }
     }
   }
+  await admin.from('salon_comissao_notas').delete().eq('comissao_id', comissaoId)
   return { ok: true }
 }
 
