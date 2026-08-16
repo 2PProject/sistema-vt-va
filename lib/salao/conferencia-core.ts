@@ -616,7 +616,7 @@ export async function consultar(admin: SupabaseClient, f: Filtros, ord: Ordenaca
 
   const indicadores: Indicadores = {
     esperados: baseRows.filter((l) => l.tipo === 'comissao').length,
-    conferidos: baseRows.filter((l) => l.situacao === 'conferido' || l.situacao === 'conferido_com_divergencia' || l.situacao === 'corrigido_manual').length,
+    conferidos: baseRows.filter((l) => l.tipo === 'comissao' && (l.situacao === 'conferido' || l.situacao === 'conferido_com_divergencia' || l.situacao === 'corrigido_manual')).length,
     semNota: baseRows.filter((l) => l.situacao === 'sem_nota').length,
     notasSemVinculo: baseRows.filter((l) => l.situacao === 'nota_sem_vinculo').length,
     divergencias: baseRows.filter((l) => l.situacao === 'divergencia_valor' || l.situacao === 'conferido_com_divergencia').length,
