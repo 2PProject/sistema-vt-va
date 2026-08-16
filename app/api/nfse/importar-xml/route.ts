@@ -21,7 +21,8 @@ const texto = (v: string) => v
   .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
   .replace(/&quot;/g, '"').replace(/&apos;/g, "'").trim()
 
-function parseNota(xml: string): { nota?: NotaXml; tomador?: string; erro?: string } {
+function todosBlocos(xml: string, nome: string) { return Array.from(xml.matchAll(new RegExp(`<(?:[\\w-]+:)?${nome}(?:\\s[^>]*)?>[\\s\\S]*?<\\/(?:[\\w-]+:)?${nome}>`, 'gi'))).map(m => m[0]) }
+function parseNota(xml: string): { nota?: NotaXml; tomador?: string; tomadores?: string[]; erro?: string } {
   const inf = bloco(xml, 'InfNfse')
   if (!inf) return { erro: 'Não contém InfNfse/infNFSe.' }
 
@@ -36,7 +37,11 @@ function parseNota(xml: string): { nota?: NotaXml; tomador?: string; erro?: stri
   const origemPrestador = nacional ? emitente : (prestadorIdent || prestadorDados)
   const documento = soDigitos(tag(origemPrestador, 'Cnpj') || tag(origemPrestador, 'Cpf'))
   const tomadorOrigem = nacional ? tomadorNacional : tomadorDados
-  const tomador = soDigitos(tag(tomadorOrigem, 'Cnpj') || tag(tomadorOrigem, 'Cpf'))
+  const candidatosTomador = nacional
+    ? [tomadorNacional, ...todosBlocos(inf, 'toma')]
+    : [tomadorDados, ...todosBlocos(inf, 'TomadorServico'), ...todosBlocos(xml, 'TomadorServico')]
+  const tomadores = Array.from(new Set(candidatosTomador.map(b => soDigitos(tag(b, 'Cnpj') || tag(b, 'Cpf'))).filter(Boolean)))
+  const tomador = tomadores[0] || soDigitos(tag(tomadorOrigem, 'Cnpj') || tag(tomadorOrigem, 'Cpf'))
   const numero = texto(tag(inf, 'nNFSe') || tag(inf, 'Numero'))
   const dataEmissao = (tag(inf, 'dhProc') || tag(inf, 'DataEmissao') || tag(inf, 'dhEmi')).slice(0, 10)
   const competenciaData = (tag(inf, 'dCompet') || tag(inf, 'Competencia') || dataEmissao).slice(0, 10)
@@ -48,12 +53,12 @@ function parseNota(xml: string): { nota?: NotaXml; tomador?: string; erro?: stri
   const emitente_nome = texto(nacional
     ? (tag(emitente, 'xNome') || tag(emitente, 'xFant'))
     : (tag(prestadorDados, 'RazaoSocial') || tag(prestadorDados, 'NomeFantasia')))
-  if (!numero || !dataEmissao || !documento) return { tomador, erro: 'Número, emissão ou documento do prestador não identificado.' }
+  if (!numero || !dataEmissao || !documento) return { tomador, tomadores, erro: 'Número, emissão ou documento do prestador não identificado.' }
   if (!Number.isFinite(valor)) return { tomador, erro: 'Valor da nota inválido.' }
   const idNacional = inf.match(/<(?:(?:[\w-]+):)?infNFSe\b[^>]*\bId="([^"]+)"/i)?.[1] || ''
   const verificacao = texto(tag(inf, 'CodigoVerificacao'))
   return {
-    tomador,
+    tomador, tomadores,
     nota: {
       chave: idNacional || `XML-ABRASF|${documento}|${numero}|${dataEmissao}|${verificacao}`,
       documento, emitente_nome, numero, valor, data_emissao: dataEmissao, competencia,
@@ -106,8 +111,9 @@ export async function POST(req: Request) {
     for (const item of xmls) {
       const r = parseNota(item.xml)
       if (r.erro) { erros.push(`${item.nome}: ${r.erro}`); continue }
-      if (r.tomador !== cnpjEmpresa) {
-        erros.push(`${item.nome}: tomador ${r.tomador || 'não identificado'} não corresponde à unidade selecionada.`)
+      const tomadores = r.tomadores?.length ? r.tomadores : (r.tomador ? [r.tomador] : [])
+      if (!tomadores.includes(cnpjEmpresa)) {
+        erros.push(`${item.nome}: tomador ${tomadores.join(', ') || 'não identificado'} não corresponde ao CNPJ cadastrado da unidade ${empresa.apelido || empresa.razao_social} (${cnpjEmpresa}).`)
         continue
       }
       if (r.nota) lidas.push(r.nota)
