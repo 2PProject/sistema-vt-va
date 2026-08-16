@@ -28,6 +28,11 @@ export type NotaRecebida = {
   competenciaEfetiva?: string | null   // competencia_conf ?? competencia
 }
 
+function normalizarBusca(v: string | null | undefined): string {
+  return (v ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+}
+function termosBusca(v: string): string[] { return normalizarBusca(v).split(/\s+/).filter(Boolean) }
+
 export type FiltroNotas = {
   empresaId?: string
   mes?: string          // 'YYYY-MM' — filtra por emissão OU competência efetiva
@@ -75,12 +80,19 @@ export async function listarNotas(f: FiltroNotas): Promise<NotaRecebida[]> {
   if (f.competencia) linhas = linhas.filter(l => (l.competenciaEfetiva ?? '') === f.competencia)
   if (f.status) linhas = linhas.filter(l => f.status === 'conferida' ? l.conferida : !l.conferida)
   if (f.profissional) {
-    const p = f.profissional.trim().toLowerCase(); const pd = p.replace(/\D/g, '')
-    linhas = linhas.filter(l => (l.emitente_nome ?? '').toLowerCase().includes(p) || (pd && (l.documento ?? '').includes(pd)))
+    const termos = termosBusca(f.profissional); const pd = f.profissional.replace(/\D/g, '')
+    linhas = linhas.filter(l => {
+      const nome = normalizarBusca(l.emitente_nome)
+      return (termos.length > 0 && termos.every(t => nome.includes(t))) || (pd.length >= 3 && (l.documento ?? '').replace(/\D/g, '').includes(pd))
+    })
   }
   if (f.busca) {
-    const q2 = f.busca.trim().toLowerCase()
-    linhas = linhas.filter(l => (l.emitente_nome ?? '').toLowerCase().includes(q2) || (l.documento ?? '').includes(q2.replace(/\D/g, '')) || (l.numero ?? '').includes(q2))
+    const termos = termosBusca(f.busca); const digitos = f.busca.replace(/\D/g, '')
+    linhas = linhas.filter(l => {
+      const texto = normalizarBusca(`${l.emitente_nome ?? ''} ${l.empresaNome ?? ''} ${l.numero ?? ''}`)
+      const doc = (l.documento ?? '').replace(/\D/g, '')
+      return (termos.length > 0 && termos.every(t => texto.includes(t))) || (digitos.length >= 2 && (doc.includes(digitos) || String(l.numero ?? '').includes(digitos)))
+    })
   }
   return linhas
 }
