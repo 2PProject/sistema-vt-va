@@ -9,6 +9,7 @@ export const maxDuration = 60
 type NotaXml = {
   chave: string; documento: string; emitente_nome: string; numero: string
   valor: number; data_emissao: string; competencia: string
+  xml_original: string; xml_nome: string
 }
 
 const soDigitos = (v: string) => (v || '').replace(/\D/g, '')
@@ -116,7 +117,7 @@ export async function POST(req: Request) {
         erros.push(`${item.nome}: tomador ${tomadores.join(', ') || 'não identificado'} não corresponde ao CNPJ cadastrado da unidade ${empresa.apelido || empresa.razao_social} (${cnpjEmpresa}).`)
         continue
       }
-      if (r.nota) lidas.push(r.nota)
+      if (r.nota) lidas.push({ ...r.nota, xml_original: item.xml, xml_nome: item.nome })
     }
 
     const { data: existentes, error: erroExistentes } = await admin.from('salon_notas')
