@@ -87,6 +87,8 @@ create table public.salon_notas (
   empresa_id uuid not null references public.empresas(id) on delete restrict,
   nsu bigint,
   chave text,
+  xml_original text,
+  xml_nome text,
   documento text,
   emitente_nome text,
   numero text,
