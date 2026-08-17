@@ -84,6 +84,19 @@ function tag(xml: string, ...nomes: string[]): string | undefined {
  *   valor líquido:      NFSe/infNFSe/valores/vLiq  (fallback: .../vServ)
  *   chave de acesso:    atributo Id de infNFSe
  */
+/**
+ * Normaliza para 'YYYY-MM' válido (mês 01–12, zero-padded) ou '' quando não dá.
+ * Essencial: a coluna salon_notas.competencia tem CHECK '^[0-9]{4}-(0[1-9]|1[0-2])$';
+ * uma competência fora do padrão (ex.: '2026-6') rejeita o UPSERT do LOTE INTEIRO
+ * e trava o cursor NSU. Aqui garantimos que nunca sai um valor inválido.
+ */
+export function mesValido(s: string | null | undefined): string {
+  const m = (s ?? '').match(/(\d{4})-(\d{1,2})/)
+  if (!m) return ''
+  const mm = Number(m[2]); if (mm < 1 || mm > 12) return ''
+  return `${m[1]}-${String(mm).padStart(2, '0')}`
+}
+
 function parseArquivoXml(arquivo: string): { chave: string; prestadorDoc: string; prestadorNome: string; numero: string; data: string; competencia: string; valor: number; xml: string } | null {
   let xml = ''
   try { xml = zlib.gunzipSync(Buffer.from(arquivo, 'base64')).toString('utf8') }
@@ -98,7 +111,7 @@ function parseArquivoXml(arquivo: string): { chave: string; prestadorDoc: string
   const numero = tag(xml, 'nNFSe', 'nDFSe', 'numero', 'Numero') || ''
   const data = (tag(xml, 'dhProc', 'dhEmi') || '').slice(0, 10)
   const dCompet = (tag(xml, 'dCompet', 'competencia') || '').slice(0, 10)
-  const competencia = (dCompet || data).slice(0, 7)
+  const competencia = mesValido(dCompet || data)
   const valor = parseFloat(tag(xml, 'vLiq', 'vServ', 'vServPrest') || '0') || 0
   return { chave, prestadorDoc: doc, prestadorNome: nome, numero, data, competencia, valor, xml }
 }

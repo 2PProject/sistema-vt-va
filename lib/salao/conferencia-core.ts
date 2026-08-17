@@ -3,11 +3,12 @@
 // recebidas (salon_notas). Toda gravação passa por aqui, no servidor — o cliente
 // nunca escreve direto no banco (evita falha silenciosa por RLS).
 //
-// Regra automática (conservadora):
-//   mesma unidade + mesmo CNPJ/CPF + valor exato + uma única candidata disponível.
-//   A competência oficial é a da planilha (mes_ref); a competência declarada na
-//   NFS-e não bloqueia o vínculo porque pode vir preenchida incorretamente.
-//   Qualquer ambiguidade ou divergência permanece pendente para decisão manual.
+// Regra automática:
+//   CNPJ/CPF + competência (mes_ref da planilha = competência efetiva da nota).
+//   O VALOR é comparação, não filtro (o crédito da planilha difere do valor bruto
+//   da NFS-e). 2 passadas: mesma unidade → qualquer unidade; + 1 conservadora
+//   (nota única do CNPJ dentro de ±1 mês). Divergência de valor é sinalizada,
+//   não bloqueia o vínculo.
 //
 // EFICIÊNCIA: as consultas FILTRAM no banco (por competência e por CNPJ) — nunca
 // carregam a tabela inteira. E paginam com .range(): o PostgREST devolve no
@@ -233,7 +234,7 @@ function empresaNomeDe(row: NotaRow): string {
 /** Notas de UMA competência (todas as unidades). Filtra no banco. */
 async function notasDaCompetencia(admin: SupabaseClient, competencia: string, soComValor = false, empresaId?: string): Promise<NotaRow[]> {
   return paginado((de, ate) => {
-    let q = admin.from('salon_notas').select(NOTA_COLS).or(`competencia.eq.${competencia},competencia_conf.eq.${competencia}`).eq('excluida',false).eq('classificacao','profissional').eq('analise_manual',false).order('id', { ascending: true }).range(de, ate)
+    let q = admin.from('salon_notas').select(NOTA_COLS).or(`competencia.eq.${competencia},competencia_conf.eq.${competencia}`).eq('excluida',false).or('classificacao.is.null,classificacao.eq.profissional').eq('analise_manual',false).order('id', { ascending: true }).range(de, ate)
     if (empresaId) q = q.eq('empresa_id', empresaId)
     if (soComValor) q = q.gt('valor', 0)
     return q as unknown as QB
@@ -247,7 +248,7 @@ async function notasDosDocumentos(admin: SupabaseClient, docs: string[], empresa
   for (let i = 0; i < docs.length; i += 200) {           // .in() em blocos
     const lote = docs.slice(i, i + 200)
     const parte = await paginado((de, ate) =>
-      (() => { let q=admin.from('salon_notas').select(NOTA_COLS).in('documento', lote).eq('excluida',false).eq('classificacao','profissional').eq('analise_manual',false).order('id',{ascending:true}).range(de,ate);if(empresaId)q=q.eq('empresa_id',empresaId);return q as unknown as QB })())
+      (() => { let q=admin.from('salon_notas').select(NOTA_COLS).in('documento', lote).eq('excluida',false).or('classificacao.is.null,classificacao.eq.profissional').eq('analise_manual',false).order('id',{ascending:true}).range(de,ate);if(empresaId)q=q.eq('empresa_id',empresaId);return q as unknown as QB })())
     out.push(...parte)
   }
   return out
@@ -262,9 +263,11 @@ async function notasUsadas(admin: SupabaseClient, competencia?: string): Promise
   })
   const set = new Set<string>()
   for (const r of rows) if (r.nota_id) set.add(r.nota_id)
-  // Vínculos múltiplos. A consulta é tolerante enquanto a migração v8 ainda não foi aplicada.
-  const { data: multiplas } = await admin.from('salon_comissao_notas').select('nota_id').limit(10000)
-  for (const r of multiplas ?? []) if (r.nota_id) set.add(r.nota_id)
+  // Vínculos múltiplos (M:N). PAGINADO — o .limit(10000) truncava silenciosamente
+  // acima de 10 mil vínculos, fazendo notas usadas reaparecerem como "livres".
+  const multiplas = await paginado((de, ate) =>
+    admin.from('salon_comissao_notas').select('nota_id').order('id', { ascending: true }).range(de, ate) as unknown as QB)
+  for (const r of multiplas) if (r.nota_id) set.add(r.nota_id)
   return set
 }
 
@@ -283,25 +286,31 @@ async function comissoesDaCompetencia(admin: SupabaseClient, competencia: string
 export async function reconciliar(admin: SupabaseClient, competencia: string, empresaId?: string):
   Promise<{ conferidas: number; pendentes: number; divergencias: number; outraEmpresa: number }> {
   if (competencia < SALAO_COMPETENCIA_INICIAL) return { conferidas: 0, pendentes: 0, divergencias: 0, outraEmpresa: 0 }
-  let cq = admin.from('salon_comissoes').select('id, empresa_id, documento, nome, valor_comissao')
-    .eq('mes_ref', competencia).is('nota_id', null)
-  if (empresaId) cq = cq.eq('empresa_id', empresaId)
-  const { data: pend } = await cq
-  if (!pend || pend.length === 0) return { conferidas: 0, pendentes: 0, divergencias: 0, outraEmpresa: 0 }
+  // Paginado: sem isto, o PostgREST devolveria no máximo 1000 pendentes e o
+  // restante nunca seria reconciliado (competências grandes).
+  const pend = await paginado((de, ate) => {
+    let q = admin.from('salon_comissoes').select('id, empresa_id, documento, nome, valor_comissao')
+      .eq('mes_ref', competencia).is('nota_id', null).order('id', { ascending: true }).range(de, ate)
+    if (empresaId) q = q.eq('empresa_id', empresaId)
+    return q as unknown as QB
+  })
+  if (pend.length === 0) return { conferidas: 0, pendentes: 0, divergencias: 0, outraEmpresa: 0 }
 
   const usadas = await notasUsadas(admin)
   // A competência oficial vem da comissão importada. A competência/data da nota
   // não restringe o casamento: buscamos notas recebidas pelos documentos pendentes.
   const docsPendentes = Array.from(new Set(pend.map(p => dig(p.documento)).filter(Boolean)))
-  const notas = (await notasDosDocumentos(admin, docsPendentes, empresaId)).filter(n => Number(n.valor) > 0)
+  // Candidatas por CNPJ em QUALQUER unidade (o vínculo pode ser cross-unidade: a
+  // nota é baixada pela unidade do certificado e a planilha vem pela aba/apelido).
+  const notas = (await notasDosDocumentos(admin, docsPendentes)).filter(n => Number(n.valor) > 0)
 
-  type Cand = { id: string; empresa_id: string; valor: number; numero: string | null; data_emissao: string | null }
+  type Cand = { id: string; empresa_id: string; valor: number; numero: string | null; data_emissao: string | null; comp: string }
   const porDoc = new Map<string, Cand[]>()
   for (const n of notas) {
     if (usadas.has(n.id) || n.excluida || n.conferida) continue
     const k = dig(n.documento)
     if (!k) continue
-    const cand: Cand = { id: n.id, empresa_id: n.empresa_id, valor: Number(n.valor) || 0, numero: n.numero, data_emissao: n.data_emissao }
+    const cand: Cand = { id: n.id, empresa_id: n.empresa_id, valor: Number(n.valor) || 0, numero: n.numero, data_emissao: n.data_emissao, comp: notaComp(n) }
     const arr = porDoc.get(k) ?? []; arr.push(cand); porDoc.set(k, arr)
   }
 
@@ -334,17 +343,45 @@ export async function reconciliar(admin: SupabaseClient, competencia: string, em
     conferidas++
   }
 
-  // Automático estrito: documento, competência, unidade e valor devem coincidir.
-  // Casos sem documento ou com qualquer divergência permanecem pendentes para decisão manual.
+  // Escolhe, entre candidatas, a de valor mais próximo do crédito (desempate).
+  const escolher = (cs: Cand[], alvo: number) => [...cs].sort((a, b) => Math.abs(a.valor - alvo) - Math.abs(b.valor - alvo))[0]
+
+  // Passe 1 — mesma unidade + mesma competência (valor é comparação, não filtro).
   for (const p of pend) {
-    const documento = dig(p.documento)
-    if (!documento) continue
-    const arr = porDoc.get(documento)
-    if (!arr?.length) continue
+    const doc = dig(p.documento); if (!doc) continue
+    const arr = porDoc.get(doc); if (!arr?.length) continue
+    const c = arr.filter((n) => n.empresa_id === p.empresa_id && n.comp === competencia)
+    if (!c.length) continue
+    await casar(p, arr, escolher(c, Number(p.valor_comissao) || 0))
+  }
+  // Passe 2 — qualquer unidade + mesma competência.
+  for (const p of pend) {
+    if (feitos.has(p.id)) continue
+    const doc = dig(p.documento); if (!doc) continue
+    const arr = porDoc.get(doc); if (!arr?.length) continue
+    const c = arr.filter((n) => n.comp === competencia)
+    if (!c.length) continue
+    await casar(p, arr, escolher(c, Number(p.valor_comissao) || 0))
+  }
+  // Passe 2.5 — valor EXATO em qualquer competência (sinal forte), candidata única.
+  for (const p of pend) {
+    if (feitos.has(p.id)) continue
+    const doc = dig(p.documento); if (!doc) continue
+    const arr = porDoc.get(doc); if (!arr?.length) continue
     const alvo = Number(p.valor_comissao) || 0
-    const exatas = arr.filter((n) => n.empresa_id === p.empresa_id && Math.abs(n.valor - alvo) < 0.01)
+    const exatas = arr.filter((n) => Math.abs(n.valor - alvo) < 0.01)
     if (exatas.length !== 1) continue
     await casar(p, arr, exatas[0])
+  }
+  // Passe 3 — conservador: CNPJ com UMA única nota livre dentro de ±1 mês
+  // (resolve dCompet preenchido errado, sem risco de ambiguidade).
+  for (const p of pend) {
+    if (feitos.has(p.id)) continue
+    const doc = dig(p.documento); if (!doc) continue
+    const arr = porDoc.get(doc)
+    if (arr?.length !== 1) continue
+    if (mesesDiff(arr[0].comp, competencia) > 1) continue
+    await casar(p, arr, arr[0])
   }
 
   return { conferidas, pendentes: pend.length - conferidas, divergencias, outraEmpresa }
