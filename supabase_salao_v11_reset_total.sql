@@ -239,8 +239,9 @@ begin
     conferida_por=case when exists(select 1 from salon_comissao_notas r where r.nota_id=n.id) then n.conferida_por else null end,
     atualizado_em=now()
   where n.id=v_nota;
-  return coalesce(new,old);
-end $$;
+  if TG_OP = 'DELETE' then return old; end if;
+  return new;
+end $;
 
 create trigger salon_comissao_notas_sync
 after insert or update or delete on public.salon_comissao_notas
