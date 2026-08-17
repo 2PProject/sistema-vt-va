@@ -200,15 +200,23 @@ returns trigger
 language plpgsql
 security definer
 set search_path = public
-as $$
+as $salon$
 declare
-  v_comissao uuid := coalesce(new.comissao_id, old.comissao_id);
-  v_nota uuid := coalesce(new.nota_id, old.nota_id);
+  v_comissao uuid;
+  v_nota uuid;
   v_primeira record;
   v_total numeric;
   v_numeros text;
   v_qtd integer;
 begin
+  if TG_OP = 'DELETE' then
+    v_comissao := old.comissao_id;
+    v_nota := old.nota_id;
+  else
+    v_comissao := new.comissao_id;
+    v_nota := new.nota_id;
+  end if;
+
   select n.id, n.numero, n.data_emissao
     into v_primeira
   from salon_comissao_notas r
@@ -241,7 +249,8 @@ begin
   where n.id=v_nota;
   if TG_OP = 'DELETE' then return old; end if;
   return new;
-end $;
+end;
+$salon$;
 
 create trigger salon_comissao_notas_sync
 after insert or update or delete on public.salon_comissao_notas
