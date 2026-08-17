@@ -190,6 +190,7 @@ create unique index salon_competencia_status_unica
 create index salon_comissoes_periodo_empresa on public.salon_comissoes (mes_ref, empresa_id);
 create index salon_comissoes_documento_periodo on public.salon_comissoes (documento, mes_ref);
 create index salon_comissoes_status_periodo on public.salon_comissoes (status, mes_ref);
+create unique index salon_notas_empresa_nsu_unique on public.salon_notas (empresa_id, nsu);
 create index salon_notas_empresa_competencia on public.salon_notas (empresa_id, coalesce(competencia_conf, competencia));
 create index salon_notas_documento_competencia on public.salon_notas (documento, coalesce(competencia_conf, competencia));
 create index salon_notas_operacionais on public.salon_notas (empresa_id, conferida, classificacao) where excluida = false;
