@@ -39,15 +39,19 @@ export default function SalaoImportarPage() {
     if (preview.length === 0) return
     if (!competencia) { notify('Informe a competência.', 'erro'); return }
     setLoad(true)
-    const { gravados, atualizados, pendencias, ignorados } = await processarImportacaoComissoes(preview, competencia, sobrescrever)
-    // conferência automática: casa por CNPJ + competência com as notas recebidas
-    const rec = await reconciliarCompetencia(competencia)
-    setLoad(false)
-    const partes = [`${gravados} importada(s)`, `${atualizados} atualizada(s)`]
-    if (pendencias) partes.push(`${pendencias} pendência(s) sem CNPJ`)
-    if (ignorados) partes.push(`${ignorados} já existente(s)`)
-    notify(`${partes.join(' · ')}. Conferência automática (CNPJ + competência): ${rec.conferidas} nota(s) casada(s)${rec.divergencias ? `, ${rec.divergencias} com valor divergente` : ''}.${pendencias ? ' Trate as pendências em Conferência → aba "Falta CNPJ".' : ''}`, pendencias ? 'erro' : 'ok')
-    setPreview([]); setErros([])
+    try {
+      const { gravados, atualizados, pendencias, ignorados } = await processarImportacaoComissoes(preview, competencia, sobrescrever)
+      const rec = await reconciliarCompetencia(competencia)
+      const partes = [`${gravados} importada(s)`, `${atualizados} atualizada(s)`]
+      if (pendencias) partes.push(`${pendencias} pendência(s) sem CNPJ`)
+      if (ignorados) partes.push(`${ignorados} já existente(s)`)
+      notify(`${partes.join(' · ')}. Conferência automática: ${rec.conferidas} nota(s) vinculada(s)${rec.divergencias ? `, ${rec.divergencias} divergente(s)` : ''}.`, pendencias ? 'erro' : 'ok')
+      setPreview([]); setErros([])
+    } catch (e) {
+      notify(e instanceof Error ? `Falha ao importar: ${e.message}` : 'Falha ao importar a planilha.', 'erro')
+    } finally {
+      setLoad(false)
+    }
   }
 
   if (!SALAO_ENABLED) return null
