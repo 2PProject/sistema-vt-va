@@ -16,51 +16,7 @@ function fmtData(v:string|null){if(!v)return'—';const[a,m,d]=v.slice(0,10).spl
 async function buscarMes(competencia:string,empresaId:string){const f={competencia,empresaId:empresaId||undefined};const p=await consultarConferencia(f,{campo:'nome',dir:'asc'},1,500);const n=Math.ceil(p.total/500);if(n<=1)return p.linhas;const ds=await Promise.all(Array.from({length:n-1},(_,i)=>consultarConferencia(f,{campo:'nome',dir:'asc'},i+2,500)));return[...p.linhas,...ds.flatMap(x=>x.linhas)]}
 function combinacaoUnica(notas:LinhaConsulta[],alvo:number){const alvoCent=Math.round(alvo*100);const dp=new Map<number,LinhaConsulta[][]>([[0,[[]]]]);for(const nota of notas.slice(0,24)){const valor=Math.round(Number(nota.nf_valor||0)*100);if(valor<=0||valor>alvoCent)continue;const atual=[...dp.entries()];for(const[soma,combos]of atual){const nova=soma+valor;if(nova>alvoCent)continue;const destino=dp.get(nova)||[];for(const combo of combos){if(combo.length>=6)continue;const ids=combo.map(x=>x.id).concat(nota.id).sort().join('|');if(!destino.some(x=>x.map(y=>y.id).sort().join('|')===ids))destino.push([...combo,nota]);if(destino.length>=2)break}dp.set(nova,destino.slice(0,2))}if((dp.get(alvoCent)?.length||0)>1)return null}const achadas=dp.get(alvoCent)||[];return achadas.length===1?achadas[0]:null}
 function doc(r:LinhaConsulta){return String(r.documento||'').replace(/\D/g,'')}function chave(r:LinhaConsulta){const d=doc(r);return `${r.empresa_id}|${d.length===11||d.length===14?'doc:'+d:'nome:'+norm(r.nome)}`}function mesEmissao(r:LinhaConsulta){return String(r.nf_data||'').slice(0,7)}function proxMes(m:string){const[a,b]=m.split('-').map(Number);if(!a||!b)return'';return b===12?`${a+1}-01`:`${a}-${String(b+1).padStart(2,'0')}`}function scoreNota(p:LinhaConsulta,n:LinhaConsulta){let score=0;if(doc(p)&&doc(p)===doc(n))score+=45;if(n.mes_ref===p.mes_ref)score+=25;const em=mesEmissao(n);if(em===p.mes_ref||em===proxMes(p.mes_ref))score+=15;if(norm(p.nome)===norm(n.nome))score+=15;return score}
-function push<T>(m:Map<string,T[]>,k:string,v:T){const a=m.get(k);if(a)a.push(v);else m.set(k,[v])}
-// Similaridade de nome por tokens (Jaccard) — apoio para casos SEM documento.
-function similaridade(a:string,b:string){const ta=new Set(a.split(' ').filter(x=>x.length>2)),tb=new Set(b.split(' ').filter(x=>x.length>2));if(!ta.size||!tb.size)return 0;let i=0;ta.forEach(t=>{if(tb.has(t))i++});return i/new Set([...ta,...tb]).size}
-function montar(linhas:LinhaConsulta[]):Sugestao[]{
- const unicas=new Map<string,LinhaConsulta>();for(const r of linhas){const k=`${r.tipo}|${r.id}`;const a=unicas.get(k);if(!a||(!a.nota_id&&r.nota_id))unicas.set(k,r)}
- const base=[...unicas.values()]
- const pros=base.filter(r=>r.tipo==='comissao'&&!r.nota_id&&!r.analise_manual)
- const notas=base.filter(r=>r.tipo==='nota'&&r.situacao==='nota_sem_vinculo'&&!r.analise_manual&&Number(r.nf_valor)>0)
- // Índices: por doc na unidade, por doc GLOBAL (cross-unidade — CNPJ é único), por nome na unidade.
- const porDoc=new Map<string,LinhaConsulta[]>(),porDocGlobal=new Map<string,LinhaConsulta[]>(),porNome=new Map<string,LinhaConsulta[]>()
- for(const n of notas){const d=doc(n),nome=norm(n.nome);if(d.length===11||d.length===14){push(porDoc,`${n.empresa_id}|${d}`,n);push(porDocGlobal,d,n)}if(nome)push(porNome,`${n.empresa_id}|${nome}`,n)}
- const candidatas:Sugestao[]=[]
- for(const p of pros){
-  const alvo=Number(p.valor_comissao||0),d=doc(p),nome=norm(p.nome),docValido=d.length===11||d.length===14
-  if(!(alvo>0)||(!docValido&&!nome))continue
-  const diretas=docValido?(porDoc.get(`${p.empresa_id}|${d}`)||[]):[]
-  // Cross-unidade: mesmo CNPJ em outra unidade (a nota é baixada pela unidade do certificado).
-  const crossDoc=docValido?(porDocGlobal.get(d)||[]).filter(n=>n.empresa_id!==p.empresa_id):[]
-  // Nome na mesma unidade, com trava de documento (não cruza dois documentos diferentes).
-  const porNomeSeguro=nome?(porNome.get(`${p.empresa_id}|${nome}`)||[]).filter(n=>{const nd=doc(n),temDoc=nd.length===11||nd.length===14;return!docValido||!temDoc||nd===d}):[]
-  // Nome PARECIDO só quando o profissional não tem documento (evita casar pessoas diferentes com doc).
-  const fuzzy=(!docValido&&nome&&!porNomeSeguro.length)?notas.filter(n=>n.empresa_id===p.empresa_id&&!doc(n)&&similaridade(nome,norm(n.nome))>=0.85):[]
-  const pool=[...new Map([...diretas,...porNomeSeguro,...crossDoc,...fuzzy].map(n=>[n.id,n])).values()]
-  if(!pool.length)continue
-  const ordenadas=pool.sort((a,b)=>scoreNota(p,b)-scoreNota(p,a)||String(b.nf_data||'').localeCompare(String(a.nf_data||'')))
-  const exatas=ordenadas.filter(n=>Math.abs(Number(n.nf_valor||0)-alvo)<0.01)
-  let combo:LinhaConsulta[]|null=null,tipo:'exata'|'soma'|'aprox'='exata'
-  if(exatas.length===1)combo=[exatas[0]]
-  else if(exatas.length>1&&scoreNota(p,exatas[0])-scoreNota(p,exatas[1])>=15)combo=[exatas[0]]
-  else{combo=combinacaoUnica(ordenadas,alvo);if(combo?.length)tipo='soma'}
-  // Tolerância de centavos (arredondamento) — só nota única e sem ambiguidade.
-  if(!combo?.length){const tol=Math.max(0.05,alvo*0.005);const quase=ordenadas.filter(n=>Math.abs(Number(n.nf_valor||0)-alvo)<=tol);if(quase.length===1||(quase.length>1&&scoreNota(p,quase[0])-scoreNota(p,quase[1])>=15)){combo=[quase[0]];tipo='aprox'}}
-  if(!combo?.length)continue
-  const mesmaComp=combo.every(n=>n.mes_ref===p.mes_ref),mesmoDoc=combo.every(n=>docValido&&doc(n)===d),mesmoNome=combo.every(n=>norm(n.nome)===nome),outraUnidade=combo.some(n=>n.empresa_id!==p.empresa_id)
-  const motivos=[mesmoDoc?'CNPJ/CPF idêntico':(docValido?'documento diferente/ausente na nota':'nome sem documento'),tipo==='soma'?`${combo.length} notas somam ${formatarMoeda(alvo)}`:tipo==='aprox'?'valor aproximado (centavos)':`valor exato ${formatarMoeda(alvo)}`,mesmaComp?'competência coincide':'competência da planilha',outraUnidade?'outra unidade (mesmo CNPJ)':(mesmoNome?'nome idêntico':'')].filter(Boolean)
-  let confianca=70+(mesmoDoc?15:0)+(mesmaComp?10:0)+(mesmoNome?5:0)-(outraUnidade?12:0)-(tipo==='aprox'?12:0)-(tipo==='soma'?5:0)-((!mesmoDoc&&!docValido)?10:0)
-  confianca=Math.max(40,Math.min(100,confianca))
-  candidatas.push({id:`${p.id}|${combo.map(n=>n.id).sort().join('+')}`,profissional:p,notas:combo,selecionada:confianca>=85,confianca,motivos})
- }
- // Resolução GREEDY por confiança: cada nota fica com a MELHOR sugestão (não descarta as duas ao empatar).
- const ordenadasC=candidatas.sort((a,b)=>b.confianca-a.confianca||String(a.profissional.nome||'').localeCompare(String(b.profissional.nome||''),'pt-BR'))
- const usadas=new Set<string>(),prosUsados=new Set<string>(),final:Sugestao[]=[]
- for(const c of ordenadasC){if(prosUsados.has(c.profissional.id))continue;if(c.notas.some(n=>usadas.has(n.id)))continue;c.notas.forEach(n=>usadas.add(n.id));prosUsados.add(c.profissional.id);final.push(c)}
- return final
-}
+function montar(linhas:LinhaConsulta[]):Sugestao[]{const unicas=new Map<string,LinhaConsulta>();for(const r of linhas){const k=`${r.tipo}|${r.id}`;const atual=unicas.get(k);if(!atual||(!atual.nota_id&&r.nota_id))unicas.set(k,r)}const base=[...unicas.values()];const pros=base.filter(r=>r.tipo==='comissao'&&!r.nota_id&&!r.analise_manual);const notas=base.filter(r=>r.tipo==='nota'&&r.situacao==='nota_sem_vinculo'&&!r.analise_manual&&Number(r.nf_valor)>0);const porDoc=new Map<string,LinhaConsulta[]>(),porNome=new Map<string,LinhaConsulta[]>();for(const n of notas){const d=doc(n),nome=norm(n.nome);if(d.length===11||d.length===14){const k=`${n.empresa_id}|doc:${d}`;(porDoc.get(k)||porDoc.set(k,[]).get(k)!).push(n)}if(nome){const k=`${n.empresa_id}|nome:${nome}`;(porNome.get(k)||porNome.set(k,[]).get(k)!).push(n)}}const candidatas:Sugestao[]=[];for(const p of pros){const alvo=Number(p.valor_comissao||0),d=doc(p),nome=norm(p.nome),docValido=d.length===11||d.length===14;if(!(alvo>0)||(!docValido&&!nome))continue;const diretas=docValido?(porDoc.get(`${p.empresa_id}|doc:${d}`)||[]):[];const porNomeSeguro=nome?(porNome.get(`${p.empresa_id}|nome:${nome}`)||[]).filter(n=>{const nd=doc(n),notaTemDoc=nd.length===11||nd.length===14;return!docValido||!notaTemDoc||nd===d}):[];const pool=[...new Map([...diretas,...porNomeSeguro].map(n=>[n.id,n])).values()];const ordenadas=pool.sort((a,b)=>scoreNota(p,b)-scoreNota(p,a)||String(b.nf_data||'').localeCompare(String(a.nf_data||'')));const exatas=ordenadas.filter(n=>Math.abs(Number(n.nf_valor||0)-alvo)<0.01);let combo:LinhaConsulta[]|null=null;if(exatas.length===1)combo=[exatas[0]];else if(exatas.length>1&&scoreNota(p,exatas[0])-scoreNota(p,exatas[1])>=15)combo=[exatas[0]];else combo=combinacaoUnica(ordenadas,alvo);if(!combo?.length)continue;const mesmaComp=combo.every(n=>n.mes_ref===p.mes_ref),mesmoDoc=combo.every(n=>docValido&&doc(n)===d),mesmoNome=combo.every(n=>norm(n.nome)===nome);const motivos=[mesmoDoc?'CNPJ/CPF idêntico':'nome exato com documento ausente',`${combo.length} nota(s) somam exatamente ${formatarMoeda(alvo)}`,mesmaComp?'competência informada coincide':'competência oficial vem da planilha',mesmoNome?'nome idêntico':'razão social diferente, documento confirmado'];const confianca=Math.min(100,70+(mesmoDoc?15:0)+(mesmaComp?10:0)+(mesmoNome?5:0));candidatas.push({id:`${p.id}|${combo.map(n=>n.id).sort().join('+')}`,profissional:p,notas:combo,selecionada:true,confianca,motivos})}const uso=new Map<string,number>();for(const x of candidatas)for(const n of x.notas)uso.set(n.id,(uso.get(n.id)||0)+1);return candidatas.filter(x=>x.notas.every(n=>uso.get(n.id)===1)).sort((a,b)=>b.confianca-a.confianca||String(a.profissional.nome||'').localeCompare(String(b.profissional.nome||''),'pt-BR'))}
 
 export default function PreVinculacaoPage(){const router=useRouter();const[inicio,setInicio]=useState(SALAO_COMPETENCIA_INICIAL);const[fim,setFim]=useState(mesAtual());const[empresaId,setEmpresaId]=useState('');const[empresas,setEmpresas]=useState<Empresa[]>([]);const[sugestoes,setSugestoes]=useState<Sugestao[]>([]);const[loading,setLoading]=useState(false);const[acao,setAcao]=useState('');const[msg,setMsg]=useState('');const req=useRef(0);const cache=useRef(new Map<string,Sugestao[]>())
  useEffect(()=>{if(!SALAO_ENABLED){router.replace('/dashboard');return}supabase.from('empresas').select('*').order('razao_social').then(({data})=>setEmpresas(data||[]))},[router])
