@@ -192,8 +192,8 @@ export async function importarPlanilhaComissoes(arquivo: File):
 /**
  * Grava a lista esperada da competência. Válidas entram por CNPJ; incompletas
  * (sem CNPJ) entram como PENDÊNCIA (documento nulo + motivo), sem se perder.
- * `sobrescrever`: refaz a lista não-conferida da competência (mantém as já
- * conferidas). Sem sobrescrever: só adiciona o que ainda não existe.
+ * `sobrescrever`: atualiza somente os profissionais presentes no arquivo.
+ * A importação é sempre incremental e nunca apaga profissionais de outros lotes.
  */
 export async function processarImportacaoComissoes(linhas: LinhaImportComissao[], competencia: string, sobrescrever: boolean):
   Promise<{ gravados: number; atualizados: number; pendencias: number; ignorados: number }> {
@@ -206,12 +206,6 @@ export async function processarImportacaoComissoes(linhas: LinhaImportComissao[]
   const atuais = existentes ?? []
   const porDocumento = new Map(atuais.filter(x => x.documento).map(x => [x.empresa_id + '|' + x.documento, x]))
   const pendentesAtuais = new Set(atuais.filter(x => !x.documento).map(x => x.empresa_id + '|' + String(x.nome ?? '').trim().toLocaleLowerCase('pt-BR')))
-
-  if (sobrescrever) {
-    const { error } = await supabase.from('salon_comissoes').delete()
-      .eq('mes_ref', competencia).in('empresa_id', empresasNoLote).is('nota_id', null)
-    if (error) throw new Error(error.message)
-  }
 
   const validas = linhas.filter(l => l.documento)
   const incompletas = linhas.filter(l => !l.documento)
@@ -245,14 +239,16 @@ export async function processarImportacaoComissoes(linhas: LinhaImportComissao[]
     nome: l.nome.trim() || l.documento, valor_comissao: l.valor_comissao,
     status: 'pendente', pendencia: null,
   }))
+  // Sem documento não existe uma chave segura para upsert. Não repetir a mesma
+  // pendência por unidade/nome, inclusive quando valores existentes são atualizados.
   const payloadPendencias = incompletas
-    .filter(l => sobrescrever || !pendentesAtuais.has(l.empresaId + '|' + l.nome.trim().toLocaleLowerCase('pt-BR')))
+    .filter(l => !pendentesAtuais.has(l.empresaId + '|' + l.nome.trim().toLocaleLowerCase('pt-BR')))
     .map(l => ({
       empresa_id: l.empresaId, mes_ref: competencia, documento: null,
       nome: l.nome.trim() || 'Profissional não identificado', valor_comissao: l.valor_comissao,
       status: 'pendente', pendencia: l.pendencia ?? 'Sem CNPJ',
     }))
-  if (!sobrescrever) ignorados += incompletas.length - payloadPendencias.length
+  ignorados += incompletas.length - payloadPendencias.length
 
   const lotes = <T,>(itens: T[], tamanho = 500) =>
     Array.from({ length: Math.ceil(itens.length / tamanho) }, (_, i) => itens.slice(i * tamanho, (i + 1) * tamanho))
