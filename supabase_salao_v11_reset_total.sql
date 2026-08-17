@@ -187,6 +187,7 @@ create table public.salon_competencia_status (
 create unique index salon_competencia_status_unica
   on public.salon_competencia_status (competencia, coalesce(empresa_id, '00000000-0000-0000-0000-000000000000'::uuid));
 
+create unique index salon_comissoes_empresa_mes_documento_unique on public.salon_comissoes (empresa_id, mes_ref, documento);
 create index salon_comissoes_periodo_empresa on public.salon_comissoes (mes_ref, empresa_id);
 create index salon_comissoes_documento_periodo on public.salon_comissoes (documento, mes_ref);
 create index salon_comissoes_status_periodo on public.salon_comissoes (status, mes_ref);
