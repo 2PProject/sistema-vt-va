@@ -729,7 +729,9 @@ export async function vincular(admin: SupabaseClient, comissaoId: string, notaId
   if (comissao.mes_ref < SALAO_COMPETENCIA_INICIAL) return { ok: false, erro: 'Competências anteriores a janeiro/2026 ficam somente no histórico.' }
   if (n.excluida || n.classificacao !== 'profissional' || n.analise_manual) return { ok: false, erro: 'A nota não está disponível para conferência.' }
   if (n.empresa_id !== comissao.empresa_id) return { ok: false, erro: 'Nota e profissional pertencem a unidades diferentes.' }
-  if (dig(n.documento) !== dig(comissao.documento)) return { ok: false, erro: 'O CNPJ/CPF da nota não corresponde ao profissional. Corrija o cadastro antes de vincular.' }
+  // Vínculo MANUAL/confirmado: permite documento divergente (ex.: profissional
+  // trocou de CNPJ, ou a planilha traz CPF e a nota é CNPJ). Apenas registra.
+  const docDivergente = dig(n.documento) !== dig(comissao.documento)
   const [{ data: relOcupada }, { data: legadoOcupado }, { data: relAntigas }] = await Promise.all([
     admin.from('salon_comissao_notas').select('comissao_id').eq('nota_id', notaId).neq('comissao_id', comissaoId),
     admin.from('salon_comissoes').select('id').eq('nota_id', notaId).neq('id', comissaoId),
@@ -747,7 +749,7 @@ export async function vincular(admin: SupabaseClient, comissaoId: string, notaId
   if (erroRel) return { ok: false, erro: `Aplique a migração supabase_salao_v8_multiplas_notas.sql: ${erroRel.message}` }
   const { error } = await admin.from('salon_comissoes').update({
     nota_id: n.id, status: 'conferida', nf_numero: n.numero, nf_data: n.data_emissao, nf_valor: n.valor, nf_origem: 'manual',
-    confirmado_em: new Date().toISOString(), observacao: notaDivergencia || comissao.observacao || null,
+    confirmado_em: new Date().toISOString(), observacao: [docDivergente ? `Documento da nota (${dig(n.documento) || '—'}) difere do cadastro (${dig(comissao.documento) || '—'}) — vínculo manual.` : null, notaDivergencia, comissao.observacao].filter(Boolean).join(' ') || null,
   }).eq('id', comissaoId)
   if (error) {
     await admin.from('salon_comissao_notas').delete().eq('comissao_id', comissaoId).eq('nota_id', notaId)
@@ -777,7 +779,8 @@ export async function vincularMultiplas(admin: SupabaseClient, comissaoId: strin
   if (!notas || notas.length !== ids.length) return { ok: false, erro: 'Uma ou mais notas não foram encontradas.' }
   if (notas.some(n => n.excluida || n.classificacao !== 'profissional' || n.analise_manual)) return { ok: false, erro: 'Uma das notas não está disponível para conferência.' }
   if (notas.some(n => n.empresa_id !== comissao.empresa_id)) return { ok: false, erro: 'Todas as notas devem pertencer à mesma unidade do profissional.' }
-  if (notas.some(n => dig(n.documento) !== dig(comissao.documento))) return { ok: false, erro: 'Todas as notas devem possuir o mesmo CNPJ/CPF do profissional.' }
+  // Vínculo MANUAL/confirmado: permite documento divergente; apenas registra.
+  const docDivergenteMulti = notas.some(n => dig(n.documento) !== dig(comissao.documento))
   const total = Math.round(notas.reduce((s, n) => s + Number(n.valor || 0), 0) * 100) / 100
   const esperado = Math.round(Number(comissao.valor_comissao || 0) * 100) / 100
   if (Math.abs(total - esperado) >= 0.01) return { ok: false, erro: `A soma das notas (${total.toFixed(2)}) não corresponde ao valor importado (${esperado.toFixed(2)}).` }
@@ -798,7 +801,7 @@ export async function vincularMultiplas(admin: SupabaseClient, comissaoId: strin
     admin.from('salon_comissoes').update({
       nota_id: primeira.id, status: 'conferida', nf_numero: numeros, nf_data: primeira.data_emissao,
       nf_valor: total, nf_origem: 'manual_multiplo', confirmado_em: agora,
-      observacao: `${ids.length} notas vinculadas: ${numeros}. Soma R$ ${total.toFixed(2)}.`,
+      observacao: `${ids.length} notas vinculadas: ${numeros}. Soma R$ ${total.toFixed(2)}.${docDivergenteMulti ? ' Documento divergente — vínculo manual.' : ''}`,
     }).eq('id', comissaoId),
     admin.from('salon_notas').update({ conferida: true, conferida_em: agora, conferida_por: usuario ?? null }).in('id', ids),
   ])
