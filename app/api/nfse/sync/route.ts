@@ -94,6 +94,8 @@ export async function POST(req: Request) {
           documento: n.prestadorDoc || null, emitente_nome: n.prestadorNome || null,
           numero: n.numero || null, valor: n.valor, data_emissao: n.dataEmissao || null,
           competencia: n.competencia || null,
+          xml_original: n.xmlOriginal || null,
+          xml_nome: n.numero ? `NFS-e-${n.numero}.xml` : null,
         }))
         const { error, count } = await admin.from('salon_notas').upsert(payload, { onConflict: 'empresa_id,nsu', count: 'exact' })
         if (error) {
