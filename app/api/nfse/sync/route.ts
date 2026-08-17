@@ -97,7 +97,15 @@ export async function POST(req: Request) {
           xml_original: n.xmlOriginal || null,
           xml_nome: n.numero ? `NFS-e-${n.numero}.xml` : null,
         }))
-        const { error, count } = await admin.from('salon_notas').upsert(payload, { onConflict: 'empresa_id,nsu', count: 'exact' })
+        let gravacao = await admin.from('salon_notas').upsert(payload, { onConflict: 'empresa_id,nsu', count: 'exact' })
+        // Compatibilidade durante a migração: a baixa não para se o cache do
+        // Supabase ainda não conhecer as colunas do XML. Após a migração, o XML
+        // passa a ser preservado automaticamente.
+        if (gravacao.error && /xml_(original|nome)|schema cache/i.test(gravacao.error.message)) {
+          const payloadCompat = payload.map(({ xml_original: _xml, xml_nome: _nome, ...nota }) => nota)
+          gravacao = await admin.from('salon_notas').upsert(payloadCompat, { onConflict: 'empresa_id,nsu', count: 'exact' })
+        }
+        const { error, count } = gravacao
         if (error) {
           const dica = /salon_notas/.test(error.message) && /exist|relation|does not/.test(error.message)
             ? ' (rode supabase_salao_v2.sql no Supabase para criar a tabela salon_notas)' : ''
