@@ -17,8 +17,7 @@ set nome = excluded.nome,
     ativo = true;
 
 update public.salon_comissoes c
-set profissional_id = p.id,
-    atualizado_em = now()
+set profissional_id = p.id
 from public.salon_professionals p
 where p.empresa_id = c.empresa_id
   and p.documento = c.documento
