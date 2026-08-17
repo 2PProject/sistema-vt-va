@@ -9,7 +9,7 @@ export const maxDuration = 60
 type NotaXml = {
   chave: string; documento: string; emitente_nome: string; numero: string
   valor: number; data_emissao: string; competencia: string
-  xml_original: string; xml_nome: string
+  xml_original?: string; xml_nome?: string
 }
 
 const soDigitos = (v: string) => (v || '').replace(/\D/g, '')
