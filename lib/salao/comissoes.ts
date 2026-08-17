@@ -215,12 +215,33 @@ export async function processarImportacaoComissoes(linhas: LinhaImportComissao[]
 
   const validas = linhas.filter(l => l.documento)
   const incompletas = linhas.filter(l => !l.documento)
+
+  // A planilha alimenta também o cadastro-base exibido em Profissionais.
+  // A competência continua em salon_comissoes; nome/documento mestre ficam em
+  // salon_professionals e são ligados por profissional_id.
+  if (validas.length > 0) {
+    const cadastro = Array.from(new Map(validas.map(l => [
+      l.empresaId + '|' + l.documento,
+      { empresa_id: l.empresaId, documento: l.documento, nome: l.nome.trim() || l.documento, ativo: true },
+    ])).values())
+    const { error: erroCadastro } = await supabase.from('salon_professionals').upsert(cadastro, {
+      onConflict: 'empresa_id,documento',
+    })
+    if (erroCadastro) throw new Error(`Erro ao atualizar profissionais: ${erroCadastro.message}`)
+  }
+
+  const { data: profissionais, error: erroProfissionais } = await supabase.from('salon_professionals')
+    .select('id, empresa_id, documento').in('empresa_id', empresasNoLote)
+  if (erroProfissionais) throw new Error(`Erro ao vincular profissionais: ${erroProfissionais.message}`)
+  const profissionalPorDocumento = new Map((profissionais ?? []).map(p => [p.empresa_id + '|' + p.documento, p.id]))
+
   let gravados = validas.filter(l => !porDocumento.has(l.empresaId + '|' + l.documento)).length
   let atualizados = sobrescrever ? validas.length - gravados : 0
   let ignorados = sobrescrever ? 0 : validas.length - gravados
 
   const payloadValidas = validas.map(l => ({
     empresa_id: l.empresaId, mes_ref: competencia, documento: l.documento,
+    profissional_id: profissionalPorDocumento.get(l.empresaId + '|' + l.documento) || null,
     nome: l.nome.trim() || l.documento, valor_comissao: l.valor_comissao,
     status: 'pendente', pendencia: null,
   }))
