@@ -9,6 +9,7 @@ import { exportarPDF,type Coluna } from '../../../lib/salao/relatorios'
 import { formatarMoeda,MESES } from '../../../utils/calculoVT'
 
 type Aba='todos'|'pendentes'|'conferidos'
+function mesAtual(){const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`}
 function fmtMes(m:string){const[a,mm]=m.split('-').map(Number);return mm?`${MESES[mm-1]}/${a}`:''}
 function fmtData(v:string|null){if(!v)return '—';const[a,m,d]=v.slice(0,10).split('-');return d?`${d}/${m}/${a}`:v}
 function mesesEntre(a:string,b:string){if(!a||!b)return[];const out:string[]=[];let[y,m]=a.split('-').map(Number);const[fy,fm]=b.split('-').map(Number);while(y*12+m<=fy*12+fm&&out.length<24){out.push(`${y}-${String(m).padStart(2,'0')}`);m++;if(m>12){m=1;y++}}return out}
@@ -37,7 +38,7 @@ async function buscarTudo(competencia:string,empresaId:string){
 }
 
 export default function RelatoriosPage(){
- const router=useRouter();const[inicio,setInicio]=useState('');const[fim,setFim]=useState('');const[empresaId,setEmpresaId]=useState('');const[profissional,setProfissional]=useState('');const[empresas,setEmpresas]=useState<Empresa[]>([]);const[linhas,setLinhas]=useState<LinhaConsulta[]>([]);const[aba,setAba]=useState<Aba>('pendentes');const[busca,setBusca]=useState('');const[loading,setLoading]=useState(false);const[erro,setErro]=useState('');const[proSel,setProSel]=useState<LinhaConsulta|null>(null);const[notaSel,setNotaSel]=useState<LinhaConsulta|null>(null);const[vinculando,setVinculando]=useState(false);const req=useRef(0)
+ const router=useRouter();const[inicio,setInicio]=useState(SALAO_COMPETENCIA_INICIAL);const[fim,setFim]=useState(mesAtual());const[empresaId,setEmpresaId]=useState('');const[profissional,setProfissional]=useState('');const[empresas,setEmpresas]=useState<Empresa[]>([]);const[linhas,setLinhas]=useState<LinhaConsulta[]>([]);const[aba,setAba]=useState<Aba>('pendentes');const[busca,setBusca]=useState('');const[loading,setLoading]=useState(false);const[erro,setErro]=useState('');const[proSel,setProSel]=useState<LinhaConsulta|null>(null);const[notaSel,setNotaSel]=useState<LinhaConsulta|null>(null);const[vinculando,setVinculando]=useState(false);const req=useRef(0)
  useEffect(()=>{if(!SALAO_ENABLED){router.replace('/dashboard');return}supabase.from('empresas').select('*').order('razao_social').then(({data})=>setEmpresas(data||[]))},[router])
  const carregar=useCallback(async()=>{const id=++req.current;if(!inicio||!fim){setLinhas([]);setLoading(false);return}setLoading(true);setErro('');try{const meses=mesesEntre(inicio,fim);const dados=await Promise.all(meses.map(m=>buscarTudo(m,empresaId)));if(id===req.current)setLinhas(dados.flat())}catch(e){if(id===req.current)setErro(e instanceof Error?e.message:'Erro ao consultar o período.')}finally{if(id===req.current)setLoading(false)}},[inicio,fim,empresaId])
  useEffect(()=>{if(SALAO_ENABLED)carregar()},[carregar])
