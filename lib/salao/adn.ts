@@ -15,6 +15,7 @@ export type NotaADN = {
   dataEmissao: string    // 'YYYY-MM-DD'
   valor: number
   competencia?: string   // 'YYYY-MM'
+  xmlOriginal?: string    // XML descompactado original para DANFSe/auditoria
 }
 export type ResultadoADN = {
   notas: NotaADN[]
@@ -83,7 +84,7 @@ function tag(xml: string, ...nomes: string[]): string | undefined {
  *   valor líquido:      NFSe/infNFSe/valores/vLiq  (fallback: .../vServ)
  *   chave de acesso:    atributo Id de infNFSe
  */
-function parseArquivoXml(arquivo: string): { chave: string; prestadorDoc: string; prestadorNome: string; numero: string; data: string; competencia: string; valor: number } | null {
+function parseArquivoXml(arquivo: string): { chave: string; prestadorDoc: string; prestadorNome: string; numero: string; data: string; competencia: string; valor: number; xml: string } | null {
   let xml = ''
   try { xml = zlib.gunzipSync(Buffer.from(arquivo, 'base64')).toString('utf8') }
   catch { try { xml = Buffer.from(arquivo, 'base64').toString('utf8') } catch { return null } }
@@ -99,7 +100,7 @@ function parseArquivoXml(arquivo: string): { chave: string; prestadorDoc: string
   const dCompet = (tag(xml, 'dCompet', 'competencia') || '').slice(0, 10)
   const competencia = (dCompet || data).slice(0, 7)
   const valor = parseFloat(tag(xml, 'vLiq', 'vServ', 'vServPrest') || '0') || 0
-  return { chave, prestadorDoc: doc, prestadorNome: nome, numero, data, competencia, valor }
+  return { chave, prestadorDoc: doc, prestadorNome: nome, numero, data, competencia, valor, xml }
 }
 
 /** Converte um item do LoteDFe em NotaADN. */
@@ -132,6 +133,7 @@ function itemParaNota(item: any): NotaADN {
     prestadorNome: p?.prestadorNome ?? '', numero: p?.numero ?? '',
     dataEmissao: p?.data ?? '', valor: p?.valor ?? 0,
     competencia: p?.competencia || undefined,
+    xmlOriginal: p?.xml,
   }
 }
 
