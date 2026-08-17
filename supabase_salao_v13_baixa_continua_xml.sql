@@ -9,4 +9,7 @@ alter table public.salon_notas
 create unique index if not exists salon_notas_empresa_nsu_unique
   on public.salon_notas (empresa_id, nsu);
 
+-- Força o PostgREST/Supabase a recarregar imediatamente o novo esquema.
+notify pgrst, 'reload schema';
+
 commit;
