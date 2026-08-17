@@ -12,6 +12,8 @@ export type NotaRecebida = {
   valor: number | null
   data_emissao: string | null
   competencia: string | null
+  xml_original?: string | null
+  xml_nome?: string | null
   // conferência (v3)
   competencia_conf: string | null
   observacao: string | null
