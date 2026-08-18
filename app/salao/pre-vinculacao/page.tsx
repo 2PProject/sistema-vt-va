@@ -19,7 +19,45 @@ function doc(r:LinhaConsulta){return String(r.documento||'').replace(/\D/g,'')}f
 // "Mínimo do nome bater": nº de tokens significativos (>2 letras) em comum.
 // norm() já remove acento e caixa, então a comparação é acento/caixa-insensível.
 function comuns(a:string,b:string){const tb=new Set(b.split(' ').filter(x=>x.length>2));return a.split(' ').filter(x=>x.length>2&&tb.has(x)).length}
-function montar(linhas:LinhaConsulta[]):Sugestao[]{const unicas=new Map<string,LinhaConsulta>();for(const r of linhas){const k=`${r.tipo}|${r.id}`;const atual=unicas.get(k);if(!atual||(!atual.nota_id&&r.nota_id))unicas.set(k,r)}const base=[...unicas.values()];const pros=base.filter(r=>r.tipo==='comissao'&&!r.nota_id&&!r.analise_manual);const notas=base.filter(r=>r.tipo==='nota'&&r.situacao==='nota_sem_vinculo'&&!r.analise_manual&&Number(r.nf_valor)>0);const porDoc=new Map<string,LinhaConsulta[]>(),porNome=new Map<string,LinhaConsulta[]>();for(const n of notas){const d=doc(n),nome=norm(n.nome);if(d.length===11||d.length===14){const k=`${n.empresa_id}|doc:${d}`;(porDoc.get(k)||porDoc.set(k,[]).get(k)!).push(n)}if(nome){const k=`${n.empresa_id}|nome:${nome}`;(porNome.get(k)||porNome.set(k,[]).get(k)!).push(n)}}const candidatas:Sugestao[]=[];for(const p of pros){const alvo=Number(p.valor_comissao||0),d=doc(p),nome=norm(p.nome),docValido=d.length===11||d.length===14;if(!(alvo>0)||(!docValido&&!nome))continue;const diretas=docValido?(porDoc.get(`${p.empresa_id}|doc:${d}`)||[]):[];const porNomeSeguro=nome?(porNome.get(`${p.empresa_id}|nome:${nome}`)||[]).filter(n=>{const nd=doc(n),notaTemDoc=nd.length===11||nd.length===14;return!docValido||!notaTemDoc||nd===d}):[];const parecidas=(nome&&!diretas.length)?notas.filter(n=>n.empresa_id===p.empresa_id&&n.mes_ref===p.mes_ref&&comuns(nome,norm(n.nome))>=2):[];const pool=[...new Map([...diretas,...porNomeSeguro,...parecidas].map(n=>[n.id,n])).values()];const ordenadas=pool.sort((a,b)=>scoreNota(p,b)-scoreNota(p,a)||String(b.nf_data||'').localeCompare(String(a.nf_data||'')));const exatas=ordenadas.filter(n=>Math.abs(Number(n.nf_valor||0)-alvo)<0.01);let combo:LinhaConsulta[]|null=null;if(exatas.length===1)combo=[exatas[0]];else if(exatas.length>1&&scoreNota(p,exatas[0])-scoreNota(p,exatas[1])>=15)combo=[exatas[0]];else combo=combinacaoUnica(ordenadas,alvo);if(!combo?.length)continue;const mesmaComp=combo.every(n=>n.mes_ref===p.mes_ref),mesmoDoc=combo.every(n=>docValido&&doc(n)===d),mesmoNome=combo.every(n=>norm(n.nome)===nome),soParecido=!mesmoDoc&&!mesmoNome;const motivos=[mesmoDoc?'CNPJ/CPF idêntico':soParecido?'nome parecido (documento diferente)':'nome exato com documento ausente',`${combo.length} nota(s) somam exatamente ${formatarMoeda(alvo)}`,mesmaComp?'competência informada coincide':'competência oficial vem da planilha',mesmoNome?'nome idêntico':soParecido?'confira o nome antes de confirmar':'razão social diferente, documento confirmado'];const confianca=Math.min(100,(soParecido?55:70)+(mesmoDoc?15:0)+(mesmaComp?10:0)+(mesmoNome?5:0));candidatas.push({id:`${p.id}|${combo.map(n=>n.id).sort().join('+')}`,profissional:p,notas:combo,selecionada:!soParecido,confianca,motivos})}const uso=new Map<string,number>();for(const x of candidatas)for(const n of x.notas)uso.set(n.id,(uso.get(n.id)||0)+1);return candidatas.filter(x=>x.notas.every(n=>uso.get(n.id)===1)).sort((a,b)=>b.confianca-a.confianca||String(a.profissional.nome||'').localeCompare(String(b.profissional.nome||''),'pt-BR'))}
+function mesesDiff(a:string,b:string){const pa=(a||'').split('-').map(Number),pb=(b||'').split('-').map(Number);if(pa.length<2||pb.length<2||!pa[0]||!pb[0])return 99;return Math.abs((pa[0]*12+pa[1])-(pb[0]*12+pb[1]))}
+// Regra de ouro: o VALOR sempre tem que bater (exato, soma exata ou centavos).
+// Identidade por CNPJ igual OU nome idêntico OU nome parecido (>=2 tokens).
+// Competência é fator de CONFIANÇA (não bloqueia): mesma > ±1 mês > diferente.
+function montar(linhas:LinhaConsulta[]):Sugestao[]{
+ const unicas=new Map<string,LinhaConsulta>();for(const r of linhas){const k=`${r.tipo}|${r.id}`;const a=unicas.get(k);if(!a||(!a.nota_id&&r.nota_id))unicas.set(k,r)}
+ const base=[...unicas.values()]
+ const pros=base.filter(r=>r.tipo==='comissao'&&!r.nota_id&&!r.analise_manual)
+ const notas=base.filter(r=>r.tipo==='nota'&&r.situacao==='nota_sem_vinculo'&&!r.analise_manual&&Number(r.nf_valor)>0)
+ const candidatas:Sugestao[]=[]
+ for(const p of pros){
+  const alvo=Number(p.valor_comissao||0),d=doc(p),nome=norm(p.nome),docValido=d.length===11||d.length===14
+  if(!(alvo>0)||(!docValido&&!nome))continue
+  // Mesma PESSOA na mesma unidade: mesmo documento OU >=2 tokens de nome em comum.
+  const cands=notas.filter(n=>n.empresa_id===p.empresa_id&&((docValido&&doc(n)===d)||(nome&&comuns(nome,norm(n.nome))>=2)))
+  if(!cands.length)continue
+  // Prioriza: mesma competência, depois mesmo documento, depois mês mais próximo, depois emissão recente.
+  const ordena=(arr:LinhaConsulta[])=>arr.slice().sort((a,b)=>(a.mes_ref===p.mes_ref?0:1)-(b.mes_ref===p.mes_ref?0:1)||((docValido&&doc(a)===d)?0:1)-((docValido&&doc(b)===d)?0:1)||mesesDiff(a.mes_ref,p.mes_ref)-mesesDiff(b.mes_ref,p.mes_ref)||String(b.nf_data||'').localeCompare(String(a.nf_data||'')))
+  let combo:LinhaConsulta[]|null=null,tipo:'exata'|'soma'|'aprox'='exata'
+  const exatas=ordena(cands.filter(n=>Math.abs(Number(n.nf_valor||0)-alvo)<0.01))
+  if(exatas.length)combo=[exatas[0]]
+  else{const soma=combinacaoUnica(ordena(cands),alvo);if(soma?.length){combo=soma;tipo='soma'}
+   else{const tol=Math.max(0.05,alvo*0.005);const quase=ordena(cands.filter(n=>Math.abs(Number(n.nf_valor||0)-alvo)<=tol));if(quase.length){combo=[quase[0]];tipo='aprox'}}}
+  if(!combo?.length)continue
+  const mesmoDoc=combo.every(n=>docValido&&doc(n)===d),mesmoNome=combo.every(n=>norm(n.nome)===nome),mesmaComp=combo.every(n=>n.mes_ref===p.mes_ref),dm=Math.min(...combo.map(n=>mesesDiff(n.mes_ref,p.mes_ref)))
+  const motivos=[mesmoDoc?'CNPJ/CPF idêntico':mesmoNome?'nome idêntico':'nome parecido (documento diferente)',tipo==='soma'?`${combo.length} notas somam ${formatarMoeda(alvo)}`:tipo==='aprox'?'valor aproximado (centavos)':`valor exato ${formatarMoeda(alvo)}`,mesmaComp?'mesma competência':dm<=1?'competência ±1 mês':'competência diferente',(!mesmoDoc||!mesmaComp)?'confira antes de confirmar':''].filter(Boolean)
+  let confianca=(mesmoDoc?85:mesmoNome?75:62)+(mesmaComp?10:dm<=1?0:-15)-(tipo==='aprox'?8:0)-(tipo==='soma'?4:0)
+  confianca=Math.max(40,Math.min(100,confianca))
+  candidatas.push({id:`${p.id}|${combo.map(n=>n.id).sort().join('+')}`,profissional:p,notas:combo,selecionada:confianca>=85&&mesmaComp,confianca,motivos})
+ }
+ // Resolução GULOSA por confiança: cada nota fica com a melhor sugestão; 1 por profissional.
+ const usadas=new Set<string>(),prosUsados=new Set<string>(),final:Sugestao[]=[]
+ for(const c of candidatas.sort((a,b)=>b.confianca-a.confianca||String(a.profissional.nome||'').localeCompare(String(b.profissional.nome||''),'pt-BR'))){
+  if(prosUsados.has(c.profissional.id))continue
+  if(c.notas.some(n=>usadas.has(n.id)))continue
+  c.notas.forEach(n=>usadas.add(n.id));prosUsados.add(c.profissional.id);final.push(c)
+ }
+ return final
+}
 
 export default function PreVinculacaoPage(){const router=useRouter();const[inicio,setInicio]=useState(SALAO_COMPETENCIA_INICIAL);const[fim,setFim]=useState(mesAtual());const[empresaId,setEmpresaId]=useState('');const[empresas,setEmpresas]=useState<Empresa[]>([]);const[sugestoes,setSugestoes]=useState<Sugestao[]>([]);const[loading,setLoading]=useState(false);const[acao,setAcao]=useState('');const[msg,setMsg]=useState('');const req=useRef(0);const cache=useRef(new Map<string,Sugestao[]>())
  useEffect(()=>{if(!SALAO_ENABLED){router.replace('/dashboard');return}supabase.from('empresas').select('*').order('razao_social').then(({data})=>setEmpresas(data||[]))},[router])
