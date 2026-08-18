@@ -26,8 +26,9 @@ function mesesDiff(a:string,b:string){const pa=(a||'').split('-').map(Number),pb
 function montar(linhas:LinhaConsulta[]):Sugestao[]{
  const unicas=new Map<string,LinhaConsulta>();for(const r of linhas){const k=`${r.tipo}|${r.id}`;const a=unicas.get(k);if(!a||(!a.nota_id&&r.nota_id))unicas.set(k,r)}
  const base=[...unicas.values()]
- const pros=base.filter(r=>r.tipo==='comissao'&&!r.nota_id&&!r.analise_manual)
- const notas=base.filter(r=>r.tipo==='nota'&&r.situacao==='nota_sem_vinculo'&&!r.analise_manual&&Number(r.nf_valor)>0)
+ // Nada antes de jan/2026 (início do uso do sistema) — nem comissão nem nota.
+ const pros=base.filter(r=>r.tipo==='comissao'&&!r.nota_id&&!r.analise_manual&&r.mes_ref>=SALAO_COMPETENCIA_INICIAL)
+ const notas=base.filter(r=>r.tipo==='nota'&&r.situacao==='nota_sem_vinculo'&&!r.analise_manual&&Number(r.nf_valor)>0&&r.mes_ref>=SALAO_COMPETENCIA_INICIAL)
  const candidatas:Sugestao[]=[]
  for(const p of pros){
   const alvo=Number(p.valor_comissao||0),d=doc(p),nome=norm(p.nome),docValido=d.length===11||d.length===14
@@ -44,8 +45,14 @@ function montar(linhas:LinhaConsulta[]):Sugestao[]{
    else{const tol=Math.max(0.05,alvo*0.005);const quase=ordena(cands.filter(n=>Math.abs(Number(n.nf_valor||0)-alvo)<=tol));if(quase.length){combo=[quase[0]];tipo='aprox'}}}
   if(!combo?.length)continue
   const mesmoDoc=combo.every(n=>docValido&&doc(n)===d),mesmoNome=combo.every(n=>norm(n.nome)===nome),mesmaComp=combo.every(n=>n.mes_ref===p.mes_ref),dm=Math.min(...combo.map(n=>mesesDiff(n.mes_ref,p.mes_ref)))
+  // Amarração mínima + análise por cenário na competência:
+  //  • CNPJ igual: âncora forte → aceita qualquer período (só marca o desvio).
+  //  • nome idêntico: aceita até 3 meses de distância.
+  //  • nome parecido (>=2 tokens): só até ±1 mês (mais discrepante = descarta).
+  const parcial=!mesmoDoc&&!mesmoNome
+  if(!mesmoDoc&&((mesmoNome&&dm>3)||(parcial&&dm>1)))continue
   const motivos=[mesmoDoc?'CNPJ/CPF idêntico':mesmoNome?'nome idêntico':'nome parecido (documento diferente)',tipo==='soma'?`${combo.length} notas somam ${formatarMoeda(alvo)}`:tipo==='aprox'?'valor aproximado (centavos)':`valor exato ${formatarMoeda(alvo)}`,mesmaComp?'mesma competência':dm<=1?'competência ±1 mês':'competência diferente',(!mesmoDoc||!mesmaComp)?'confira antes de confirmar':''].filter(Boolean)
-  let confianca=(mesmoDoc?85:mesmoNome?75:62)+(mesmaComp?10:dm<=1?0:-15)-(tipo==='aprox'?8:0)-(tipo==='soma'?4:0)
+  let confianca=(mesmoDoc?85:mesmoNome?75:62)+(mesmaComp?10:dm<=1?0:dm<=2?-10:-20)-(tipo==='aprox'?8:0)-(tipo==='soma'?4:0)
   confianca=Math.max(40,Math.min(100,confianca))
   candidatas.push({id:`${p.id}|${combo.map(n=>n.id).sort().join('+')}`,profissional:p,notas:combo,selecionada:confianca>=85&&mesmaComp,confianca,motivos})
  }
