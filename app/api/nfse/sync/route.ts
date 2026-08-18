@@ -17,6 +17,7 @@ type DiagEmpresa = {
   encontradas: number
   gravadas: number
   ignoradas?: number
+  canceladas?: number
   ultimoNsu?: number
   houveMais?: boolean
   erro?: string
@@ -69,23 +70,38 @@ export async function POST(req: Request) {
       const ultimoNsu = reset ? 0 : (syncRow?.ultimo_nsu ?? 0)
 
       const agent = agenteMTLS(cert.cert_pfx_b64, senha)
-      const { notas, ultimoNsu: novoNsu, status, amostra, houveMais, rateLimited } = await consultarADN({ agent, cnpj: cert.cert_cnpj ?? '', ultimoNsu })
+      const { notas, ultimoNsu: novoNsu, status, amostra, houveMais, rateLimited, cancelamentos } = await consultarADN({ agent, cnpj: cert.cert_cnpj ?? '', ultimoNsu })
 
       if (rateLimited && notas.length === 0) {
         empresas.push({ ...base, status: 429, houveMais: true, erro: 'O gov.br limitou as requisições (429). Aguarde ~1 minuto e clique em Sincronizar de novo (a busca continua de onde parou).', amostra }); continue
       }
 
+      // Expurgo de CANCELADAS: o cancelamento chega como evento separado
+      // (referenciando a chave). Marca como excluída qualquer nota já gravada
+      // cuja chave foi cancelada — e remove essas chaves da gravação deste lote.
+      const canceladasChaves = new Set((cancelamentos ?? []).map((c) => c.replace(/\s/g, '')).filter(Boolean))
+      let canceladasMarcadas = 0
+      if (canceladasChaves.size > 0) {
+        const { count } = await admin.from('salon_notas')
+          .update({ excluida: true, excluida_motivo: 'Cancelada na origem (evento de cancelamento NFS-e)', excluida_em: new Date().toISOString() }, { count: 'exact' })
+          .eq('empresa_id', cert.empresa_id).eq('excluida', false).in('chave', Array.from(canceladasChaves))
+        canceladasMarcadas = count ?? 0
+      }
+
       // Guarda só notas RECEBIDAS e VÁLIDAS:
-      //  - descarta valor <= 0 (canceladas / sem valor — "lixo");
+      //  - descarta valor <= 0 (sem valor — "lixo");
+      //  - descarta canceladas na origem (chave em canceladasChaves);
       //  - descarta emitidas pela própria empresa (mesma raiz de CNPJ);
       //  - mantém CPFs e outros CNPJs (os profissionais).
       const raiz = (cert.cert_cnpj ?? '').replace(/\D/g, '').slice(0, 8)
       const recebidas = notas.filter((n) => {
         if (!(Number(n.valor) > 0)) return false
+        if (n.chave && canceladasChaves.has(n.chave.replace(/\s/g, ''))) return false
         const emit = (n.prestadorDoc ?? '').replace(/\D/g, '')
         return !(raiz && emit.length === 14 && emit.slice(0, 8) === raiz)
       })
       const ignoradas = notas.length - recebidas.length
+      const canceladas = canceladasChaves.size   // eventos de cancelamento vistos neste lote
 
       let gravadas = 0
       if (recebidas.length > 0) {
@@ -117,7 +133,7 @@ export async function POST(req: Request) {
       await admin.from('salon_nfse_sync').upsert({ empresa_id: cert.empresa_id, ultimo_nsu: novoNsu, ultima_sync: new Date().toISOString() })
       notasEncontradas += notas.length
       registrosAtualizados += gravadas
-      empresas.push({ ...base, ok: true, status, encontradas: notas.length, gravadas, ignoradas, ultimoNsu: novoNsu, houveMais: houveMais || rateLimited, amostra })
+      empresas.push({ ...base, ok: true, status, encontradas: notas.length, gravadas, ignoradas, canceladas: canceladas + canceladasMarcadas, ultimoNsu: novoNsu, houveMais: houveMais || rateLimited, amostra })
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       const amigavel =

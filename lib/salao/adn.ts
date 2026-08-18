@@ -25,6 +25,7 @@ export type ResultadoADN = {
   paginas: number     // quantas páginas foram lidas
   houveMais: boolean  // parou no limite do lote (há mais para buscar)
   rateLimited: boolean// gov.br respondeu 429 (excesso de requisições)
+  cancelamentos: string[] // chaves de NFS-e CANCELADAS (eventos de cancelamento no lote)
 }
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
@@ -116,6 +117,29 @@ function parseArquivoXml(arquivo: string): { chave: string; prestadorDoc: string
   return { chave, prestadorDoc: doc, prestadorNome: nome, numero, data, competencia, valor, xml }
 }
 
+/**
+ * Detecta se o XML é um EVENTO DE CANCELAMENTO (ou uma nota já marcada como
+ * cancelada) e devolve a CHAVE da NFS-e cancelada — null quando não é
+ * cancelamento. No padrão nacional o cancelamento chega como um documento de
+ * evento separado (tpEvento 1011xx/1051xx) que referencia a chave da nota; a
+ * própria nota não vem com valor zerado, por isso o filtro de valor não pega.
+ */
+export function cancelamentoDoXml(xml: string): string | null {
+  if (!xml) return null
+  const norm = (s: string) => (s || '').replace(/\s/g, '')
+  const tp = (tag(xml, 'tpEvento', 'cEvento') || '').replace(/\D/g, '')
+  const ehEvento = /<[\w:]*(eventoNFSe|infEvento|pedRegEvento)\b/i.test(xml)
+  const cancel =
+    /^(1011|1051|1055)/.test(tp) ||                                                   // evento de cancelamento (nacional)
+    /<[\w:]*(eCancelamento|NfseCancelamento|NFSeCanc|DataCancelamento|dhCanc)\b/i.test(xml) || // tags de cancelamento
+    (ehEvento && /cancelad/i.test(tag(xml, 'xEvento', 'descEvento', 'xMotivo') || '')) ||        // evento textual
+    tag(xml, 'cSitNFSe', 'situacaoNfse') === '2'                                       // situação 2 = cancelada
+  if (!cancel) return null
+  const ch = tag(xml, 'chNFSe', 'chaveAcesso', 'chaveNFSe', 'chSubstituida') ||
+    xml.match(/<[\w:]*infNFSe[^>]*\bId="([^"]+)"/i)?.[1] || ''
+  return norm(ch) || 'CANCELADA'
+}
+
 /** Converte um item do LoteDFe em NotaADN. */
 /**
  * CNPJ/CPF do EMITENTE a partir da Chave de Acesso (50 dígitos). O campo
@@ -133,20 +157,27 @@ export function docDaChave(chave: string): string {
 // Converte um item do LoteDFe em NotaADN. O documento do emitente vem da CHAVE
 // (confiável); os demais campos, do XML (gzip+base64) quando disponível.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function itemParaNota(item: any): NotaADN {
+function itemParaNota(item: any): { nota?: NotaADN; cancelaChave?: string } {
   const nsu = Number(pick(item, 'NSU', 'nsu') ?? 0)
   const arquivo = pick(item, 'ArquivoXml', 'arquivoXml', 'DocumentoXml', 'documentoXmlGZipB64', 'xmlGZipB64')
   const chave = String(pick(item, 'ChaveAcesso', 'chaveAcesso') ?? '')
   const p = typeof arquivo === 'string' ? parseArquivoXml(arquivo) : null
+  // Cancelamento: não vira nota; devolve a chave da NFS-e cancelada para expurgo.
+  if (p?.xml) {
+    const canc = cancelamentoDoXml(p.xml)
+    if (canc) return { cancelaChave: canc === 'CANCELADA' ? (p.chave || chave).replace(/\s/g, '') : canc }
+  }
   const chaveFinal = p?.chave || chave
   return {
-    nsu,
-    chave: chaveFinal,
-    prestadorDoc: docDaChave(chaveFinal) || p?.prestadorDoc || '',
-    prestadorNome: p?.prestadorNome ?? '', numero: p?.numero ?? '',
-    dataEmissao: p?.data ?? '', valor: p?.valor ?? 0,
-    competencia: p?.competencia || undefined,
-    xmlOriginal: p?.xml,
+    nota: {
+      nsu,
+      chave: chaveFinal,
+      prestadorDoc: docDaChave(chaveFinal) || p?.prestadorDoc || '',
+      prestadorNome: p?.prestadorNome ?? '', numero: p?.numero ?? '',
+      dataEmissao: p?.data ?? '', valor: p?.valor ?? 0,
+      competencia: p?.competencia || undefined,
+      xmlOriginal: p?.xml,
+    },
   }
 }
 
@@ -176,6 +207,7 @@ export async function consultarADN(params: { agent: https.Agent; cnpj: string; u
   const maxPaginas = params.maxPaginas ?? 6   // lotes pequenos: respeita limite de tempo/rate do gov.br
   let nsu = params.ultimoNsu
   const notas: NotaADN[] = []
+  const cancelamentos: string[] = []
   let status = 0, amostra = '', paginas = 0, houveMais = false, rateLimited = false
 
   for (let i = 0; i < maxPaginas; i++) {
@@ -196,12 +228,12 @@ export async function consultarADN(params: { agent: https.Agent; cnpj: string; u
     try { data = JSON.parse(r.corpo || 'null') } catch { throw new Error(`Resposta do ADN não é JSON. Início: ${(r.corpo || '').slice(0, 200)}`) }
     const lote: unknown[] = pick(data, 'LoteDFe', 'loteDFe', 'documentos', 'DFe') ?? []
     if (!Array.isArray(lote) || lote.length === 0) break
-    for (const item of lote) notas.push(itemParaNota(item))
+    for (const item of lote) { const r = itemParaNota(item); if (r.nota) notas.push(r.nota); else if (r.cancelaChave) cancelamentos.push(r.cancelaChave) }
     const maxNsu = lote.reduce((mx: number, it) => Math.max(mx, Number(pick(it, 'NSU', 'nsu') ?? 0)), nsu)
     if (maxNsu <= nsu) break                // não avançou → fim
     nsu = maxNsu
     if (lote.length < 50) break             // último lote parcial → acabou
     if (i === maxPaginas - 1) houveMais = true   // parou no limite do lote; ainda há mais
   }
-  return { notas, ultimoNsu: nsu, status, amostra, paginas, houveMais, rateLimited }
+  return { notas, ultimoNsu: nsu, status, amostra, paginas, houveMais, rateLimited, cancelamentos: Array.from(new Set(cancelamentos)) }
 }

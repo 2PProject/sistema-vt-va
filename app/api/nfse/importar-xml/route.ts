@@ -23,7 +23,19 @@ const texto = (v: string) => v
   .replace(/&quot;/g, '"').replace(/&apos;/g, "'").trim()
 
 function todosBlocos(xml: string, nome: string) { return Array.from(xml.matchAll(new RegExp(`<(?:[\\w-]+:)?${nome}(?:\\s[^>]*)?>[\\s\\S]*?<\\/(?:[\\w-]+:)?${nome}>`, 'gi'))).map(m => m[0]) }
-function parseNota(xml: string): { nota?: NotaXml; tomador?: string; tomadores?: string[]; erro?: string } {
+// NFS-e CANCELADA: o ISS-DF/ABRASF devolve a nota com o bloco NfseCancelamento
+// (ou DataCancelamento), e o nacional traz evento de cancelamento (tpEvento 1011xx).
+// A nota cancelada mantém número/valor — por isso precisa de detecção própria.
+function notaCancelada(xml: string, inf: string): boolean {
+  if (/<(?:[\w-]+:)?(NfseCancelamento|NFSeCanc|eCancelamento)\b/i.test(xml)) return true
+  if (tag(inf, 'DataCancelamento') || tag(inf, 'DataHoraCancelamento') || tag(xml, 'DataCancelamento') || tag(xml, 'dhCanc')) return true
+  const tp = soDigitos(tag(xml, 'tpEvento') || tag(xml, 'cEvento'))
+  if (/^(1011|1051|1055)/.test(tp)) return true
+  if (tag(inf, 'situacaoNfse') === '2' || tag(inf, 'cSitNFSe') === '2') return true
+  if (/cancelad/i.test(tag(inf, 'xSitNFSe') || tag(inf, 'DescricaoSituacao') || '')) return true
+  return false
+}
+function parseNota(xml: string): { nota?: NotaXml; tomador?: string; tomadores?: string[]; erro?: string; cancelada?: boolean } {
   const inf = bloco(xml, 'InfNfse')
   if (!inf) return { erro: 'Não contém InfNfse/infNFSe.' }
 
@@ -60,6 +72,7 @@ function parseNota(xml: string): { nota?: NotaXml; tomador?: string; tomadores?:
   const verificacao = texto(tag(inf, 'CodigoVerificacao'))
   return {
     tomador, tomadores,
+    cancelada: notaCancelada(xml, inf),
     nota: {
       chave: idNacional || `XML-ABRASF|${documento}|${numero}|${dataEmissao}|${verificacao}`,
       documento, emitente_nome, numero, valor, data_emissao: dataEmissao, competencia,
@@ -109,6 +122,7 @@ export async function POST(req: Request) {
 
     const erros: string[] = []
     const lidas: NotaXml[] = []
+    const canceladasChaves: string[] = []
     for (const item of xmls) {
       const r = parseNota(item.xml)
       if (r.erro) { erros.push(`${item.nome}: ${r.erro}`); continue }
@@ -117,7 +131,16 @@ export async function POST(req: Request) {
         erros.push(`${item.nome}: tomador ${tomadores.join(', ') || 'não identificado'} não corresponde ao CNPJ cadastrado da unidade ${empresa.apelido || empresa.razao_social} (${cnpjEmpresa}).`)
         continue
       }
+      if (r.cancelada) { if (r.nota?.chave) canceladasChaves.push(r.nota.chave); continue }   // não grava nota cancelada
       if (r.nota) lidas.push({ ...r.nota, xml_original: item.xml, xml_nome: item.nome })
+    }
+    // Marca como excluída qualquer nota já gravada que agora consta cancelada.
+    let canceladasMarcadas = 0
+    if (canceladasChaves.length) {
+      const { count } = await admin.from('salon_notas')
+        .update({ excluida: true, excluida_motivo: 'Cancelada na origem (NFS-e cancelada)', excluida_em: new Date().toISOString() }, { count: 'exact' })
+        .eq('empresa_id', empresaId).eq('excluida', false).in('chave', Array.from(new Set(canceladasChaves)))
+      canceladasMarcadas = count ?? 0
     }
 
     const { data: existentes, error: erroExistentes } = await admin.from('salon_notas')
@@ -154,7 +177,8 @@ export async function POST(req: Request) {
     return Response.json({
       ok: true, empresa: empresa.apelido || empresa.razao_social,
       arquivos: xmls.length, validas: lidas.length, importadas: novas.length,
-      duplicadas: lidas.length - novas.length, rejeitadas: erros.length, erros: erros.slice(0, 30),
+      duplicadas: lidas.length - novas.length, canceladas: canceladasChaves.length, canceladasMarcadas,
+      rejeitadas: erros.length, erros: erros.slice(0, 30),
       conferencia: { competencias, conferidas, pendentes, divergencias },
     })
   } catch (e) {
