@@ -61,8 +61,10 @@ export async function listarNotas(f: FiltroNotas): Promise<NotaRecebida[]> {
     .order('data_emissao', { ascending: false, nullsFirst: false })
     .limit(8000)
   if (f.empresaId) q = q.eq('empresa_id', f.empresaId)
-  if (!f.incluirExcluidas) q = q.eq('excluida', false)
-  if (f.classificacao) q = q.eq('classificacao', f.classificacao)
+  // Os filtros de excluída/classificação são aplicados APÓS a deduplicação:
+  // uma nota pode ter linhas duplicadas (baixada + reimportada). Se qualquer
+  // gêmea foi tratada (excluída, outro serviço, conferida ou em análise), a
+  // NOTA inteira conta como tratada — senão a gêmea não tratada reaparece.
   if (f.de) q = q.gte('data_emissao', f.de)
   if (f.ate) q = q.lte('data_emissao', f.ate)
   const { data } = await q
@@ -72,6 +74,29 @@ export async function listarNotas(f: FiltroNotas): Promise<NotaRecebida[]> {
     const e = Array.isArray(n.empresas) ? n.empresas[0] : n.empresas
     return { ...n, empresaNome: e?.apelido || e?.razao_social || '', competenciaEfetiva: n.competencia_conf || n.competencia || null }
   })
+
+  // Deduplicação por IDENTIDADE da nota (mesma unidade, documento, nº, emissão e
+  // valor). O grupo herda o tratamento de QUALQUER gêmea: se uma foi excluída,
+  // classificada como outro serviço, conferida ou marcada para análise, a nota
+  // toda passa a esse estado. Fecha o furo de "nota tratada que reaparece como
+  // pendente pela linha duplicada".
+  const ident = (n: NotaRecebida) => (n.numero && n.data_emissao)
+    ? `${n.empresa_id}|${(n.documento || '').replace(/\D/g, '')}|${n.numero}|${n.data_emissao}|${Number(n.valor || 0).toFixed(2)}`
+    : `id:${n.id}`
+  const grupos = new Map<string, NotaRecebida[]>()
+  for (const l of linhas) { const k = ident(l); (grupos.get(k) ?? grupos.set(k, []).get(k)!).push(l) }
+  linhas = Array.from(grupos.values()).map((g) => {
+    const anyConf = g.some(x => x.conferida)
+    const anyExcl = g.some(x => x.excluida)
+    const anyAnal = g.some(x => !!x.analise_manual)
+    const efClass: NotaRecebida['classificacao'] = g.some(x => x.classificacao === 'outro_servico') ? 'outro_servico' : 'profissional'
+    // Representante acionável: prefere uma linha ATIVA (não tratada) da nota.
+    const rep = g.find(x => !x.excluida && x.classificacao !== 'outro_servico' && !x.conferida && !x.analise_manual) ?? g.find(x => !x.excluida) ?? g[0]
+    return { ...rep, conferida: anyConf, excluida: anyExcl, analise_manual: anyAnal, classificacao: efClass }
+  })
+
+  if (!f.incluirExcluidas) linhas = linhas.filter(l => !l.excluida)
+  if (f.classificacao) linhas = linhas.filter(l => (l.classificacao || 'profissional') === f.classificacao)
 
   // O módulo começa em 01/2026. Competências anteriores permanecem no
   // histórico, mas não participam da operação nem geram pendências.
@@ -125,11 +150,14 @@ export async function conferirNota(
 /** Resumo para os cartões da conferência. */
 export function resumoNotas(linhas: NotaRecebida[]) {
   const conferidas = linhas.filter(l => l.conferida).length
+  // "Pendente" = ainda exige conferência: nem conferida nem em análise manual
+  // (mesma regra da aba Pendentes, para o card não contar o que não aparece).
+  const pendentes = linhas.filter(l => !l.conferida && !l.analise_manual).length
   const divergentes = linhas.filter(l => l.competenciaEfetiva && l.data_emissao && (l.data_emissao.slice(0, 7) !== l.competenciaEfetiva)).length
   return {
     total: linhas.length,
     conferidas,
-    pendentes: linhas.length - conferidas,
+    pendentes,
     divergentes,   // emissão em mês diferente da competência
     valor: Math.round(linhas.reduce((s, l) => s + (l.valor || 0), 0) * 100) / 100,
   }
