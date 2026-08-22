@@ -8,6 +8,7 @@ import { consultarConferencia,vincularNota,vincularMultiplas,type LinhaConsulta 
 import { formatarMoeda,MESES } from '../../../utils/calculoVT'
 
 function mesAtual(){const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`}
+function janAnoCorrente(){const j=`${new Date().getFullYear()}-01`;return j<SALAO_COMPETENCIA_INICIAL?SALAO_COMPETENCIA_INICIAL:j}
 type Sugestao={id:string;profissional:LinhaConsulta;notas:LinhaConsulta[];selecionada:boolean;confianca:number;motivos:string[]}
 function norm(s:string|null|undefined){return(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/\d/g,' ').replace(/\b(ltda|me|mei|eireli|sa)\b/g,' ').replace(/[^a-z]+/g,' ').trim().replace(/\s+/g,' ')}
 function mesesEntre(a:string,b:string){if(!a||!b)return[];const out:string[]=[];let[y,m]=a.split('-').map(Number);const[fy,fm]=b.split('-').map(Number);while(y*12+m<=fy*12+fm&&out.length<24){out.push(`${y}-${String(m).padStart(2,'0')}`);m++;if(m>12){m=1;y++}}return out}
@@ -43,16 +44,19 @@ function montar(linhas:LinhaConsulta[]):Sugestao[]{
   if(exatas.length)combo=[exatas[0]]
   else{const soma=combinacaoUnica(ordena(cands),alvo);if(soma?.length){combo=soma;tipo='soma'}
    else{const tol=Math.max(0.05,alvo*0.005);const quase=ordena(cands.filter(n=>Math.abs(Number(n.nf_valor||0)-alvo)<=tol));if(quase.length){combo=[quase[0]];tipo='aprox'}}}
+  // Âncora relaxada (a pedido): 1 PARTE do nome + VALOR EXATO, competência apertada
+  // (mesma ou ±1 mês) e candidata ÚNICA — nunca só por valor, nunca ambígua.
+  if(!combo?.length&&nome){const fracas=ordena(notas.filter(n=>n.empresa_id===p.empresa_id&&!(docValido&&doc(n)===d)&&comuns(nome,norm(n.nome))===1&&Math.abs(Number(n.nf_valor||0)-alvo)<0.01&&mesesDiff(n.mes_ref,p.mes_ref)<=1));if(fracas.length===1){combo=[fracas[0]];tipo='exata'}}
   if(!combo?.length)continue
-  const mesmoDoc=combo.every(n=>docValido&&doc(n)===d),mesmoNome=combo.every(n=>norm(n.nome)===nome),mesmaComp=combo.every(n=>n.mes_ref===p.mes_ref),dm=Math.min(...combo.map(n=>mesesDiff(n.mes_ref,p.mes_ref)))
+  const mesmoDoc=combo.every(n=>docValido&&doc(n)===d),mesmoNome=combo.every(n=>norm(n.nome)===nome),mesmaComp=combo.every(n=>n.mes_ref===p.mes_ref),dm=Math.min(...combo.map(n=>mesesDiff(n.mes_ref,p.mes_ref)),99),comunsMin=nome?Math.min(...combo.map(n=>comuns(nome,norm(n.nome)))):0
   // Amarração mínima + análise por cenário na competência:
   //  • CNPJ igual: âncora forte → aceita qualquer período (só marca o desvio).
   //  • nome idêntico: aceita até 3 meses de distância.
   //  • nome parecido (>=2 tokens): só até ±1 mês (mais discrepante = descarta).
   const parcial=!mesmoDoc&&!mesmoNome
   if(!mesmoDoc&&((mesmoNome&&dm>3)||(parcial&&dm>1)))continue
-  const motivos=[mesmoDoc?'CNPJ/CPF idêntico':mesmoNome?'nome idêntico':'nome parecido (documento diferente)',tipo==='soma'?`${combo.length} notas somam ${formatarMoeda(alvo)}`:tipo==='aprox'?'valor aproximado (centavos)':`valor exato ${formatarMoeda(alvo)}`,mesmaComp?'mesma competência':dm<=1?'competência ±1 mês':'competência diferente',(!mesmoDoc||!mesmaComp)?'confira antes de confirmar':''].filter(Boolean)
-  let confianca=(mesmoDoc?85:mesmoNome?75:62)+(mesmaComp?10:dm<=1?0:dm<=2?-10:-20)-(tipo==='aprox'?8:0)-(tipo==='soma'?4:0)
+  const motivos=[mesmoDoc?'CNPJ/CPF idêntico':mesmoNome?'nome idêntico':comunsMin>=2?'nome parecido (documento diferente)':'1 parte do nome + valor exato',tipo==='soma'?`${combo.length} notas somam ${formatarMoeda(alvo)}`:tipo==='aprox'?'valor aproximado (centavos)':`valor exato ${formatarMoeda(alvo)}`,mesmaComp?'mesma competência':dm<=1?'competência ±1 mês':'competência diferente',(!mesmoDoc||!mesmaComp)?'confira antes de confirmar':''].filter(Boolean)
+  let confianca=(mesmoDoc?85:mesmoNome?75:comunsMin>=2?62:55)+(mesmaComp?10:dm<=1?0:dm<=2?-10:-20)-(tipo==='aprox'?8:0)-(tipo==='soma'?4:0)
   confianca=Math.max(40,Math.min(100,confianca))
   candidatas.push({id:`${p.id}|${combo.map(n=>n.id).sort().join('+')}`,profissional:p,notas:combo,selecionada:confianca>=85&&mesmaComp,confianca,motivos})
  }
@@ -66,13 +70,13 @@ function montar(linhas:LinhaConsulta[]):Sugestao[]{
  return final
 }
 
-export default function PreVinculacaoPage(){const router=useRouter();const[inicio,setInicio]=useState(SALAO_COMPETENCIA_INICIAL);const[fim,setFim]=useState(mesAtual());const[empresaId,setEmpresaId]=useState('');const[empresas,setEmpresas]=useState<Empresa[]>([]);const[sugestoes,setSugestoes]=useState<Sugestao[]>([]);const[loading,setLoading]=useState(false);const[acao,setAcao]=useState('');const[msg,setMsg]=useState('');const req=useRef(0);const cache=useRef(new Map<string,Sugestao[]>())
+export default function PreVinculacaoPage(){const router=useRouter();const[inicio,setInicio]=useState(janAnoCorrente());const[fim,setFim]=useState(mesAtual());const[empresaId,setEmpresaId]=useState('');const[empresas,setEmpresas]=useState<Empresa[]>([]);const[sugestoes,setSugestoes]=useState<Sugestao[]>([]);const[loading,setLoading]=useState(false);const[acao,setAcao]=useState('');const[msg,setMsg]=useState('');const req=useRef(0);const cache=useRef(new Map<string,Sugestao[]>())
  useEffect(()=>{if(!SALAO_ENABLED){router.replace('/dashboard');return}supabase.from('empresas').select('*').order('razao_social').then(({data})=>setEmpresas(data||[]))},[router])
  const checar=useCallback(async(silent=false)=>{silent=silent===true;const id=++req.current;if(!inicio||!fim){setSugestoes([]);return}const chaveCache=`${inicio}|${fim}|${empresaId}`;const salvo=cache.current.get(chaveCache);if(salvo&&!silent){setSugestoes(salvo.map(s=>({...s,selecionada:true})));setMsg('Pré-visualização recuperada instantaneamente.');return}if(!silent)setLoading(true);setMsg('');try{const rs=await Promise.all(mesesEntre(inicio,fim).map(m=>buscarMes(m,empresaId)));const s=montar(rs.flat());cache.current.set(chaveCache,s);if(id===req.current){setSugestoes(s);setMsg(s.length?`${s.length} correspondência(s) segura(s), incluindo somas de várias notas.`:'Nenhuma combinação única de nome e valor foi encontrada.')}}catch(e){if(id===req.current)setMsg(e instanceof Error?e.message:'Erro ao executar a checagem.')}finally{if(id===req.current&&!silent)setLoading(false)}},[inicio,fim,empresaId])
  async function gravar(s:Sugestao){return s.notas.length===1?vincularNota(s.profissional.id,{id:s.notas[0].id,numero:s.notas[0].nf_numero,valor:s.notas[0].nf_valor,data_emissao:s.notas[0].nf_data}):vincularMultiplas(s.profissional.id,s.notas.map(n=>n.id))}
  async function confirmar(s:Sugestao){if(acao)return;setAcao(s.id);const r=await gravar(s);setAcao('');if(!r.ok){setMsg(r.erro||'Não foi possível confirmar o vínculo.');return}cache.current.clear();setSugestoes(v=>v.filter(x=>x.id!==s.id));setMsg(`${s.notas.length} nota(s) vinculada(s) e marcadas como conferidas.`);void checar(true)}
  async function confirmarSelecionadas(){const alvo=sugestoes.filter(s=>s.selecionada);if(!alvo.length||acao)return;setAcao('lote');const confirmadas=new Set<string>();const falhas:string[]=[];const tamanhoLote=6;try{for(let i=0;i<alvo.length;i+=tamanhoLote){const lote=alvo.slice(i,i+tamanhoLote);const resultados=await Promise.all(lote.map(async s=>({s,r:await gravar(s)})));for(const {s,r} of resultados){if(r.ok)confirmadas.add(s.id);else falhas.push(`${s.profissional.nome}: ${r.erro||'erro'}`)}setMsg(`Confirmando… ${Math.min(i+lote.length,alvo.length)} de ${alvo.length} processados.`)}cache.current.clear();setSugestoes(v=>v.filter(x=>!confirmadas.has(x.id)));setMsg(falhas.length?`${confirmadas.size} confirmado(s). ${falhas.length} não foram gravado(s): ${falhas.slice(0,3).join(' | ')}${falhas.length>3?' | …':''}`:`${confirmadas.size} vínculo(s) confirmado(s) e conferido(s).`)}catch(e){setSugestoes(v=>v.filter(x=>!confirmadas.has(x.id)));setMsg(`${confirmadas.size} confirmado(s). A confirmação foi interrompida: ${e instanceof Error?e.message:'erro inesperado'}`)}finally{setAcao('');void checar(true)}}
- function limpar(){req.current++;setInicio('');setFim('');setEmpresaId('');setSugestoes([]);setMsg('');setLoading(false);cache.current.clear()}
+ function limpar(){req.current++;setInicio(janAnoCorrente());setFim(mesAtual());setEmpresaId('');setSugestoes([]);setMsg('');setLoading(false);cache.current.clear()}
  const selecionadas=sugestoes.filter(s=>s.selecionada).length
  if(!SALAO_ENABLED)return null
  return <LayoutAdmin title="Salão — Pré-vinculação"><div className="space-y-3">
