@@ -549,6 +549,7 @@ export async function consultar(admin: SupabaseClient, f: Filtros, ord: Ordenaca
       const motivosVinculo: string[] = []
       if (duplicada) motivosVinculo.push('registro importado possivelmente duplicado')
       if (base.outraEmpresa) motivosVinculo.push('nota vinculada pertence a outra unidade')
+      if (n && dig(n.documento) !== dig(c.documento)) motivosVinculo.push('CNPJ/CPF da nota difere do profissional')
       if (Math.abs(base.diferenca) >= 0.01) motivosVinculo.push(`valor divergente em R$ ${Math.abs(base.diferenca).toFixed(2)}`)
       base.situacao = motivosVinculo.length ? 'conferido_com_divergencia' : 'conferido'
       if (motivosVinculo.length && !base.observacao) base.observacao = `Vínculo confirmado: ${motivosVinculo.join('; ')}.`
@@ -692,7 +693,7 @@ export async function vincular(admin: SupabaseClient, comissaoId: string, notaId
   if (comissao.mes_ref < SALAO_COMPETENCIA_INICIAL) return { ok: false, erro: 'Competências anteriores a janeiro/2026 ficam somente no histórico.' }
   if (n.excluida || n.classificacao !== 'profissional' || n.analise_manual) return { ok: false, erro: 'A nota não está disponível para conferência.' }
   if (n.empresa_id !== comissao.empresa_id) return { ok: false, erro: 'Nota e profissional pertencem a unidades diferentes.' }
-  if (dig(n.documento) !== dig(comissao.documento)) return { ok: false, erro: 'O CNPJ/CPF da nota não corresponde ao profissional. Corrija o cadastro antes de vincular.' }
+  const documentoDivergente = dig(n.documento) !== dig(comissao.documento)
   const [{ data: relOcupada }, { data: legadoOcupado }, { data: relAntigas }] = await Promise.all([
     admin.from('salon_comissao_notas').select('comissao_id').eq('nota_id', notaId).neq('comissao_id', comissaoId),
     admin.from('salon_comissoes').select('id').eq('nota_id', notaId).neq('id', comissaoId),
@@ -701,7 +702,10 @@ export async function vincular(admin: SupabaseClient, comissaoId: string, notaId
   if ((relOcupada?.length ?? 0) || (legadoOcupado?.length ?? 0)) return { ok: false, erro: 'Esta nota já está vinculada a outro profissional.' }
   const notasAnteriores = Array.from(new Set([comissao.nota_id, ...(relAntigas ?? []).map(r => r.nota_id)].filter(Boolean))) as string[]
   const esperado=Number(comissao.valor_comissao)||0,valorNota=Number(n.valor)||0,diferenca=Math.round((valorNota-esperado)*100)/100
-  const notaDivergencia=Math.abs(diferenca)>=0.01?`Conferido com divergência: esperado R$ ${esperado.toFixed(2)}, nota R$ ${valorNota.toFixed(2)}, diferença R$ ${diferenca.toFixed(2)}.`:null
+  const divergenciasVinculo:string[]=[]
+  if(documentoDivergente)divergenciasVinculo.push(`CNPJ/CPF da nota ${dig(n.documento)||'não informado'} diferente do profissional ${dig(comissao.documento)||'não informado'}`)
+  if(Math.abs(diferenca)>=0.01)divergenciasVinculo.push(`esperado R$ ${esperado.toFixed(2)}, nota R$ ${valorNota.toFixed(2)}, diferença R$ ${diferenca.toFixed(2)}`)
+  const notaDivergencia=divergenciasVinculo.length?`Conferido manualmente com divergência: ${divergenciasVinculo.join('; ')}.`:null
   await admin.from('salon_comissoes').update({
     nota_id: null, status: 'pendente', nf_numero: null, nf_data: null, nf_valor: null, nf_origem: null, confirmado_em: null,
   }).eq('nota_id', notaId).neq('id', comissaoId)
@@ -740,7 +744,7 @@ export async function vincularMultiplas(admin: SupabaseClient, comissaoId: strin
   if (!notas || notas.length !== ids.length) return { ok: false, erro: 'Uma ou mais notas não foram encontradas.' }
   if (notas.some(n => n.excluida || n.classificacao !== 'profissional' || n.analise_manual)) return { ok: false, erro: 'Uma das notas não está disponível para conferência.' }
   if (notas.some(n => n.empresa_id !== comissao.empresa_id)) return { ok: false, erro: 'Todas as notas devem pertencer à mesma unidade do profissional.' }
-  if (notas.some(n => dig(n.documento) !== dig(comissao.documento))) return { ok: false, erro: 'Todas as notas devem possuir o mesmo CNPJ/CPF do profissional.' }
+  const documentosDivergentes = notas.filter(n => dig(n.documento) !== dig(comissao.documento))
   const total = Math.round(notas.reduce((s, n) => s + Number(n.valor || 0), 0) * 100) / 100
   const esperado = Math.round(Number(comissao.valor_comissao || 0) * 100) / 100
   if (Math.abs(total - esperado) >= 0.01) return { ok: false, erro: `A soma das notas (${total.toFixed(2)}) não corresponde ao valor importado (${esperado.toFixed(2)}).` }
@@ -761,7 +765,7 @@ export async function vincularMultiplas(admin: SupabaseClient, comissaoId: strin
     admin.from('salon_comissoes').update({
       nota_id: primeira.id, status: 'conferida', nf_numero: numeros, nf_data: primeira.data_emissao,
       nf_valor: total, nf_origem: 'manual_multiplo', confirmado_em: agora,
-      observacao: `${ids.length} notas vinculadas: ${numeros}. Soma R$ ${total.toFixed(2)}.`,
+      observacao: `${ids.length} notas vinculadas: ${numeros}. Soma R$ ${total.toFixed(2)}.${documentosDivergentes.length?` Conferido manualmente com divergência de CNPJ/CPF em ${documentosDivergentes.length} nota(s).`:''}`,
     }).eq('id', comissaoId),
     admin.from('salon_notas').update({ conferida: true, conferida_em: agora, conferida_por: usuario ?? null }).in('id', ids),
   ])
