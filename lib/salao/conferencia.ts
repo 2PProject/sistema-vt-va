@@ -12,6 +12,12 @@ export const SITUACAO_LABEL: Record<Situacao, string> = {
   vinculo_sugerido: 'Vínculo sugerido', aguardando_confirmacao: 'Aguardando confirmação',
   corrigido_manual: 'Corrigido manualmente',
 }
+/** Regras únicas de contagem usadas por Conferência e Relatórios. */
+export function comissaoOperacional(r: LinhaConsulta) { return r.tipo === 'comissao' && !r.analise_manual }
+export function comissaoConcluida(r: LinhaConsulta) {
+  return comissaoOperacional(r) && !!r.nota_id && (r.situacao === 'conferido' || r.situacao === 'conferido_com_divergencia' || r.situacao === 'corrigido_manual')
+}
+
 export type Conferencia = {
   pendentes: Esperada[]; conferidas: Esperada[]; semVinculo: NotaLivre[]
   pendenciasImport: Esperada[]; diagnostico: Diagnostico
