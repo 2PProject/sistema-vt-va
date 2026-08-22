@@ -126,8 +126,8 @@ export type GrupoPDF = { nome: string; documento?: string | null; unidade?: stri
  *  • 'sintetico'  — várias mini-tabelas empilhadas por página, com espaço entre elas.
  * Ambos compartilham o mesmo desenho de tabela, faixa de topo e rodapé paginado.
  */
-export async function exportarPDFAgrupado(
-  titulo: string, colunas: Coluna[], grupos: GrupoPDF[], nomeArq: string,
+async function montarDocAgrupado(
+  titulo: string, colunas: Coluna[], grupos: GrupoPDF[],
   opcoes: OpcoesPDF & { modo?: 'individual' | 'sintetico' } = {},
 ) {
   const { default: jsPDF } = await import('jspdf')
@@ -193,12 +193,23 @@ export async function exportarPDFAgrupado(
     if (sub) { doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(...TXT_SUAVE); doc.text(doc.splitTextToSize(sub, areaW)[0], areaX, y); y += 4 }
     y += 1.5
   }
+  // Altura total estimada do bloco do profissional (cabeçalho + tabela + linhas + rodapé do bloco).
+  function alturaGrupo(g: GrupoPDF) {
+    let h = (modo === 'individual' ? 18 : 11) + 8
+    if (!g.rows.length) h += 5
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    else for (const r of g.rows as any[]) { const textos = colunas.map((c, i) => doc.splitTextToSize(String(c.get(r) ?? ''), colW[i] - 4) as string[]); h += Math.max(1, ...textos.map(t => t.length)) * lineH + 2.4 }
+    if (modo === 'sintetico') h += 7
+    return h
+  }
 
+  const capacidade = limiteY - 28   // altura útil de uma página inteira
   faixaTopo()
   grupos.forEach((g, gi) => {
     if (modo === 'individual' && gi > 0) { doc.addPage(); faixaTopo() }
-    // No sintético, evita "órfão": se não cabe o cabeçalho do grupo + 1 linha, quebra a página.
-    if (modo === 'sintetico' && gi > 0 && y + 20 > limiteY) { doc.addPage(); faixaTopo() }
+    // Sintético: mantém o profissional JUNTO — se não couber no que resta e couber
+    // numa página inteira, quebra antes; só divide quem for maior que uma página.
+    else if (modo === 'sintetico' && gi > 0) { const need = alturaGrupo(g); if (y + need > limiteY && need <= capacidade) { doc.addPage(); faixaTopo() } }
     cabecalhoGrupo(g)
     cabecalhoTabela()
     doc.setFont('helvetica', 'normal'); doc.setFontSize(8)
@@ -215,5 +226,54 @@ export async function exportarPDFAgrupado(
     doc.text(`${grupos.length} profissional(is)${opcoes.emitente ? ' · ' + opcoes.emitente : ''}`, margem, rodapeY)
     doc.text(`Página ${p} de ${total}`, larg - margem, rodapeY, { align: 'right' })
   }
+  return doc
+}
+
+/** PDF único agrupado por profissional (modo 'individual' = 1 por página; 'sintetico' = empilhado). */
+export async function exportarPDFAgrupado(
+  titulo: string, colunas: Coluna[], grupos: GrupoPDF[], nomeArq: string,
+  opcoes: OpcoesPDF & { modo?: 'individual' | 'sintetico' } = {},
+) {
+  const doc = await montarDocAgrupado(titulo, colunas, grupos, opcoes)
   doc.save(`${nomeArq}.pdf`)
+}
+
+// ── ZIP mínimo (método "store", sem compressão) — evita depender de biblioteca ──
+function crc32(buf: Uint8Array) { let c = ~0; for (let i = 0; i < buf.length; i++) { c ^= buf[i]; for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xEDB88320 & -(c & 1)) } return (~c) >>> 0 }
+function u16(n: number) { return new Uint8Array([n & 255, (n >>> 8) & 255]) }
+function u32(n: number) { return new Uint8Array([n & 255, (n >>> 8) & 255, (n >>> 16) & 255, (n >>> 24) & 255]) }
+function junta(parts: Uint8Array[]) { let n = 0; for (const p of parts) n += p.length; const out = new Uint8Array(n); let o = 0; for (const p of parts) { out.set(p, o); o += p.length } return out }
+function zipStore(arquivos: { name: string; data: Uint8Array }[]): Blob {
+  const enc = new TextEncoder(); const locais: Uint8Array[] = []; const central: Uint8Array[] = []; let offset = 0
+  for (const f of arquivos) {
+    const nome = enc.encode(f.name), crc = crc32(f.data), sz = f.data.length
+    const lh = junta([u32(0x04034b50), u16(20), u16(0), u16(0), u16(0), u16(0), u32(crc), u32(sz), u32(sz), u16(nome.length), u16(0), nome])
+    locais.push(lh, f.data)
+    central.push(junta([u32(0x02014b50), u16(20), u16(20), u16(0), u16(0), u16(0), u16(0), u32(crc), u32(sz), u32(sz), u16(nome.length), u16(0), u16(0), u16(0), u16(0), u32(0), u32(offset), nome]))
+    offset += lh.length + f.data.length
+  }
+  const cd = junta(central)
+  const end = junta([u32(0x06054b50), u16(0), u16(0), u16(arquivos.length), u16(arquivos.length), u32(cd.length), u32(offset), u16(0)])
+  return new Blob([junta(locais), cd, end], { type: 'application/zip' })
+}
+function baixarBlob(blob: Blob, nome: string) { const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = nome; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1500) }
+
+/**
+ * Gera UM PDF POR PROFISSIONAL (arquivo separado, nomeado com o nome da pessoa)
+ * e entrega tudo num .zip — 10 pessoas => 10 PDFs dentro do zip.
+ */
+export async function exportarPDFsIndividuaisZip(
+  titulo: string, colunas: Coluna[], grupos: GrupoPDF[], nomeZip: string,
+  opcoes: OpcoesPDF & { sufixo?: string } = {},
+) {
+  const usados = new Map<string, number>()
+  const arquivos: { name: string; data: Uint8Array }[] = []
+  for (const g of grupos) {
+    const doc = await montarDocAgrupado(titulo, colunas, [g], { ...opcoes, modo: 'individual' })
+    const base = slugNome(g.nome) || 'profissional'
+    const n = (usados.get(base) ?? 0) + 1; usados.set(base, n)   // evita nomes repetidos
+    const nome = `${base}${n > 1 ? '_' + n : ''}${opcoes.sufixo ? '_' + opcoes.sufixo : ''}.pdf`
+    arquivos.push({ name: nome, data: new Uint8Array(doc.output('arraybuffer') as ArrayBuffer) })
+  }
+  baixarBlob(zipStore(arquivos), `${nomeZip}.zip`)
 }
