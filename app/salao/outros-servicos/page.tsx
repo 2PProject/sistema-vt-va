@@ -3,12 +3,13 @@ import { useCallback,useDeferredValue,useEffect,useState } from 'react'
 import { useRouter } from 'next/navigation'
 import LayoutAdmin from '../../../components/LayoutAdmin'
 import { supabase,type Empresa } from '../../../lib/supabase'
-import { SALAO_ENABLED } from '../../../lib/salao/config'
+import { SALAO_COMPETENCIA_INICIAL, SALAO_ENABLED } from '../../../lib/salao/config'
 import { listarNotas,type NotaRecebida } from '../../../lib/salao/notas'
 import { classificarNota } from '../../../lib/salao/conferencia'
 import { formatarMoeda } from '../../../utils/calculoVT'
 function mesAtual(){const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`}function fimMes(m:string){const[y,mm]=m.split('-').map(Number);return new Date(y,mm,0).toISOString().slice(0,10)}
-export default function OutrosServicosPage(){const router=useRouter();const[empresas,setEmpresas]=useState<Empresa[]>([]);const[empresaId,setEmpresaId]=useState('');const[inicio,setInicio]=useState(mesAtual());const[fim,setFim]=useState(mesAtual());const[busca,setBusca]=useState('');const[linhas,setLinhas]=useState<NotaRecebida[]>([]);const[loading,setLoading]=useState(false);const[msg,setMsg]=useState('');const[usuario,setUsuario]=useState<string|undefined>()
+function janAno(){const j=`${new Date().getFullYear()}-01`;return j<SALAO_COMPETENCIA_INICIAL?SALAO_COMPETENCIA_INICIAL:j}
+export default function OutrosServicosPage(){const router=useRouter();const[empresas,setEmpresas]=useState<Empresa[]>([]);const[empresaId,setEmpresaId]=useState('');const[inicio,setInicio]=useState(janAno());const[fim,setFim]=useState(mesAtual());const[busca,setBusca]=useState('');const[linhas,setLinhas]=useState<NotaRecebida[]>([]);const[loading,setLoading]=useState(false);const[msg,setMsg]=useState('');const[usuario,setUsuario]=useState<string|undefined>()
 const buscaD=useDeferredValue(busca)
 useEffect(()=>{if(!SALAO_ENABLED){router.replace('/dashboard');return}supabase.from('empresas').select('*').order('razao_social').then(({data})=>setEmpresas(data||[]));supabase.auth.getUser().then(({data})=>setUsuario(data.user?.email))},[router])
 const carregar=useCallback(async()=>{setLoading(true);try{setLinhas(await listarNotas({empresaId:empresaId||undefined,de:`${inicio}-01`,ate:fimMes(fim),busca:buscaD,classificacao:'outro_servico'}))}finally{setLoading(false)}},[empresaId,inicio,fim,buscaD]);useEffect(()=>{if(SALAO_ENABLED)carregar()},[carregar])

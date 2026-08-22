@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation'
 import LayoutAdmin from '../../components/LayoutAdmin'
 import { supabase, Empresa } from '../../lib/supabase'
 import { formatarMoeda, MESES } from '../../utils/calculoVT'
-import { SALAO_ENABLED, STATUS_LABEL, STATUS_CLASSE, type StatusComissao } from '../../lib/salao/config'
+import { SALAO_COMPETENCIA_INICIAL, SALAO_ENABLED, STATUS_LABEL, STATUS_CLASSE, type StatusComissao } from '../../lib/salao/config'
 import { listarComissoes, resumoDoMes, confirmarNFManual, substituirNF } from '../../lib/salao/comissoes'
 import type { Comissao } from '../../lib/salao/tipos'
 
@@ -14,6 +14,8 @@ function competenciaAtual() {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
 }
+// Janeiro do ano corrente (nunca antes do início do módulo).
+function janAno() { const j = `${new Date().getFullYear()}-01`; return j < SALAO_COMPETENCIA_INICIAL ? SALAO_COMPETENCIA_INICIAL : j }
 function fmtMes(m: string) { const [a, mm] = m.split('-').map(Number); return mm ? `${MESES[mm - 1]}/${a}` : m }
 function fmtData(iso: string | null) { if (!iso) return ''; const [a, m, d] = iso.split('-'); return `${d}/${m}/${a}` }
 
@@ -21,7 +23,7 @@ export default function SalaoPainelPage() {
   const router = useRouter()
   const [empresas, setEmpresas] = useState<Empresa[]>([])
   const [empresaFiltro, setEmpresaFiltro] = useState('')
-  const [mesInicio, setMesInicio] = useState(competenciaAtual())
+  const [mesInicio, setMesInicio] = useState(janAno())
   const [mesFim, setMesFim] = useState(competenciaAtual())
   const [statusFiltro, setStatusFiltro] = useState<StatusComissao | ''>('')
   const [busca, setBusca] = useState('')
