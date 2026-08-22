@@ -51,13 +51,15 @@ export function parseValorBR(raw: unknown): number {
 }
 
 /** Lista comissões com nomes e status calculado. */
-export async function listarComissoes(params: { empresaId?: string; mes?: string; status?: StatusComissao }):
+export async function listarComissoes(params: { empresaId?: string; mes?: string; mesInicio?: string; mesFim?: string; status?: StatusComissao }):
   Promise<Comissao[]> {
   let q = supabase
     .from('salon_comissoes')
     .select('*, salon_professionals(nome, documento), empresas(razao_social, apelido)')
   if (params.empresaId) q = q.eq('empresa_id', params.empresaId)
   if (params.mes) q = q.eq('mes_ref', params.mes)
+  if (params.mesInicio) q = q.gte('mes_ref', params.mesInicio)
+  if (params.mesFim) q = q.lte('mes_ref', params.mesFim)
   const { data } = await q
   const prazos = await carregarPrazos()
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -67,7 +69,7 @@ export async function listarComissoes(params: { empresaId?: string; mes?: string
     const status = calcularStatus(c, prazos.get(c.empresa_id) ?? PRAZO_DIA_PADRAO)
     return {
       ...c, status,
-      profissionalNome: p?.nome ?? '—', profissionalDoc: p?.documento ?? '',
+      profissionalNome: String(c.nome ?? '').trim() || p?.nome || c.documento || 'Profissional não identificado', profissionalDoc: c.documento || p?.documento || '',
       empresaNome: e?.apelido || e?.razao_social || '',
     }
   })
@@ -128,16 +130,20 @@ export async function substituirNF(
 
 export type LinhaImportComissao = {
   empresaId: string; empresaNome: string
-  profissionalId: string; profissionalNome: string
-  mes_ref: string; valor_comissao: number
+  documento: string; nome: string; valor_comissao: number
+  pendencia?: string          // preenchido quando falta algo (ex.: "Sem CNPJ")
 }
 
-/** Lê a planilha (uma aba = uma empresa) e casa profissionais pelo nome. */
+/**
+ * Lê a planilha da competência (uma ABA por empresa, nome da aba = apelido).
+ * Colunas por linha: Nome do profissional · CNPJ/CPF · Valor. A competência é
+ * informada no envio (não vem na planilha). Linhas do mesmo CNPJ são somadas.
+ */
 export async function importarPlanilhaComissoes(arquivo: File):
   Promise<{ linhas: LinhaImportComissao[]; erros: string[] }> {
   const XLSX = await import('xlsx')
   const wb = XLSX.read(await arquivo.arrayBuffer(), { type: 'array' })
-  const linhas: LinhaImportComissao[] = []
+  const brutas: LinhaImportComissao[] = []
   const erros: string[] = []
 
   const { data: empresas } = await supabase.from('empresas').select('id, razao_social, apelido')
@@ -147,56 +153,118 @@ export async function importarPlanilhaComissoes(arquivo: File):
     if (e.apelido) empByNome.set(norm(e.apelido), { id: e.id, nome: e.apelido })
   })
 
-  const { data: profs } = await supabase.from('salon_professionals').select('id, nome, empresa_id')
-  const profsPorEmp = new Map<string, { id: string; nomeNorm: string }[]>()
-  ;(profs ?? []).forEach((p: { id: string; nome: string; empresa_id: string }) => {
-    const arr = profsPorEmp.get(p.empresa_id) ?? []
-    arr.push({ id: p.id, nomeNorm: norm(p.nome) }); profsPorEmp.set(p.empresa_id, arr)
-  })
-
   for (const aba of wb.SheetNames) {
     const empresa = empByNome.get(norm(aba))
-    if (!empresa) { erros.push(`Aba "${aba}": empresa não encontrada no sistema.`); continue }
+    if (!empresa) { erros.push(`Aba "${aba}": empresa não encontrada (o nome da aba deve ser o apelido da empresa).`); continue }
     const rows: Record<string, unknown>[] = XLSX.utils.sheet_to_json(wb.Sheets[aba], { defval: '' })
     for (let i = 0; i < rows.length; i++) {
       const row = Object.fromEntries(Object.entries(rows[i]).map(([k, v]) => [norm(k), v]))
-      const nome = String(row['nome do profissional'] ?? row['nome'] ?? row['profissional'] ?? '').trim()
-      const mes = parseMesRef(row['mes de referencia'] ?? row['mes'] ?? row['competencia'] ?? '')
-      const valor = parseValorBR(row['valor da comissao'] ?? row['valor comissao'] ?? row['comissao'] ?? row['valor'] ?? 0)
-      if (!nome) continue
-      if (!mes) { erros.push(`Aba "${aba}", linha ${i + 2}: mês de referência inválido para "${nome}".`); continue }
-      if (isNaN(valor) || valor < 0) { erros.push(`Aba "${aba}", linha ${i + 2}: valor inválido para "${nome}".`); continue }
-      const lista = profsPorEmp.get(empresa.id) ?? []
-      const alvo = norm(nome)
-      const exato = lista.filter(p => p.nomeNorm === alvo)
-      const cand = exato.length ? exato : lista.filter(p => p.nomeNorm.startsWith(alvo) || alvo.startsWith(p.nomeNorm))
-      if (cand.length === 0) { erros.push(`Aba "${aba}": profissional "${nome}" não cadastrado.`); continue }
-      if (cand.length > 1) { erros.push(`Aba "${aba}": mais de um profissional casa com "${nome}".`); continue }
-      linhas.push({ empresaId: empresa.id, empresaNome: empresa.nome, profissionalId: cand[0].id, profissionalNome: nome, mes_ref: mes, valor_comissao: valor })
+      const nome = String(row['nome completo'] ?? row['nome do profissional'] ?? row['nome'] ?? row['profissional'] ?? '').trim()
+      const documento = String(row['cnpj'] ?? row['cpf'] ?? row['cnpj/cpf'] ?? row['cpf/cnpj'] ?? row['documento'] ?? row['cnpj cpf'] ?? '').replace(/\D/g, '')
+      const valor = parseValorBR(row['credito'] ?? row['valor da comissao'] ?? row['valor comissao'] ?? row['comissao'] ?? row['valor'] ?? 0)
+      if (!nome && !documento && !(valor > 0)) continue          // linha vazia/total
+      // Sem valor não dá para conferir — vira erro (não importa)
+      if (isNaN(valor) || valor <= 0) { erros.push(`Aba "${aba}", linha ${i + 2}: valor (Crédito) inválido${nome ? ` (${nome})` : ''}.`); continue }
+      // Sem CNPJ / CNPJ inválido → IMPORTA como PENDÊNCIA (não perde o registro)
+      const docOk = documento.length === 11 || documento.length === 14
+      const pendencia = !documento ? 'Sem CNPJ na planilha' : (!docOk ? 'CNPJ/CPF inválido' : undefined)
+      brutas.push({
+        empresaId: empresa.id, empresaNome: empresa.nome,
+        documento: docOk ? documento : '', nome: nome || (docOk ? documento : 'Sem nome'),
+        valor_comissao: valor, pendencia,
+      })
     }
   }
-  return { linhas, erros }
+
+  // Agrega por (empresa, documento) apenas as VÁLIDAS; pendências ficam individuais
+  const map = new Map<string, LinhaImportComissao>()
+  const pend: LinhaImportComissao[] = []
+  for (const l of brutas) {
+    if (!l.documento) { pend.push(l); continue }
+    const k = l.empresaId + '|' + l.documento
+    const ex = map.get(k)
+    if (ex) ex.valor_comissao = Math.round((ex.valor_comissao + l.valor_comissao) * 100) / 100
+    else map.set(k, { ...l })
+  }
+  return { linhas: [...Array.from(map.values()), ...pend], erros }
 }
 
-/** Grava as comissões importadas. `sobrescrever` atualiza o valor de existentes. */
-export async function processarImportacaoComissoes(linhas: LinhaImportComissao[], sobrescrever: boolean):
-  Promise<{ gravados: number; atualizados: number; ignorados: number }> {
-  let gravados = 0, atualizados = 0, ignorados = 0
-  for (const l of linhas) {
-    const { data: exist } = await supabase.from('salon_comissoes')
-      .select('id').eq('empresa_id', l.empresaId).eq('profissional_id', l.profissionalId).eq('mes_ref', l.mes_ref).maybeSingle()
-    if (exist) {
-      if (!sobrescrever) { ignorados++; continue }
-      await supabase.from('salon_comissoes').update({ valor_comissao: l.valor_comissao }).eq('id', exist.id)
-      atualizados++
-    } else {
-      const { error } = await supabase.from('salon_comissoes').insert({
-        empresa_id: l.empresaId, profissional_id: l.profissionalId, mes_ref: l.mes_ref, valor_comissao: l.valor_comissao, status: 'pendente',
-      })
-      if (!error) gravados++
-    }
+/**
+ * Grava a lista esperada da competência. Válidas entram por CNPJ; incompletas
+ * (sem CNPJ) entram como PENDÊNCIA (documento nulo + motivo), sem se perder.
+ * `sobrescrever`: atualiza somente os profissionais presentes no arquivo.
+ * A importação é sempre incremental e nunca apaga profissionais de outros lotes.
+ */
+export async function processarImportacaoComissoes(linhas: LinhaImportComissao[], competencia: string, sobrescrever: boolean):
+  Promise<{ gravados: number; atualizados: number; pendencias: number; ignorados: number }> {
+  const empresasNoLote = Array.from(new Set(linhas.map(l => l.empresaId)))
+  const { data: existentes, error: erroLeitura } = await supabase.from('salon_comissoes')
+    .select('id, empresa_id, documento, nome, nota_id')
+    .eq('mes_ref', competencia).in('empresa_id', empresasNoLote)
+  if (erroLeitura) throw new Error(erroLeitura.message)
+
+  const atuais = existentes ?? []
+  const porDocumento = new Map(atuais.filter(x => x.documento).map(x => [x.empresa_id + '|' + x.documento, x]))
+  const pendentesAtuais = new Set(atuais.filter(x => !x.documento).map(x => x.empresa_id + '|' + String(x.nome ?? '').trim().toLocaleLowerCase('pt-BR')))
+
+  const validas = linhas.filter(l => l.documento)
+  const incompletas = linhas.filter(l => !l.documento)
+
+  // A planilha alimenta também o cadastro-base exibido em Profissionais.
+  // A competência continua em salon_comissoes; nome/documento mestre ficam em
+  // salon_professionals e são ligados por profissional_id.
+  if (validas.length > 0) {
+    const cadastro = Array.from(new Map(validas.map(l => [
+      l.empresaId + '|' + l.documento,
+      { empresa_id: l.empresaId, documento: l.documento, nome: l.nome.trim() || l.documento, ativo: true },
+    ])).values())
+    const { error: erroCadastro } = await supabase.from('salon_professionals').upsert(cadastro, {
+      onConflict: 'empresa_id,documento',
+    })
+    if (erroCadastro) throw new Error(`Erro ao atualizar profissionais: ${erroCadastro.message}`)
   }
-  return { gravados, atualizados, ignorados }
+
+  const { data: profissionais, error: erroProfissionais } = await supabase.from('salon_professionals')
+    .select('id, empresa_id, documento').in('empresa_id', empresasNoLote)
+  if (erroProfissionais) throw new Error(`Erro ao vincular profissionais: ${erroProfissionais.message}`)
+  const profissionalPorDocumento = new Map((profissionais ?? []).map(p => [p.empresa_id + '|' + p.documento, p.id]))
+
+  let gravados = validas.filter(l => !porDocumento.has(l.empresaId + '|' + l.documento)).length
+  let atualizados = sobrescrever ? validas.length - gravados : 0
+  let ignorados = sobrescrever ? 0 : validas.length - gravados
+
+  const payloadValidas = validas.map(l => ({
+    empresa_id: l.empresaId, mes_ref: competencia, documento: l.documento,
+    profissional_id: profissionalPorDocumento.get(l.empresaId + '|' + l.documento) || null,
+    nome: l.nome.trim() || l.documento, valor_comissao: l.valor_comissao,
+    status: 'pendente', pendencia: null,
+  }))
+  // Sem documento não existe uma chave segura para upsert. Não repetir a mesma
+  // pendência por unidade/nome, inclusive quando valores existentes são atualizados.
+  const payloadPendencias = incompletas
+    .filter(l => !pendentesAtuais.has(l.empresaId + '|' + l.nome.trim().toLocaleLowerCase('pt-BR')))
+    .map(l => ({
+      empresa_id: l.empresaId, mes_ref: competencia, documento: null,
+      nome: l.nome.trim() || 'Profissional não identificado', valor_comissao: l.valor_comissao,
+      status: 'pendente', pendencia: l.pendencia ?? 'Sem CNPJ',
+    }))
+  ignorados += incompletas.length - payloadPendencias.length
+
+  const lotes = <T,>(itens: T[], tamanho = 500) =>
+    Array.from({ length: Math.ceil(itens.length / tamanho) }, (_, i) => itens.slice(i * tamanho, (i + 1) * tamanho))
+
+  for (const lote of lotes(payloadValidas)) {
+    const { error } = await supabase.from('salon_comissoes').upsert(lote, {
+      onConflict: 'empresa_id,mes_ref,documento', ignoreDuplicates: !sobrescrever,
+    })
+    if (error) throw new Error(error.message)
+  }
+  for (const lote of lotes(payloadPendencias)) {
+    const { error } = await supabase.from('salon_comissoes').insert(lote)
+    if (error) throw new Error(error.message)
+  }
+
+  return { gravados, atualizados, pendencias: payloadPendencias.length, ignorados }
 }
 
 /** Log completo (histórico) com nome do profissional. */

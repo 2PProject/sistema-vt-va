@@ -7,6 +7,13 @@ export const SALAO_ENABLED = process.env.NEXT_PUBLIC_SALAO_ENABLED !== 'false'
 // Prazo padrão de emissão (dia do mês seguinte) quando a empresa não define.
 export const PRAZO_DIA_PADRAO = 10
 
+// Marco inicial oficial do controle operacional. Registros anteriores continuam
+// preservados no banco/histórico, mas não geram pendência nem conferência.
+export const SALAO_COMPETENCIA_INICIAL = '2026-01'
+export function competenciaNoEscopo(competencia?: string | null): boolean {
+  return !competencia || competencia >= SALAO_COMPETENCIA_INICIAL
+}
+
 // Status possíveis de uma comissão / NFS-e
 export type StatusComissao = 'pendente' | 'recebida' | 'fora_prazo'
 

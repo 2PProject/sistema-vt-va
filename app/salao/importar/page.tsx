@@ -6,11 +6,20 @@ import LayoutAdmin from '../../../components/LayoutAdmin'
 import { formatarMoeda, MESES } from '../../../utils/calculoVT'
 import { SALAO_ENABLED } from '../../../lib/salao/config'
 import { importarPlanilhaComissoes, processarImportacaoComissoes, type LinhaImportComissao } from '../../../lib/salao/comissoes'
+import { reconciliarCompetencia } from '../../../lib/salao/conferencia'
 
+function mesAtual() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}` }
 function fmtMes(m: string) { const [a, mm] = m.split('-').map(Number); return mm ? `${MESES[mm - 1]}/${a}` : m }
+function fmtDoc(d: string) {
+  const s = (d ?? '').replace(/\D/g, '')
+  if (s.length === 14) return s.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5')
+  if (s.length === 11) return s.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4')
+  return s
+}
 
 export default function SalaoImportarPage() {
   const router = useRouter()
+  const [competencia, setCompetencia] = useState(mesAtual())
   const [preview, setPreview] = useState<LinhaImportComissao[]>([])
   const [erros, setErros] = useState<string[]>([])
   const [sobrescrever, setSobrescrever] = useState(true)
@@ -18,7 +27,7 @@ export default function SalaoImportarPage() {
   const [msg, setMsg] = useState(''); const [msgTipo, setMsgTipo] = useState<'ok' | 'erro'>('ok')
 
   useEffect(() => { if (!SALAO_ENABLED) { router.replace('/dashboard'); return } }, [router])
-  function notify(t: string, tipo: 'ok' | 'erro') { setMsg(t); setMsgTipo(tipo); setTimeout(() => setMsg(''), 8000) }
+  function notify(t: string, tipo: 'ok' | 'erro') { setMsg(t); setMsgTipo(tipo); setTimeout(() => setMsg(''), 9000) }
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]; if (!file) return
@@ -28,25 +37,39 @@ export default function SalaoImportarPage() {
   }
   async function confirmar() {
     if (preview.length === 0) return
+    if (!competencia) { notify('Informe a competência.', 'erro'); return }
     setLoad(true)
-    const { gravados, atualizados, ignorados } = await processarImportacaoComissoes(preview, sobrescrever)
-    setLoad(false)
-    notify(`${gravados} nova(s), ${atualizados} atualizada(s)${ignorados ? `, ${ignorados} ignorada(s)` : ''}.`, 'ok')
-    setPreview([]); setErros([])
+    try {
+      const { gravados, atualizados, pendencias, ignorados } = await processarImportacaoComissoes(preview, competencia, sobrescrever)
+      const rec = await reconciliarCompetencia(competencia)
+      const partes = [`${gravados} importada(s)`, `${atualizados} atualizada(s)`]
+      if (pendencias) partes.push(`${pendencias} pendência(s) sem CNPJ`)
+      if (ignorados) partes.push(`${ignorados} já existente(s)`)
+      notify(`${partes.join(' · ')}. Conferência automática: ${rec.conferidas} nota(s) vinculada(s)${rec.divergencias ? `, ${rec.divergencias} divergente(s)` : ''}.`, pendencias ? 'erro' : 'ok')
+      setPreview([]); setErros([])
+    } catch (e) {
+      notify(e instanceof Error ? `Falha ao importar: ${e.message}` : 'Falha ao importar a planilha.', 'erro')
+    } finally {
+      setLoad(false)
+    }
   }
 
   if (!SALAO_ENABLED) return null
 
   return (
-    <LayoutAdmin title="Salão — Importar Planilha do Mês">
+    <LayoutAdmin title="Salão — Importar Planilha (competência)">
       <div className="space-y-6">
         {msg && <div className={`px-4 py-3 rounded-lg text-sm ${msgTipo === 'ok' ? 'bg-green-50 border border-green-200 text-green-700' : 'bg-red-50 border border-red-200 text-red-700'}`}>{msg}</div>}
 
         <div className="card">
           <div className="bg-blue-50 border border-blue-200 text-blue-800 text-xs rounded-lg p-3 mb-4">
-            Cada <strong>aba</strong> = uma <strong>empresa</strong> (o nome da aba deve coincidir com a empresa/apelido no sistema). Colunas: <strong>Nome do Profissional</strong> · <strong>Mês de Referência</strong> (ex.: Maio/2026) · <strong>Valor da Comissão</strong>. Colunas extras são ignoradas.
+            Cada <strong>aba</strong> = uma <strong>empresa</strong> (nome da aba = apelido). Colunas: <strong>CNPJ</strong> · <strong>Nome completo</strong> · <strong>Crédito</strong> (valor).
+            A <strong>competência</strong> é informada aqui embaixo (não vem na planilha). Linhas sem CNPJ viram alerta (não dá para conferir por documento). Ao confirmar, guarda a lista esperada do mês e já concilia com as notas por <strong>CNPJ + competência</strong> (o valor do crédito não precisa ser igual ao da NFS-e — é só comparação).
           </div>
-          <input type="file" accept=".xlsx,.xls" onChange={handleFile} disabled={load} className="input-field" />
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+            <div><label className="label-field">Competência</label><input type="month" className="input-field" value={competencia} onChange={e => setCompetencia(e.target.value)} /></div>
+            <div className="md:col-span-2"><label className="label-field">Planilha (.xlsx)</label><input type="file" accept=".xlsx,.xls" onChange={handleFile} disabled={load} className="input-field" /></div>
+          </div>
           {load && <div className="text-sm text-gray-400 mt-2">Processando...</div>}
         </div>
 
@@ -60,31 +83,35 @@ export default function SalaoImportarPage() {
         {preview.length > 0 && (
           <div className="card">
             <div className="flex items-center justify-between mb-3">
-              <div className="text-sm font-semibold text-gray-700">{preview.length} registro(s) prontos</div>
+              <div className="text-sm font-semibold text-gray-700">
+                {preview.length} profissional(is) · competência {fmtMes(competencia)}
+                {preview.some(l => l.pendencia) && <span className="ml-2 text-amber-700 font-normal">({preview.filter(l => l.pendencia).length} sem CNPJ — vão para pendências)</span>}
+              </div>
               <label className="flex items-center gap-2 text-sm text-gray-600">
                 <input type="checkbox" className="w-4 h-4" checked={sobrescrever} onChange={e => setSobrescrever(e.target.checked)} />
-                Sobrescrever valores já importados (mesmo mês/empresa)
+                Sobrescrever valores já importados (mesma competência/empresa)
               </label>
             </div>
             <div className="border border-gray-200 rounded-lg max-h-72 overflow-auto">
               <table className="w-full text-xs">
                 <thead><tr className="bg-gray-50 sticky top-0">
-                  <th className="table-header">Empresa</th><th className="table-header">Profissional</th><th className="table-header">Mês</th><th className="table-header text-right">Comissão</th>
+                  <th className="table-header">Empresa</th><th className="table-header">Profissional</th><th className="table-header">CNPJ/CPF</th><th className="table-header text-right">Valor</th><th className="table-header">Situação</th>
                 </tr></thead>
                 <tbody>
                   {preview.map((l, i) => (
-                    <tr key={i} className="border-t border-gray-100">
+                    <tr key={i} className={`border-t border-gray-100 ${l.pendencia ? 'bg-amber-50' : ''}`}>
                       <td className="table-cell">{l.empresaNome}</td>
-                      <td className="table-cell">{l.profissionalNome}</td>
-                      <td className="table-cell">{fmtMes(l.mes_ref)}</td>
+                      <td className="table-cell">{l.nome}</td>
+                      <td className="table-cell">{l.documento ? fmtDoc(l.documento) : <span className="text-amber-600">—</span>}</td>
                       <td className="table-cell text-right">{formatarMoeda(l.valor_comissao)}</td>
+                      <td className="table-cell">{l.pendencia ? <span className="text-amber-700 text-[11px] font-medium">⚠ {l.pendencia}</span> : <span className="text-green-600 text-[11px]">ok</span>}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
             <div className="flex gap-3 pt-4">
-              <button className="btn-primary" onClick={confirmar} disabled={load}>{load ? 'Importando...' : `Confirmar importação (${preview.length})`}</button>
+              <button className="btn-primary" onClick={confirmar} disabled={load}>{load ? 'Importando...' : `Confirmar competência ${fmtMes(competencia)} (${preview.length})`}</button>
               <button className="btn-secondary" onClick={() => { setPreview([]); setErros([]) }}>Cancelar</button>
             </div>
           </div>

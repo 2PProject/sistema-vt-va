@@ -15,22 +15,36 @@ export async function exportarExcel(titulo: string, colunas: Coluna[], rows: any
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export async function exportarPDF(titulo: string, colunas: Coluna[], rows: any[], nomeArq: string) {
+export async function exportarPDF(titulo: string, colunas: Coluna[], rows: any[], nomeArq: string, opcoes: { orientation?: 'portrait' | 'landscape' } = {}) {
   const { default: jsPDF } = await import('jspdf')
-  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
-  const larg = 297, margem = 10
+  const vertical = opcoes.orientation === 'portrait'
+  const doc = new jsPDF({ orientation: vertical ? 'portrait' : 'landscape', unit: 'mm', format: 'a4' })
+  const larg = vertical ? 210 : 297, limiteY = vertical ? 282 : 195, margem = 12
   let y = 16
   doc.setFontSize(13); doc.setFont('helvetica', 'bold'); doc.text(titulo, margem, y); y += 8
   doc.setFontSize(8)
   const colW = (larg - margem * 2) / colunas.length
-  function linha(vals: (string | number)[], bold: boolean) {
-    doc.setFont('helvetica', bold ? 'bold' : 'normal')
-    vals.forEach((v, i) => doc.text(String(v).slice(0, 40), margem + i * colW, y))
-    y += 6
-    if (y > 195) { doc.addPage(); y = 16 }
+  const cabecalho = colunas.map(c => c.header)
+  function preparar(vals: (string | number)[]) {
+    return vals.map(v => doc.splitTextToSize(String(v ?? ''), Math.max(12, colW - 2)) as string[])
   }
-  linha(colunas.map(c => c.header), true)
-  doc.setDrawColor(210); doc.line(margem, y - 4, larg - margem, y - 4)
-  for (const r of rows) linha(colunas.map(c => c.get(r)), false)
+  function desenhar(vals: (string | number)[], bold: boolean) {
+    doc.setFont('helvetica', bold ? 'bold' : 'normal')
+    const textos = preparar(vals)
+    const altura = Math.max(1, ...textos.map(t => t.length)) * 3.6 + 2
+    if (y + altura > limiteY) {
+      doc.addPage(); y = 16
+      doc.setFont('helvetica', 'bold')
+      const hs = preparar(cabecalho); const ha = Math.max(1, ...hs.map(t => t.length)) * 3.6 + 2
+      hs.forEach((t, i) => doc.text(t, margem + i * colW, y))
+      y += ha; doc.setDrawColor(210); doc.line(margem, y - 2, larg - margem, y - 2)
+      doc.setFont('helvetica', bold ? 'bold' : 'normal')
+    }
+    textos.forEach((t, i) => doc.text(t, margem + i * colW, y))
+    y += altura
+  }
+  desenhar(cabecalho, true)
+  doc.setDrawColor(210); doc.line(margem, y - 2, larg - margem, y - 2)
+  for (const r of rows) desenhar(colunas.map(c => c.get(r)), false)
   doc.save(`${nomeArq}.pdf`)
 }

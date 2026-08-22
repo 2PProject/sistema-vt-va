@@ -6,6 +6,7 @@ export type Empresa = {
   id: string
   razao_social: string
   cnpj: string
+  inscricao_municipal?: string | null
   valor_va: number
   apelido?: string | null   // usado para casar linhas da planilha de pagamentos
 }

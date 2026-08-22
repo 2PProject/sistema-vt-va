@@ -1,230 +1,58 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import LayoutAdmin from '../../../components/LayoutAdmin'
-import { supabase, Empresa } from '../../../lib/supabase'
-import { formatarMoeda } from '../../../utils/calculoVT'
-import { SALAO_ENABLED } from '../../../lib/salao/config'
-import { sincronizarNFSe, rotuloAmbiente, type DiagEmpresaSync } from '../../../lib/salao/certificados'
-import { listarNotas, type NotaRecebida } from '../../../lib/salao/notas'
-import { MESES } from '../../../utils/calculoVT'
+import NotaPreviewDialog from '../../../components/salao/NotaPreviewDialog'
+import { supabase, type Empresa } from '../../../lib/supabase'
+import { SALAO_COMPETENCIA_INICIAL, SALAO_ENABLED } from '../../../lib/salao/config'
+import { listarCertificados, sincronizarNFSe, type DiagEmpresaSync, type ResumoSync } from '../../../lib/salao/certificados'
+import { listarNotas, resumoNotas, type NotaRecebida } from '../../../lib/salao/notas'
+import { classificarNota, editarNota, excluirNota, setAnaliseManual, setNotaConferida } from '../../../lib/salao/conferencia'
+import { formatarMoeda, MESES } from '../../../utils/calculoVT'
 
-function mesAtual() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}` }
-function fmtMesLabel(mes: string) { const [a, m] = mes.split('-').map(Number); return m ? `${MESES[m - 1]}/${a}` : mes }
-function fmtData(iso: string | null) { if (!iso) return ''; const [a, m, d] = iso.split('-'); return `${d}/${m}/${a}` }
-function fmtDoc(d: string | null) {
-  const s = (d ?? '').replace(/\D/g, '')
-  if (s.length === 14) return s.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5')
-  if (s.length === 11) return s.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4')
-  return s || '—'
-}
+function mesAtual(){const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`}
+function fimMes(m:string){const[y,mm]=m.split('-').map(Number);return new Date(y,mm,0).toISOString().slice(0,10)}
+function mesesEntre(a:string,b:string){const out:string[]=[];let[y,m]=a.split('-').map(Number);const[fy,fm]=b.split('-').map(Number);while(y*12+m<=fy*12+fm&&out.length<120){out.push(`${y}-${String(m).padStart(2,'0')}`);m++;if(m>12){m=1;y++}}return out}
+function fmtData(v:string|null){if(!v)return '—';const[a,m,d]=v.split('-');return `${d}/${m}/${a}`}
+function fmtDoc(v:string|null){const s=(v||'').replace(/\D/g,'');return s||'—'}
+function marcadaOutroAno(n:NotaRecebida){return !!n.analise_manual&&/outro ano|outro exercício|outro exercicio/i.test(n.analise_motivo||'')}
+type Filtro='todas'|'pendentes'|'conferidas'|'divergentes'|'analise'|'outro_ano'
 
-export default function SalaoNotasPage() {
-  const router = useRouter()
-  const [empresas, setEmpresas] = useState<Empresa[]>([])
-  const [empresaId, setEmpresaId] = useState('')          // '' = todas
-  const [mes, setMes] = useState(mesAtual())              // mês fechado (1º ao último dia)
-  const [busca, setBusca] = useState('')
-  const [linhas, setLinhas] = useState<NotaRecebida[]>([])
-  const [loading, setLoading] = useState(false)
-
-  const [sincronizando, setSincronizando] = useState(false)
-  const [progresso, setProgresso] = useState('')
-  const pararRef = useState<{ v: boolean }>(() => ({ v: false }))[0]
-  const [diag, setDiag] = useState<{ ambiente?: string; empresas: DiagEmpresaSync[] } | null>(null)
-  const [erroGeral, setErroGeral] = useState('')
-  const [aviso, setAviso] = useState('')
-
-  useEffect(() => {
-    if (!SALAO_ENABLED) { router.replace('/dashboard'); return }
-    supabase.from('empresas').select('*').order('razao_social').then(({ data }) => setEmpresas(data ?? []))
-  }, [router])
-
-  const carregar = useCallback(async () => {
-    setLoading(true)
-    setLinhas(await listarNotas({ empresaId: empresaId || undefined, mes }))
-    setLoading(false)
-  }, [empresaId, mes])
-  useEffect(() => { if (SALAO_ENABLED) carregar() }, [carregar])
-
-  // Baixa TODO o histórico automaticamente (a API do gov.br é sequencial por NSU,
-  // da nota mais antiga para a mais recente). Faz vários lotes seguidos, mostra
-  // o progresso e trata o limite 429 esperando e continuando.
-  async function baixarTudo(reset = false) {
-    const sleep = (ms: number) => new Promise<void>(res => setTimeout(res, ms))
-    pararRef.v = false
-    setSincronizando(true); setErroGeral(''); setAviso(''); setDiag(null); setProgresso('Iniciando...')
-    let totalGrav = 0, totalIgn = 0
-    const acc: Record<string, DiagEmpresaSync> = {}
-    let ambiente: string | undefined
-    for (let rodada = 1; rodada <= 120; rodada++) {
-      if (pararRef.v) { setProgresso(`Parado. ${totalGrav} recebidas gravadas até aqui.`); break }
-      const r = await sincronizarNFSe(empresaId || undefined, reset && rodada === 1)
-      if (r.erro) { setErroGeral(r.erro); break }
-      ambiente = r.ambiente
-      let rate = false, mais = false
-      for (const e of (r.empresas ?? [])) {
-        totalGrav += e.gravadas || 0; totalIgn += e.ignoradas || 0
-        if (e.status === 429) rate = true
-        if (e.houveMais) mais = true
-        const a = acc[e.empresa_id]
-        acc[e.empresa_id] = { ...e, gravadas: (a?.gravadas || 0) + (e.gravadas || 0), ignoradas: (a?.ignoradas || 0) + (e.ignoradas || 0), encontradas: (a?.encontradas || 0) + (e.encontradas || 0) }
-      }
-      setDiag({ ambiente, empresas: Object.values(acc) })
-      await carregar()
-      const amb = rotuloAmbiente(ambiente)
-      if (totalGrav === 0 && !mais && amb === 'ambiente de teste') {
-        setAviso('Você está no AMBIENTE DE TESTE (produção restrita), que não tem suas notas reais. Defina SALON_ADN_AMBIENTE=producao no Vercel e faça Redeploy.')
-        break
-      }
-      if (rate) { setProgresso(`gov.br limitou (429). Aguardando 30s para continuar... (${totalGrav} recebidas até agora)`); await sleep(30000); continue }
-      if (!mais) { setProgresso(`Concluído: ${totalGrav} nota(s) recebida(s) gravada(s).`); break }
-      setProgresso(`Baixando... ${totalGrav} recebidas gravadas (${totalIgn} próprias ignoradas). Continua...`)
-      await sleep(1200)
-    }
-    setSincronizando(false)
-  }
-
-  const filtradas = useMemo(() => {
-    const q = busca.trim().toLowerCase()
-    if (!q) return linhas
-    return linhas.filter(l => (l.emitente_nome ?? '').toLowerCase().includes(q) || (l.documento ?? '').includes(q.replace(/\D/g, '')) || (l.numero ?? '').includes(q))
-  }, [linhas, busca])
-  const total = useMemo(() => filtradas.reduce((s, l) => s + (l.valor || 0), 0), [filtradas])
-
-  if (!SALAO_ENABLED) return null
-  const alvoNome = empresaId ? (empresas.find(e => e.id === empresaId)?.apelido || empresas.find(e => e.id === empresaId)?.razao_social || '') : 'todas as empresas'
-
-  return (
-    <LayoutAdmin title="Salão — Notas Recebidas">
-      <div className="space-y-6">
-        {/* 1) Baixar notas do gov.br */}
-        <div className="card">
-          <h2 className="text-sm font-semibold text-gray-700 mb-1">1. Baixar notas recebidas do gov.br</h2>
-          <p className="text-xs text-gray-500 mb-3">
-            O gov.br entrega as notas em ordem (da mais antiga para a mais recente), então é preciso baixar o histórico uma vez.
-            Depois é só filtrar pelo mês na seção abaixo. As notas emitidas pela própria empresa são descartadas.
-          </p>
-          <div className="flex flex-wrap items-end gap-3">
-            <div className="flex-1 min-w-[240px]">
-              <label className="label-field">Empresa</label>
-              <select className="input-field" value={empresaId} onChange={e => setEmpresaId(e.target.value)} disabled={sincronizando}>
-                <option value="">Todas as empresas</option>
-                {empresas.map(e => <option key={e.id} value={e.id}>{e.apelido || e.razao_social}</option>)}
-              </select>
-            </div>
-            {!sincronizando ? (
-              <>
-                <button onClick={() => baixarTudo(false)}
-                  className="bg-emerald-600 text-white font-medium py-2 px-4 rounded-lg hover:bg-emerald-700 flex items-center gap-2">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
-                  Baixar notas ({empresaId ? '1 empresa' : 'todas'})
-                </button>
-                <button onClick={() => baixarTudo(true)} title="Apaga o marcador e baixa desde o início" className="btn-secondary text-sm">
-                  Rebaixar do zero
-                </button>
-              </>
-            ) : (
-              <button onClick={() => { pararRef.v = true }} className="bg-red-600 text-white font-medium py-2 px-4 rounded-lg hover:bg-red-700">
-                Parar
-              </button>
-            )}
-          </div>
-          {(sincronizando || progresso) && (
-            <div className="mt-3 text-sm text-gray-700 flex items-center gap-2">
-              {sincronizando && <svg className="w-4 h-4 animate-spin text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>}
-              <span>{progresso}</span>
-            </div>
-          )}
-        </div>
-
-        {/* Erro geral */}
-        {erroGeral && (
-          <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">
-            <strong>Não foi possível sincronizar:</strong> {erroGeral}
-          </div>
-        )}
-        {aviso && (
-          <div className="bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-lg px-4 py-3">{aviso}</div>
-        )}
-
-        {/* 2) Resultado da sincronização (por empresa, com motivo/diagnóstico) */}
-        {diag && (
-          <div className="card">
-            <h2 className="text-sm font-semibold text-gray-700 mb-3">
-              Resultado {diag.ambiente ? <span className="font-normal text-gray-400">· {rotuloAmbiente(diag.ambiente)} ({diag.ambiente})</span> : null}
-            </h2>
-            <div className="space-y-2">
-              {diag.empresas.map(e => (
-                <div key={e.empresa_id} className={`rounded-lg border px-3 py-2 text-sm ${e.ok ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-medium text-gray-800">{e.ok ? '✅' : '❌'} {e.empresaNome}</span>
-                    <span className="text-xs text-gray-500">HTTP {e.status || '—'}</span>
-                  </div>
-                  {e.ok
-                    ? <div className="text-xs text-green-700 mt-0.5">{e.encontradas} no lote · <strong>{e.gravadas} recebida(s) gravada(s)</strong>{e.ignoradas ? ` · ${e.ignoradas} emitida(s) pela própria empresa (ignoradas)` : ''}{typeof e.ultimoNsu === 'number' ? ` · NSU ${e.ultimoNsu}` : ''}</div>
-                    : <div className="text-xs text-red-700 mt-0.5">{e.erro}</div>}
-                  {e.amostra && (
-                    <details className="mt-1">
-                      <summary className="cursor-pointer text-gray-500 text-xs">ver resposta do gov.br</summary>
-                      <pre className="mt-1 whitespace-pre-wrap break-all bg-gray-900 text-gray-100 rounded p-2 max-h-40 overflow-auto text-[11px]">{e.amostra}</pre>
-                    </details>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* 3) Filtro por mês e lista */}
-        <div className="card">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-            <div><label className="label-field">Mês</label><input type="month" className="input-field" value={mes} onChange={e => setMes(e.target.value)} /></div>
-            <div><label className="label-field">Buscar</label><input className="input-field" placeholder="Emitente, CPF/CNPJ ou nº" value={busca} onChange={e => setBusca(e.target.value)} /></div>
-          </div>
-
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-base font-semibold text-gray-800">{filtradas.length} nota(s) · {fmtMesLabel(mes)} · {alvoNome}</h2>
-            <span className="text-sm font-semibold text-gray-700">Total: {formatarMoeda(total)}</span>
-          </div>
-
-          {loading ? (
-            <div className="text-center py-12 text-gray-400 text-sm">Carregando...</div>
-          ) : filtradas.length === 0 ? (
-            <div className="text-center py-12 text-gray-400 text-sm">Nenhuma nota guardada neste período.<br /><span className="text-xs">Use &quot;Sincronizar&quot; acima para buscar no gov.br.</span></div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse">
-                <thead>
-                  <tr className="bg-gray-50 border-b border-gray-200">
-                    <th className="table-header">Empresa</th>
-                    <th className="table-header">Emitida por</th>
-                    <th className="table-header">CPF/CNPJ</th>
-                    <th className="table-header text-center">Nº</th>
-                    <th className="table-header text-center">Competência</th>
-                    <th className="table-header text-center">Emissão</th>
-                    <th className="table-header text-right">Valor</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {filtradas.map(l => (
-                    <tr key={l.id} className="hover:bg-gray-50">
-                      <td className="table-cell text-xs text-gray-500">{l.empresaNome}</td>
-                      <td className="table-cell font-medium text-gray-900">{l.emitente_nome || '—'}</td>
-                      <td className="table-cell text-gray-600">{fmtDoc(l.documento)}</td>
-                      <td className="table-cell text-center text-xs">{l.numero || '—'}</td>
-                      <td className="table-cell text-center text-xs">{l.competencia || '—'}</td>
-                      <td className="table-cell text-center text-xs">{fmtData(l.data_emissao)}</td>
-                      <td className="table-cell text-right">{formatarMoeda(l.valor || 0)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      </div>
-    </LayoutAdmin>
-  )
+export default function NotasPage(){
+ const router=useRouter();const[empresas,setEmpresas]=useState<Empresa[]>([]);const[empresaId,setEmpresaId]=useState('');const[inicio,setInicio]=useState(SALAO_COMPETENCIA_INICIAL);const[fim,setFim]=useState(mesAtual());const[compInicio,setCompInicio]=useState(SALAO_COMPETENCIA_INICIAL);const[compFim,setCompFim]=useState(mesAtual());const[busca,setBusca]=useState('');const[buscaAplicada,setBuscaAplicada]=useState('');const[filtro,setFiltro]=useState<Filtro>('pendentes');const[linhas,setLinhas]=useState<NotaRecebida[]>([]);const[loading,setLoading]=useState(false);const[baixando,setBaixando]=useState(false);const[importando,setImportando]=useState(false);const[reconferindo,setReconferindo]=useState(false);const[msg,setMsg]=useState('');const[selecionada,setSelecionada]=useState<NotaRecebida|null>(null);const[editando,setEditando]=useState(false);const[form,setForm]=useState<Record<string,string>>({});const[usuario,setUsuario]=useState<string|undefined>();const requisicao=useRef(0);const pararBaixa=useRef(false);const seletorXml=useRef<HTMLInputElement>(null);const[acaoId,setAcaoId]=useState('');const[syncResumo,setSyncResumo]=useState<ResumoSync|null>(null);const[progressoBaixa,setProgressoBaixa]=useState({ativo:false,percentual:0,etapa:''})
+ useEffect(()=>{if(!SALAO_ENABLED){router.replace('/dashboard');return}supabase.from('empresas').select('*').order('razao_social').then(({data})=>setEmpresas(data||[]));supabase.auth.getUser().then(({data})=>setUsuario(data.user?.email))},[router])
+ const carregar=useCallback(async()=>{const id=++requisicao.current;setLoading(true);try{const r=await listarNotas({empresaId:empresaId||undefined,de:inicio?`${inicio}-01`:undefined,ate:fim?fimMes(fim):undefined,busca:buscaAplicada,classificacao:'profissional'});if(id===requisicao.current)setLinhas(r)}catch(e){if(id===requisicao.current)setMsg(e instanceof Error?e.message:'Erro ao carregar notas.')}finally{if(id===requisicao.current)setLoading(false)}},[empresaId,inicio,fim,buscaAplicada])
+ useEffect(()=>{const t=setTimeout(()=>setBuscaAplicada(busca.trim()),300);return()=>clearTimeout(t)},[busca])
+ useEffect(()=>{if(SALAO_ENABLED)carregar()},[carregar])
+ const visiveis=useMemo(()=>linhas.filter(n=>{const comp=n.competenciaEfetiva||'';if(compInicio&&comp<compInicio)return false;if(compFim&&comp>compFim)return false;if(filtro==='pendentes')return !n.conferida&&!n.analise_manual;if(filtro==='conferidas')return n.conferida;if(filtro==='divergentes')return !!n.competenciaEfetiva&&!!n.data_emissao&&n.competenciaEfetiva!==n.data_emissao.slice(0,7);if(filtro==='outro_ano')return marcadaOutroAno(n);if(filtro==='analise')return !!n.analise_manual&&!marcadaOutroAno(n);return true}),[linhas,filtro,compInicio,compFim])
+ const resumo=resumoNotas(linhas)
+ async function baixar(reset=false){if(baixando)return;pararBaixa.current=false;setBaixando(true);setMsg('');setProgressoBaixa({ativo:true,percentual:0,etapa:'Localizando unidades com certificado…'});try{const certificados=await listarCertificados();const ids=Array.from(new Set(certificados.map(c=>c.empresa_id).filter(id=>!empresaId||id===empresaId)));if(!ids.length)throw new Error(empresaId?'Esta unidade não possui certificado cadastrado.':'Nenhuma unidade possui certificado cadastrado.');const nomeEmpresa=(id:string)=>{const e=empresas.find(x=>x.id===id);return e?.apelido||e?.razao_social||'Unidade'};setSyncResumo({ok:true,ambiente:'gov.br',notasEncontradas:0,registrosAtualizados:0,empresas:ids.map(id=>({empresa_id:id,empresaNome:nomeEmpresa(id),ok:false,status:-1,encontradas:0,gravadas:0,ignoradas:0,houveMais:true}))});setProgressoBaixa({ativo:true,percentual:0,etapa:`Processando ${ids.length} unidade(s) em paralelo…`});let totalEncontradas=0,totalGravadas=0,totalIgnoradas=0;const worker=async(id:string)=>{let encontradas=0,gravadas=0,ignoradas=0;for(let rodada=1;rodada<=120&&!pararBaixa.current;rodada++){setProgressoBaixa({ativo:true,percentual:0,etapa:`Baixa contínua ativa · ${ids.length} unidade(s) · ${totalGravadas} nota(s) gravada(s)`});const r=await sincronizarNFSe(id,reset&&rodada===1);if(r.erro)throw new Error(r.erro);const e=r.empresas?.[0];if(!e)throw new Error(`${nomeEmpresa(id)} não retornou diagnóstico.`);encontradas+=Number(e.encontradas||0);gravadas+=Number(e.gravadas||0);ignoradas+=Number(e.ignoradas||0);totalEncontradas+=Number(e.encontradas||0);totalGravadas+=Number(e.gravadas||0);totalIgnoradas+=Number(e.ignoradas||0);setSyncResumo(prev=>{const cards=(prev?.empresas||[]).map(card=>card.empresa_id===id?{...e,empresaNome:nomeEmpresa(id),encontradas,gravadas,ignoradas}:card);return{ok:true,ambiente:r.ambiente,notasEncontradas:totalEncontradas,registrosAtualizados:totalGravadas,empresas:cards}});if(e.status===429){for(let restante=30;restante>0&&!pararBaixa.current;restante--){setProgressoBaixa({ativo:true,percentual:0,etapa:`gov.br limitou ${nomeEmpresa(id)}. Continuando em ${restante}s · ${totalGravadas} gravada(s)`});await new Promise(resolve=>setTimeout(resolve,1000))}continue}if(!e.houveMais)return;await new Promise(resolve=>setTimeout(resolve,1200))}if(!pararBaixa.current)throw new Error(`${nomeEmpresa(id)} atingiu o limite de segurança. Clique novamente para continuar do último NSU.`)};const resultados=await Promise.allSettled(ids.map(worker));const falhas=resultados.filter((r):r is PromiseRejectedResult=>r.status==='rejected');await carregar();if(pararBaixa.current){setProgressoBaixa({ativo:true,percentual:0,etapa:`Parado · ${totalGravadas} nota(s) gravada(s) até aqui`});setMsg('Baixa interrompida pelo usuário. O próximo processamento continuará do último NSU.')}else if(falhas.length){const detalhes=falhas.map(f=>f.reason instanceof Error?f.reason.message:String(f.reason)).join(' | ');setProgressoBaixa({ativo:true,percentual:0,etapa:`Finalizado com falha em ${falhas.length} unidade(s)`});setMsg(detalhes)}else{setProgressoBaixa({ativo:true,percentual:0,etapa:`Concluído · ${totalGravadas} gravada(s) · ${totalIgnoradas} ignorada(s)`});setMsg(`Baixa concluída em ${ids.length} unidade(s): ${totalEncontradas} encontrada(s) e ${totalGravadas} gravada(s).`)}}catch(e){setProgressoBaixa({ativo:true,percentual:0,etapa:'A baixa não pôde ser iniciada'});setMsg(e instanceof Error?e.message:'Falha ao baixar as notas.')}finally{setBaixando(false)}}
+ async function importarArquivos(files:FileList|null){if(!files?.length)return;if(!empresaId){setMsg('Selecione uma empresa antes de importar os XMLs.');return}setImportando(true);setMsg('Lendo e validando os XMLs…');const formData=new FormData();formData.set('empresa_id',empresaId);Array.from(files).forEach(a=>formData.append('arquivos',a));try{const res=await fetch('/api/nfse/importar-xml',{method:'POST',body:formData});const j=await res.json().catch(()=>null);if(!res.ok){setMsg(j?.erro||`Falha HTTP ${res.status} ao importar.`);return}const auto=j.conferencia?` Conferência automática: ${j.conferencia.conferidas} vínculo(s), ${j.conferencia.divergencias} divergência(s).`:'';const resumo=`${j.importadas} importada(s), ${j.duplicadas} duplicada(s) e ${j.rejeitadas} rejeitada(s), em ${j.arquivos} XML(s).${auto}`;setMsg(j.erros?.length?`${resumo} ${j.erros.join(' | ')}`:resumo);await carregar()}catch(e){setMsg(e instanceof Error?e.message:'Falha ao importar XMLs.')}finally{setImportando(false)}}
+ async function reprocessarConferencia(){const de=compInicio||inicio,ate=compFim||fim;if(!de||!ate||de>ate){setMsg('Informe um período válido para a reconferência.');return}setReconferindo(true);setMsg('Reprocessando a conferência do período…');let conferidas=0,pendentes=0,divergencias=0;try{for(const competencia of mesesEntre(de,ate)){const res=await fetch('/api/salao/conferencia',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({acao:'reconciliar',competencia,empresaId:empresaId||undefined})});const j=await res.json().catch(()=>null);if(!res.ok||!j?.ok)throw new Error(j?.erro||`Falha ao conferir ${competencia}.`);conferidas+=Number(j.conferidas||0);pendentes+=Number(j.pendentes||0);divergencias+=Number(j.divergencias||0)}setMsg(`Reconferência concluída: ${conferidas} novo(s) vínculo(s) e ${pendentes} pendente(s). A automática só vincula correspondência única de unidade, CNPJ/CPF e valor exato.`);await carregar()}catch(e){setMsg(e instanceof Error?e.message:'Falha ao reprocessar conferência.')}finally{setReconferindo(false)}}
+ function abrirEdicao(n:NotaRecebida){setSelecionada(n);setEditando(true);setForm({emitente_nome:n.emitente_nome||'',documento:n.documento||'',numero:n.numero||'',data_emissao:n.data_emissao||'',competencia:n.competenciaEfetiva||'',valor:String(n.valor||''),observacao:n.observacao||''})}
+ async function salvar(){if(!selecionada)return;const r=await editarNota(selecionada.id,form,usuario);if(!r.ok){setMsg(r.erro||'Erro ao salvar.');return}setMsg('Nota atualizada e vínculos reavaliados.');setEditando(false);setSelecionada(null);carregar()}
+ async function outro(n:NotaRecebida){if(acaoId)return;setAcaoId(n.id);setLinhas(v=>v.filter(x=>x.id!==n.id));const r=await classificarNota(n.id,'outro_servico',{categoria:'Outro serviço',observacao:'Classificação rápida pelo painel',usuario});if(!r.ok){setMsg(r.erro||'Erro ao classificar.');carregar();setAcaoId('');return}setMsg('Nota movida para Outros serviços em um clique.');setAcaoId('')}
+ async function outroAno(n:NotaRecebida){if(acaoId)return;setAcaoId(n.id);const referencia=n.competenciaEfetiva||n.data_emissao?.slice(0,7)||'não informada';const motivo=`Nota classificada como pertencente a outro ano. Referência informada: ${referencia}`;setLinhas(v=>v.filter(x=>x.id!==n.id));const r=await setAnaliseManual('nota',n.id,true,motivo,usuario);if(!r.ok){setMsg(r.erro||'Erro ao classificar como outro ano.');carregar();setAcaoId('');return}setMsg('Nota marcada como Outro ano e removida das pendências.');setAcaoId('')}
+ async function conferir(n:NotaRecebida){if(acaoId)return;setAcaoId(n.id);const proximo=!n.conferida;setLinhas(v=>v.map(x=>x.id===n.id?{...x,conferida:proximo}:x));const r=await setNotaConferida(n.id,proximo,usuario);if(!r.ok){setMsg(r.erro||'Erro ao atualizar conferência.');carregar();setAcaoId('');return}setMsg(proximo?'Nota marcada como conferida.':'Nota voltou para pendentes.');setAcaoId('')}
+ async function excluir(n:NotaRecebida){if(acaoId)return;setAcaoId(n.id);setLinhas(v=>v.filter(x=>x.id!==n.id));const r=await excluirNota(n.id,'Exclusão rápida pelo painel',usuario);if(!r.ok){setMsg(r.erro||'Erro ao excluir.');carregar();setAcaoId('');return}setMsg('Nota removida. Você pode restaurá-la na auditoria.');setAcaoId('')}
+ if(!SALAO_ENABLED)return null
+ return <LayoutAdmin title="Salão — Notas baixadas"><div className="space-y-4">
+  {msg&&<div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">{msg}</div>}
+  <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+    <h2 className="mb-1 text-sm font-semibold text-slate-800">Baixar notas recebidas do gov.br</h2>
+    <p className="mb-3 text-xs leading-relaxed text-slate-500">O gov.br entrega as notas em lotes, da mais antiga para a mais recente. A baixa continua automaticamente do último NSU salvo até terminar todo o histórico. Notas próprias, canceladas ou sem valor são ignoradas.</p>
+    <div className="flex flex-wrap items-end gap-3">
+      <div className="min-w-[240px] flex-1"><label className="label-field">Empresa</label><select className="input-field" value={empresaId} onChange={e=>setEmpresaId(e.target.value)} disabled={baixando}><option value="">Todas as empresas</option>{empresas.map(e=><option key={e.id} value={e.id}>{e.apelido||e.razao_social}</option>)}</select></div>
+      {!baixando?<><button onClick={()=>baixar(false)} className="flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 font-medium text-white hover:bg-emerald-700"><svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>Baixar notas ({empresaId?'1 empresa':'todas'})</button><button onClick={()=>baixar(true)} title="Reinicia o marcador NSU e baixa desde o começo" className="btn-secondary text-sm">Rebaixar do zero</button></>:<button onClick={()=>{pararBaixa.current=true;setProgressoBaixa(p=>({...p,etapa:'Parando após concluir a etapa atual…'}))}} className="rounded-lg bg-red-600 px-4 py-2 font-medium text-white hover:bg-red-700">Parar</button>}
+    </div>
+    {progressoBaixa.ativo&&<div className="mt-3 flex items-center gap-2 text-sm text-slate-700" role="status" aria-live="polite">{baixando&&<svg className="h-4 w-4 animate-spin text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>}<span>{progressoBaixa.etapa}</span></div>}
+  </section>
+  
+  {syncResumo?.empresas?.length?<section className="rounded-xl border bg-white p-3 shadow-sm"><div className="mb-3 flex items-center justify-between"><h2 className="text-sm font-semibold text-gray-800">{baixando?'Contagem ao vivo por unidade':'Resultado da última baixa por unidade'}</h2><span className={`text-xs font-semibold ${baixando?'text-emerald-700':'text-gray-500'}`}>{baixando?'● Atualizando':'Finalizado'}</span></div><div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{syncResumo.empresas.map(e=>{const aguardando=e.status===-1;const continuando=baixando&&e.ok&&e.houveMais;const classe=aguardando?'border-slate-200 bg-slate-50':e.ok?'border-emerald-200 bg-emerald-50':'border-red-200 bg-red-50';const rotulo=aguardando?'Aguardando':continuando?'Baixando…':e.ok?'✓ Concluída':'Falhou';return <div key={e.empresa_id} className={`rounded-xl border p-3 ${classe}`}><div className="flex items-center justify-between gap-2"><b className="truncate text-sm text-slate-900">{e.empresaNome}</b><span className={`text-xs font-semibold ${aguardando?'text-slate-500':e.ok?'text-emerald-700':'text-red-700'}`}>{rotulo}</span></div><div className="mt-3 grid grid-cols-3 gap-2 text-center"><div><b className="block text-xl tabular-nums text-slate-900">{e.encontradas||0}</b><span className="text-[10px] uppercase text-slate-500">Encontradas</span></div><div><b className="block text-xl tabular-nums text-emerald-700">{e.gravadas||0}</b><span className="text-[10px] uppercase text-slate-500">Gravadas</span></div><div><b className="block text-xl tabular-nums text-slate-600">{e.ignoradas||0}</b><span className="text-[10px] uppercase text-slate-500">Ignoradas</span></div></div><div className="mt-2 flex justify-between border-t pt-2 text-[10px] text-slate-500"><span>HTTP {e.status>0?e.status:'—'}</span><span>NSU {e.ultimoNsu??'—'}</span></div>{e.erro&&<p className="mt-2 text-xs text-red-700">{e.erro}</p>}</div>})}</div></section>:null}
+  <section className="rounded-xl bg-slate-900 p-4 text-white"><div className="flex flex-wrap items-end gap-3"><div className="mr-auto"><h1 className="text-lg font-semibold">Notas baixadas</h1><p className="text-xs text-slate-300">Consulte, classifique e corrija as NFS-e recebidas.</p></div><div><label className="block text-xs text-slate-300">Emissão inicial</label><input type="month" min={SALAO_COMPETENCIA_INICIAL} className="mt-1 rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-sm" value={inicio} onChange={e=>setInicio(e.target.value)}/></div><div><label className="block text-xs text-slate-300">Emissão final</label><input type="month" className="mt-1 rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-sm" value={fim} min={inicio>SALAO_COMPETENCIA_INICIAL?inicio:SALAO_COMPETENCIA_INICIAL} onChange={e=>setFim(e.target.value<inicio?inicio:e.target.value)}/></div><div><label className="block text-xs text-slate-300">Competência inicial</label><input type="month" min={SALAO_COMPETENCIA_INICIAL} className="mt-1 rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-sm" value={compInicio} onChange={e=>setCompInicio(e.target.value)}/></div><div><label className="block text-xs text-slate-300">Competência final</label><input type="month" className="mt-1 rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-sm" value={compFim} min={compInicio>SALAO_COMPETENCIA_INICIAL?compInicio:SALAO_COMPETENCIA_INICIAL} onChange={e=>setCompFim(e.target.value)}/></div><div className="min-w-48"><label className="block text-xs text-slate-300">Empresa</label><select className="mt-1 w-full rounded-lg border border-slate-600 bg-slate-800 px-3 py-2 text-sm" value={empresaId} onChange={e=>setEmpresaId(e.target.value)}><option value="">Todas</option>{empresas.map(e=><option key={e.id} value={e.id}>{e.apelido||e.razao_social}</option>)}</select></div><button onClick={()=>{setInicio(SALAO_COMPETENCIA_INICIAL);setFim(mesAtual());setCompInicio(SALAO_COMPETENCIA_INICIAL);setCompFim(mesAtual());setEmpresaId('');setBusca('');setBuscaAplicada('');setFiltro('pendentes')}} className="rounded-lg border border-slate-600 px-3 py-2 text-sm text-slate-200 hover:bg-slate-800">Limpar filtros</button><input ref={seletorXml} type="file" accept=".zip,.xml,application/zip,text/xml,application/xml" multiple className="hidden" onChange={e=>{importarArquivos(e.target.files);e.target.value=''}}/><button onClick={()=>{if(!empresaId){setMsg('Selecione uma empresa antes de importar.');return}seletorXml.current?.click()}} disabled={importando} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium hover:bg-emerald-500 disabled:opacity-50">{importando?'Importando XMLs…':'Importar ZIP/XML'}</button><button onClick={reprocessarConferencia} disabled={reconferindo} className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-medium hover:bg-violet-500 disabled:opacity-50">{reconferindo?'Reconferindo…':'Reprocessar conferência'}</button></div></section>
+  <section className="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">{([{k:'todas',v:resumo.total,l:'Todas'},{k:'pendentes',v:linhas.filter(n=>!n.conferida&&!n.analise_manual).length,l:'Pendentes'},{k:'conferidas',v:resumo.conferidas,l:'Conferidas'},{k:'divergentes',v:resumo.divergentes,l:'Divergentes'},{k:'analise',v:linhas.filter(n=>n.analise_manual&&!marcadaOutroAno(n)).length,l:'Análise'},{k:'outro_ano',v:linhas.filter(marcadaOutroAno).length,l:'Outro ano'}] as {k:Filtro;v:number;l:string}[]).map(x=><button key={x.k} onClick={()=>setFiltro(x.k)} className={`rounded-xl border bg-white p-3 text-left shadow-sm ${filtro===x.k?'ring-2 ring-blue-500':''}`}><b className="block text-xl text-gray-900">{x.v}</b><span className="text-xs text-gray-500">{x.l}</span></button>)}</section>
+  <section className="rounded-xl border bg-white shadow-sm"><div className="flex flex-wrap items-center gap-2 border-b p-3"><input type="search" className="input-field flex-1" placeholder="Buscar profissional por partes do nome, CNPJ/CPF, unidade ou número da nota" value={busca} onChange={e=>setBusca(e.target.value)}/><span className="text-xs text-gray-500">{visiveis.length} nota(s) · {formatarMoeda(visiveis.reduce((s,n)=>s+(n.valor||0),0))}</span></div>{loading?<div className="py-14 text-center text-sm text-gray-400">Carregando...</div>:visiveis.length===0?<div className="py-14 text-center"><p className="text-sm font-medium text-gray-600">Nenhuma nota encontrada.</p><p className="mt-1 text-xs text-gray-400">Limpe ou ajuste os filtros para ampliar a busca.</p></div>:<div className="overflow-x-auto"><table className="w-full"><thead><tr className="bg-gray-50"><th className="table-header">Emitente</th><th className="table-header">CPF/CNPJ</th><th className="table-header">Nota</th><th className="table-header">Emissão</th><th className="table-header">Competência</th><th className="table-header text-right">Valor</th><th className="table-header">Situação</th><th className="table-header text-right">Ações rápidas</th></tr></thead><tbody className="divide-y">{visiveis.map(n=><tr key={n.id} className="hover:bg-gray-50"><td className="table-cell font-medium">{n.emitente_nome||'—'}</td><td className="table-cell text-xs">{fmtDoc(n.documento)}</td><td className="table-cell">{n.numero||'—'}</td><td className="table-cell">{fmtData(n.data_emissao)}</td><td className="table-cell">{n.competenciaEfetiva?MESES[Number(n.competenciaEfetiva.slice(5,7))-1]+'/'+n.competenciaEfetiva.slice(0,4):'—'}</td><td className="table-cell text-right">{formatarMoeda(n.valor||0)}</td><td className="table-cell"><span className={`rounded-full px-2 py-1 text-xs ${n.conferida?'bg-green-100 text-green-700':marcadaOutroAno(n)?'bg-violet-100 text-violet-700':'bg-amber-100 text-amber-700'}`}>{n.conferida?'✓ Conferida':marcadaOutroAno(n)?'Outro ano':n.analise_manual?'Análise':'Pendente'}</span></td><td className="table-cell text-right whitespace-nowrap"><button onClick={()=>conferir(n)} className={`mr-2 rounded-md px-2 py-1 text-xs font-semibold ${n.conferida?'bg-green-100 text-green-700':'bg-slate-100 text-slate-700'}`}>{n.conferida?'✓ Conferida':'Conferir'}</button><span className="mr-2 inline-flex align-middle"><NotaPreviewDialog compacto nota={{numero:n.numero,emitente:n.emitente_nome,documento:n.documento,valor:n.valor,emissao:n.data_emissao,competencia:n.competenciaEfetiva,competenciaOficial:false,situacao:n.conferida?'Conferida':marcadaOutroAno(n)?'Outro ano':n.analise_manual?'Em análise':'Pendente',observacao:n.observacao,unidade:n.empresaNome,xmlOriginal:n.xml_original,xmlNome:n.xml_nome}}/></span><button onClick={()=>abrirEdicao(n)} className="mr-2 text-xs text-blue-700">Editar</button><button onClick={()=>outro(n)} className="mr-2 text-xs text-amber-700">Outro serviço</button>{!n.conferida&&<button onClick={()=>outroAno(n)} title="Retirar das pendências porque pertence a outro exercício" className="mr-2 text-xs font-medium text-violet-700 hover:text-violet-900">Outro ano</button>}<button onClick={()=>excluir(n)} className="text-xs text-red-600">Excluir</button></td></tr>)}</tbody></table></div>}</section>
+  {editando&&selecionada&&<section className="rounded-xl border border-blue-200 bg-white p-4 shadow-sm"><div className="mb-3 flex justify-between"><div><h2 className="font-semibold">Editar nota {selecionada.numero||''}</h2><p className="text-xs text-gray-500">A alteração será registrada no histórico e poderá desfazer vínculo incompatível.</p></div><button onClick={()=>setEditando(false)}>×</button></div><div className="grid gap-3 md:grid-cols-4"><div><label className="label-field">Emitente</label><input className="input-field" value={form.emitente_nome} onChange={e=>setForm({...form,emitente_nome:e.target.value})}/></div><div><label className="label-field">CPF/CNPJ</label><input className="input-field" value={form.documento} onChange={e=>setForm({...form,documento:e.target.value})}/></div><div><label className="label-field">Data</label><input type="date" className="input-field" value={form.data_emissao} onChange={e=>setForm({...form,data_emissao:e.target.value})}/></div><div><label className="label-field">Competência</label><input type="month" className="input-field" value={form.competencia} onChange={e=>setForm({...form,competencia:e.target.value})}/></div><div><label className="label-field">Número</label><input className="input-field" value={form.numero} onChange={e=>setForm({...form,numero:e.target.value})}/></div><div><label className="label-field">Valor</label><input className="input-field" value={form.valor} onChange={e=>setForm({...form,valor:e.target.value})}/></div><div className="md:col-span-2"><label className="label-field">Observação</label><input className="input-field" value={form.observacao} onChange={e=>setForm({...form,observacao:e.target.value})}/></div></div><div className="mt-4 flex justify-end gap-2"><button className="btn-secondary" onClick={()=>setEditando(false)}>Cancelar</button><button className="btn-primary" onClick={salvar}>Salvar alterações</button></div></section>}
+ </div></LayoutAdmin>
 }

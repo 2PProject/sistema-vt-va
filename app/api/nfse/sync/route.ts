@@ -75,13 +75,14 @@ export async function POST(req: Request) {
         empresas.push({ ...base, status: 429, houveMais: true, erro: 'O gov.br limitou as requisições (429). Aguarde ~1 minuto e clique em Sincronizar de novo (a busca continua de onde parou).', amostra }); continue
       }
 
-      // Só notas RECEBIDAS: descarta as emitidas pela própria empresa
-      // (mesma raiz de CNPJ do certificado). Mantém as de outros CNPJs/CPFs.
+      // Guarda só notas RECEBIDAS e VÁLIDAS:
+      //  - descarta valor <= 0 (canceladas / sem valor — "lixo");
+      //  - descarta emitidas pela própria empresa (mesma raiz de CNPJ);
+      //  - mantém CPFs e outros CNPJs (os profissionais).
       const raiz = (cert.cert_cnpj ?? '').replace(/\D/g, '').slice(0, 8)
       const recebidas = notas.filter((n) => {
+        if (!(Number(n.valor) > 0)) return false
         const emit = (n.prestadorDoc ?? '').replace(/\D/g, '')
-        // exclui só CNPJ de mesma raiz da empresa (nota emitida por ela mesma);
-        // CPFs e outros CNPJs (profissionais) são sempre mantidos
         return !(raiz && emit.length === 14 && emit.slice(0, 8) === raiz)
       })
       const ignoradas = notas.length - recebidas.length
@@ -93,8 +94,18 @@ export async function POST(req: Request) {
           documento: n.prestadorDoc || null, emitente_nome: n.prestadorNome || null,
           numero: n.numero || null, valor: n.valor, data_emissao: n.dataEmissao || null,
           competencia: n.competencia || null,
+          xml_original: n.xmlOriginal || null,
+          xml_nome: n.numero ? `NFS-e-${n.numero}.xml` : null,
         }))
-        const { error, count } = await admin.from('salon_notas').upsert(payload, { onConflict: 'empresa_id,nsu', count: 'exact' })
+        let gravacao = await admin.from('salon_notas').upsert(payload, { onConflict: 'empresa_id,nsu', count: 'exact' })
+        // Compatibilidade durante a migração: a baixa não para se o cache do
+        // Supabase ainda não conhecer as colunas do XML. Após a migração, o XML
+        // passa a ser preservado automaticamente.
+        if (gravacao.error && /xml_(original|nome)|schema cache/i.test(gravacao.error.message)) {
+          const payloadCompat = payload.map(({ xml_original: _xml, xml_nome: _nome, ...nota }) => nota)
+          gravacao = await admin.from('salon_notas').upsert(payloadCompat, { onConflict: 'empresa_id,nsu', count: 'exact' })
+        }
+        const { error, count } = gravacao
         if (error) {
           const dica = /salon_notas/.test(error.message) && /exist|relation|does not/.test(error.message)
             ? ' (rode supabase_salao_v2.sql no Supabase para criar a tabela salon_notas)' : ''

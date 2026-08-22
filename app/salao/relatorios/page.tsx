@@ -1,142 +1,72 @@
 'use client'
-
-import { useEffect, useState } from 'react'
+import { useCallback,useEffect,useMemo,useRef,useState } from 'react'
 import { useRouter } from 'next/navigation'
 import LayoutAdmin from '../../../components/LayoutAdmin'
-import { supabase, Empresa } from '../../../lib/supabase'
-import { formatarMoeda, MESES } from '../../../utils/calculoVT'
-import { SALAO_ENABLED, STATUS_LABEL } from '../../../lib/salao/config'
-import { listarComissoes, resumoDoMes, listarHistorico } from '../../../lib/salao/comissoes'
-import { exportarExcel, exportarPDF, type Coluna } from '../../../lib/salao/relatorios'
-import type { Comissao } from '../../../lib/salao/tipos'
+import { supabase,type Empresa } from '../../../lib/supabase'
+import { SALAO_COMPETENCIA_INICIAL, SALAO_ENABLED } from '../../../lib/salao/config'
+import { consultarConferencia,vincularNota,comissaoOperacional,comissaoConcluida,type LinhaConsulta } from '../../../lib/salao/conferencia'
+import { exportarPDF,type Coluna } from '../../../lib/salao/relatorios'
+import { formatarMoeda,MESES } from '../../../utils/calculoVT'
 
-function competenciaAtual() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}` }
-function fmtMes(m: string) { const [a, mm] = m.split('-').map(Number); return mm ? `${MESES[mm - 1]}/${a}` : m }
-function fmtDataHora(iso: string) { return iso ? new Date(iso).toLocaleString('pt-BR') : '' }
-function fmtData(iso: string | null) { if (!iso) return ''; const [a, m, d] = iso.split('-'); return `${d}/${m}/${a}` }
-
-type RelKey = 'pendencias' | 'recebidas' | 'consolidado' | 'fora_prazo' | 'historico'
-
-export default function SalaoRelatoriosPage() {
-  const router = useRouter()
-  const [empresas, setEmpresas] = useState<Empresa[]>([])
-  const [empresaId, setEmpresaId] = useState('')
-  const [mes, setMes] = useState(competenciaAtual())
-  const [busy, setBusy] = useState('')
-
-  useEffect(() => {
-    if (!SALAO_ENABLED) { router.replace('/dashboard'); return }
-    supabase.from('empresas').select('*').order('razao_social').then(({ data }) => setEmpresas(data ?? []))
-  }, [router])
-
-  async function dados(): Promise<Comissao[]> {
-    return listarComissoes({ empresaId: empresaId || undefined, mes })
-  }
-
-  async function gerar(rel: RelKey, formato: 'pdf' | 'xlsx') {
-    setBusy(rel + formato)
-    try {
-      const sufixo = `${mes}${empresaId ? '_emp' : ''}`
-      if (rel === 'pendencias') {
-        const rows = (await dados()).filter(l => l.status !== 'recebida')
-        const cols: Coluna[] = [
-          { header: 'Empresa', get: r => r.empresaNome }, { header: 'Profissional', get: r => r.profissionalNome },
-          { header: 'CPF/CNPJ', get: r => r.profissionalDoc }, { header: 'Mês', get: r => fmtMes(r.mes_ref) },
-          { header: 'Valor em aberto', get: r => formatarMoeda(r.valor_comissao) }, { header: 'Status', get: r => STATUS_LABEL[r.status as keyof typeof STATUS_LABEL] },
-        ]
-        await run(`Pendências — ${fmtMes(mes)}`, cols, rows, `pendencias_${sufixo}`, formato)
-      } else if (rel === 'recebidas') {
-        const rows = (await dados()).filter(l => l.status === 'recebida')
-        const cols: Coluna[] = [
-          { header: 'Empresa', get: r => r.empresaNome }, { header: 'Profissional', get: r => r.profissionalNome },
-          { header: 'NF Nº', get: r => r.nf_numero ?? '' }, { header: 'Data NF', get: r => fmtData(r.nf_data) },
-          { header: 'Valor NF', get: r => formatarMoeda(r.nf_valor ?? 0) }, { header: 'Origem', get: r => r.nf_origem ?? '' },
-        ]
-        await run(`Notas recebidas — ${fmtMes(mes)}`, cols, rows, `notas_recebidas_${sufixo}`, formato)
-      } else if (rel === 'fora_prazo') {
-        const rows = (await dados()).filter(l => l.status === 'fora_prazo')
-        const cols: Coluna[] = [
-          { header: 'Empresa', get: r => r.empresaNome }, { header: 'Profissional', get: r => r.profissionalNome },
-          { header: 'CPF/CNPJ', get: r => r.profissionalDoc }, { header: 'Mês', get: r => fmtMes(r.mes_ref) },
-          { header: 'Valor', get: r => formatarMoeda(r.valor_comissao) },
-        ]
-        await run(`Fora do prazo — ${fmtMes(mes)}`, cols, rows, `fora_prazo_${sufixo}`, formato)
-      } else if (rel === 'consolidado') {
-        const linhas = await dados()
-        const map = new Map<string, { empresa: string; total: number; recebido: number; qtd: number; qtdRec: number }>()
-        for (const l of linhas) {
-          const g = map.get(l.empresa_id) ?? { empresa: l.empresaNome ?? '', total: 0, recebido: 0, qtd: 0, qtdRec: 0 }
-          g.total += l.valor_comissao || 0; g.qtd++
-          if (l.status === 'recebida') { g.recebido += l.nf_valor ?? l.valor_comissao ?? 0; g.qtdRec++ }
-          map.set(l.empresa_id, g)
-        }
-        const rows = Array.from(map.values())
-        const cols: Coluna[] = [
-          { header: 'Empresa', get: r => r.empresa }, { header: 'Comissões (total)', get: r => formatarMoeda(r.total) },
-          { header: 'Recebido (NF)', get: r => formatarMoeda(r.recebido) },
-          { header: '% Conformidade', get: r => (r.qtd ? Math.round((r.qtdRec / r.qtd) * 100) : 0) + '%' },
-        ]
-        await run(`Consolidado por empresa — ${fmtMes(mes)}`, cols, rows, `consolidado_${sufixo}`, formato)
-      } else if (rel === 'historico') {
-        const rows = await listarHistorico(500)
-        const cols: Coluna[] = [
-          { header: 'Data/Hora', get: r => fmtDataHora(r.criado_em) }, { header: 'Ação', get: r => r.acao },
-          { header: 'Empresa', get: r => r.empresa }, { header: 'Profissional', get: r => r.profissional },
-          { header: 'Detalhe', get: r => r.detalhe ?? '' }, { header: 'Usuário', get: r => r.usuario ?? '' },
-        ]
-        await run('Histórico de ações', cols, rows, 'historico', formato)
-      }
-    } finally { setBusy('') }
-  }
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  async function run(titulo: string, cols: Coluna[], rows: any[], nome: string, formato: 'pdf' | 'xlsx') {
-    if (rows.length === 0) { alert('Nada para exportar neste filtro.'); return }
-    if (formato === 'pdf') await exportarPDF(titulo, cols, rows, nome)
-    else await exportarExcel(titulo, cols, rows, nome)
-  }
-
-  if (!SALAO_ENABLED) return null
-
-  const relatorios: { key: RelKey; titulo: string; desc: string }[] = [
-    { key: 'pendencias', titulo: 'Pendências do mês', desc: 'Profissionais sem NF, com valor em aberto.' },
-    { key: 'recebidas', titulo: 'Notas recebidas', desc: 'NFs confirmadas: número, data, valor.' },
-    { key: 'consolidado', titulo: 'Consolidado por empresa', desc: 'Total de comissões, recebido e % de conformidade.' },
-    { key: 'fora_prazo', titulo: 'Fora do prazo', desc: 'Quem ultrapassou o prazo de emissão.' },
-    { key: 'historico', titulo: 'Histórico', desc: 'Log completo de confirmações e substituições.' },
-  ]
-
-  return (
-    <LayoutAdmin title="Salão — Relatórios">
-      <div className="space-y-6">
-        <div className="card">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="md:col-span-2">
-              <label className="label-field">Empresa</label>
-              <select className="input-field" value={empresaId} onChange={e => setEmpresaId(e.target.value)}>
-                <option value="">Todas as empresas</option>
-                {empresas.map(e => <option key={e.id} value={e.id}>{e.apelido || e.razao_social}</option>)}
-              </select>
-            </div>
-            <div><label className="label-field">Mês de referência</label><input type="month" className="input-field" value={mes} onChange={e => setMes(e.target.value)} /></div>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {relatorios.map(r => (
-            <div key={r.key} className="card flex items-center justify-between gap-4">
-              <div>
-                <div className="font-semibold text-gray-800">{r.titulo}</div>
-                <div className="text-xs text-gray-500 mt-0.5">{r.desc}</div>
-              </div>
-              <div className="flex gap-2 shrink-0">
-                <button className="btn-secondary text-sm" onClick={() => gerar(r.key, 'pdf')} disabled={!!busy}>{busy === r.key + 'pdf' ? '...' : 'PDF'}</button>
-                <button className="btn-secondary text-sm" onClick={() => gerar(r.key, 'xlsx')} disabled={!!busy}>{busy === r.key + 'xlsx' ? '...' : 'Excel'}</button>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </LayoutAdmin>
-  )
+type Aba='todos'|'pendentes'|'conferidos'
+function mesAtual(){const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`}
+function fmtMes(m:string){const[a,mm]=m.split('-').map(Number);return mm?`${MESES[mm-1]}/${a}`:''}
+function fmtData(v:string|null){if(!v)return '—';const[a,m,d]=v.slice(0,10).split('-');return d?`${d}/${m}/${a}`:v}
+function mesesEntre(a:string,b:string){if(!a||!b)return[];const out:string[]=[];let[y,m]=a.split('-').map(Number);const[fy,fm]=b.split('-').map(Number);while(y*12+m<=fy*12+fm&&out.length<24){out.push(`${y}-${String(m).padStart(2,'0')}`);m++;if(m>12){m=1;y++}}return out}
+function periodoLabel(a:string,b:string){return a&&b?(a===b?fmtMes(a):`${fmtMes(a)} a ${fmtMes(b)}`):''}
+const concluido=comissaoConcluida
+function motivo(r:LinhaConsulta){
+ if(concluido(r))return r.situacao==='conferido_com_divergencia'?(r.observacao||'Conferido com divergência registrada'):`Conferido${r.nf_numero?` com a NF ${r.nf_numero}`:''}`
+ switch(r.situacao){
+  case'falta_cnpj':return 'CPF/CNPJ não informado no dado importado'
+  case'cnpj_invalido':return 'CPF/CNPJ inválido no dado importado'
+  case'possivel_duplicidade':return 'Possível registro duplicado na importação'
+  case'vinculo_sugerido':return 'Existe uma nota compatível aguardando confirmação'
+  case'aguardando_confirmacao':return 'Existe uma possível nota para revisar'
+  case'nota_outra_empresa':return 'Nota localizada em outra unidade'
+  case'divergencia_valor':return 'Valor da nota diferente do valor importado'
+  default:return 'Nota não localizada para este profissional no período'
+ }
 }
+async function buscarTudo(competencia:string,empresaId:string){
+ const filtros={competencia,empresaId:empresaId||undefined}
+ const primeiro=await consultarConferencia(filtros,{campo:'nome',dir:'asc'},1,500)
+ const paginas=Math.ceil(primeiro.total/500)
+ if(paginas<=1)return primeiro.linhas
+ const demais=await Promise.all(Array.from({length:paginas-1},(_,i)=>consultarConferencia(filtros,{campo:'nome',dir:'asc'},i+2,500)))
+ return [...primeiro.linhas,...demais.flatMap(x=>x.linhas)]
+}
+
+export default function RelatoriosPage(){
+ const router=useRouter();const[inicio,setInicio]=useState(SALAO_COMPETENCIA_INICIAL);const[fim,setFim]=useState(mesAtual());const[empresaId,setEmpresaId]=useState('');const[profissional,setProfissional]=useState('');const[empresas,setEmpresas]=useState<Empresa[]>([]);const[linhas,setLinhas]=useState<LinhaConsulta[]>([]);const[aba,setAba]=useState<Aba>('pendentes');const[busca,setBusca]=useState('');const[loading,setLoading]=useState(false);const[erro,setErro]=useState('');const[proSel,setProSel]=useState<LinhaConsulta|null>(null);const[notaSel,setNotaSel]=useState<LinhaConsulta|null>(null);const[vinculando,setVinculando]=useState(false);const req=useRef(0)
+ useEffect(()=>{if(!SALAO_ENABLED){router.replace('/dashboard');return}supabase.from('empresas').select('*').order('razao_social').then(({data})=>setEmpresas(data||[]))},[router])
+ const carregar=useCallback(async()=>{const id=++req.current;if(!inicio||!fim){setLinhas([]);setLoading(false);return}setLoading(true);setErro('');try{const meses=mesesEntre(inicio,fim);const dados=await Promise.all(meses.map(m=>buscarTudo(m,empresaId)));if(id===req.current)setLinhas(dados.flat())}catch(e){if(id===req.current)setErro(e instanceof Error?e.message:'Erro ao consultar o período.')}finally{if(id===req.current)setLoading(false)}},[inicio,fim,empresaId])
+ useEffect(()=>{if(SALAO_ENABLED)carregar()},[carregar])
+ const profissionais=useMemo(()=>linhas.filter(comissaoOperacional),[linhas])
+ const profissionaisSituacao=useMemo(()=>profissionais.filter(r=>aba==='todos'||(aba==='pendentes'?!concluido(r):concluido(r))),[profissionais,aba])
+ const nomes=useMemo(()=>Array.from(new Set(profissionaisSituacao.map(r=>r.nome||'').filter(Boolean))).sort((a,b)=>a.localeCompare(b,'pt-BR')),[profissionaisSituacao])
+ useEffect(()=>{if(profissional&&!nomes.includes(profissional))setProfissional('')},[nomes,profissional])
+ const notasLivres=useMemo(()=>{const m=new Map<string,LinhaConsulta>();for(const r of linhas){if(r.tipo!=='nota'||r.analise_manual||r.situacao!=='nota_sem_vinculo')continue;const k=r.nf_numero&&r.nf_data?`${r.empresa_id}|${r.nf_numero}|${r.nf_data}|${Number(r.nf_valor||0).toFixed(2)}`:r.id;if(!m.has(k))m.set(k,r)}return[...m.values()].sort((a,b)=>String(a.nome||'').localeCompare(String(b.nome||''),'pt-BR'))},[linhas])
+ const profissionaisIndicadores=useMemo(()=>profissionais.filter(r=>!profissional||r.nome===profissional),[profissionais,profissional]);const conferidos=profissionaisIndicadores.filter(concluido).length,pendentes=profissionaisIndicadores.length-conferidos,valorCompetencia=profissionaisIndicadores.reduce((s,r)=>s+Number(r.valor_comissao||0),0)
+ function competenciaOficialNota(n:LinhaConsulta){const doc=String(n.documento||'').replace(/\D/g,'');const nome=String(n.nome||'').toLocaleLowerCase('pt-BR');const refs=profissionais.filter(p=>!concluido(p)&&((doc&&String(p.documento||'').replace(/\D/g,'')===doc)||String(p.nome||'').toLocaleLowerCase('pt-BR')===nome));const comps=Array.from(new Set(refs.map(p=>p.mes_ref).filter(Boolean)));return comps.length===1?comps[0]:''}
+ const exibidos=useMemo(()=>profissionaisSituacao.filter(r=>{if(profissional&&r.nome!==profissional)return false;if(busca&&!String(r.nome||'').toLocaleLowerCase('pt-BR').includes(busca.toLocaleLowerCase('pt-BR')))return false;return true}).sort((a,b)=>String(a.nome||'').localeCompare(String(b.nome||''),'pt-BR')),[profissionaisSituacao,profissional,busca])
+ const notasExibidas=useMemo(()=>{if(aba==='conferidos')return[];const pend=profissionais.filter(r=>!concluido(r));const relevantes=notasLivres.filter(n=>{const doc=String(n.documento||'').replace(/\D/g,'');const refs=pend.filter(p=>doc&&String(p.documento||'').replace(/\D/g,'')===doc);if(!refs.length)return false;const exata=refs.some(p=>Math.abs(Number(p.valor_comissao||0)-Number(n.nf_valor||0))<0.01);const noPeriodo=!!n.mes_ref&&n.mes_ref>=inicio&&n.mes_ref<=fim;return exata||noPeriodo});if(!profissional)return relevantes;const refs=pend.filter(r=>r.nome===profissional);const docs=new Set(refs.map(r=>String(r.documento||'').replace(/\D/g,'')).filter(Boolean));const nome=profissional.toLocaleLowerCase('pt-BR');return relevantes.filter(r=>docs.has(String(r.documento||'').replace(/\D/g,''))||String(r.nome||'').toLocaleLowerCase('pt-BR').includes(nome))},[notasLivres,profissionais,profissional,aba,inicio,fim])
+ async function pdfPendencias(){const pro=profissionais.filter(r=>!concluido(r)&&(profissional?r.nome===profissional:true));const rows=[...pro.map(r=>({cnpj:r.documento||'',nome:r.nome||'',competencia:r.mes_ref,valorCompetencia:Number(r.valor_comissao||0),valorNota:r.nf_valor==null?null:Number(r.nf_valor),diferenca:r.nf_valor==null?null:Number(r.nf_valor)-Number(r.valor_comissao||0)})),...notasExibidas.map(r=>({cnpj:r.documento||'',nome:r.nome||'',competencia:competenciaOficialNota(r),valorCompetencia:null,valorNota:Number(r.nf_valor||0),diferenca:null}))];if(!rows.length)return;const cols:Coluna[]=[{header:'CNPJ / CPF',get:r=>r.cnpj},{header:'Nome',get:r=>r.nome},{header:'Competência',get:r=>fmtMes(r.competencia)},{header:'Valor da competência',get:r=>r.valorCompetencia==null?'—':formatarMoeda(r.valorCompetencia)},{header:'Valor da nota',get:r=>r.valorNota==null?'Sem nota':formatarMoeda(r.valorNota)},{header:'Diferença',get:r=>r.diferenca==null?'—':formatarMoeda(r.diferenca)}];await exportarPDF(`Pendências de notas — ${periodoLabel(inicio,fim)}`,cols,rows,`pendencias_notas_${inicio}_${fim}`,{orientation:'portrait'})}
+ async function vincularRelatorio(){if(!proSel||!notaSel||vinculando)return;if(proSel.empresa_id!==notaSel.empresa_id){setErro('Nota e profissional pertencem a unidades diferentes.');return}setVinculando(true);setErro('');const r=await vincularNota(proSel.id,{id:notaSel.id,numero:notaSel.nf_numero,valor:notaSel.nf_valor,data_emissao:notaSel.nf_data});setVinculando(false);if(!r.ok){setErro(r.erro||'Não foi possível vincular.');return}setProSel(null);setNotaSel(null);await carregar()}
+ function limparSelecao(){setProSel(null);setNotaSel(null)}
+ function limpar(){req.current++;setInicio('');setFim('');setEmpresaId('');setProfissional('');setBusca('');setAba('pendentes');setLinhas([]);setProSel(null);setNotaSel(null);setErro('');setLoading(false)}
+ if(!SALAO_ENABLED)return null
+ return <LayoutAdmin title="Salão — Relatório de conferência"><div className="space-y-3">
+  {erro&&<div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{erro}</div>}
+  <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"><div className="border-b border-slate-100 bg-gradient-to-r from-slate-950 to-slate-800 px-4 py-4 text-white"><h1 className="text-base font-semibold">Relatório de conferência</h1><p className="mt-1 text-xs text-slate-300">Profissionais pendentes, conferidos e notas ainda sem vínculo.</p></div><div className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-[150px_150px_1fr_1fr_190px_auto]"><div><label className="label-field">Mês inicial</label><input type="month" min={SALAO_COMPETENCIA_INICIAL} className="input-field" value={inicio} onChange={e=>{setInicio(e.target.value);if(fim&&e.target.value>fim)setFim(e.target.value)}}/></div><div><label className="label-field">Mês final</label><input type="month" className="input-field" min={inicio>SALAO_COMPETENCIA_INICIAL?inicio:SALAO_COMPETENCIA_INICIAL} value={fim} onChange={e=>setFim(e.target.value)}/></div><div><label className="label-field">Unidade</label><select className="input-field" value={empresaId} onChange={e=>setEmpresaId(e.target.value)}><option value="">Todas as unidades</option>{empresas.map(e=><option key={e.id} value={e.id}>{e.apelido||e.razao_social}</option>)}</select></div><div><label className="label-field">Profissional</label><select className="input-field" value={profissional} onChange={e=>setProfissional(e.target.value)}><option value="">Todos os profissionais</option>{nomes.map(n=><option key={n}>{n}</option>)}</select></div><div><label className="label-field">Situação</label><select className="input-field" value={aba} onChange={e=>setAba(e.target.value as Aba)}><option value="todos">Todos</option><option value="pendentes">Pendentes</option><option value="conferidos">Conferidos</option></select></div><div className="flex items-end gap-2"><button className="btn-secondary text-sm" onClick={limpar}>Limpar</button><button className="btn-primary whitespace-nowrap text-sm print:hidden" disabled={!inicio||!fim||pendentes+notasLivres.length===0} onClick={pdfPendencias}>PDF pendências</button></div></div>{loading&&linhas.length>0&&<div className="border-t border-blue-100 bg-blue-50 px-4 py-2 text-xs font-medium text-blue-700">Atualizando o período em segundo plano…</div>}</section>
+  <section className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4"><Kpi label="Profissionais no filtro" valor={profissionaisIndicadores.length}/><Kpi label="Valor da competência" valor={formatarMoeda(valorCompetencia)}/><Kpi label="Pendentes de providência" valor={pendentes} tom="amber"/><Kpi label="Conferidos" valor={conferidos} tom="green"/></section>
+  {(proSel||notaSel)&&<section className="flex flex-wrap items-center gap-3 rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm"><span className="mr-auto"><b>Vínculo pelo relatório:</b> {proSel?(proSel.nome||'Profissional selecionado'):'selecione o profissional'} ↔ {notaSel?`NF ${notaSel.nf_numero||'—'} · ${formatarMoeda(notaSel.nf_valor||0)}`:'selecione a nota'}{proSel&&notaSel&&<small className="ml-2 text-slate-600">Diferença {formatarMoeda(Number(notaSel.nf_valor||0)-Number(proSel.valor_comissao||0))}{String(proSel.documento||'').replace(/\D/g,'')!==String(notaSel.documento||'').replace(/\D/g,'')?' · CNPJ/CPF divergente (será registrado)':''}</small>}</span><button className="btn-secondary" onClick={limparSelecao}>Cancelar</button><button className="btn-primary" disabled={!proSel||!notaSel||vinculando} onClick={vincularRelatorio}>{vinculando?'Vinculando…':'Vincular e conferir'}</button></section>}
+  {!inicio||!fim?<Vazio titulo="Informe o período" texto="Escolha o mês inicial e o mês final para montar o relatório."/>:<div className="grid gap-3 xl:grid-cols-2">
+   <section className="overflow-hidden rounded-xl border bg-white shadow-sm"><div className="border-b p-3"><div className="flex flex-wrap items-center justify-between gap-2"><div><h2 className="font-semibold">Profissionais importados</h2><p className="text-xs text-slate-500">{periodoLabel(inicio,fim)} · {exibidos.length} registro(s)</p></div><span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600">{aba==='todos'?'Todos':aba==='pendentes'?'Pendentes':'Conferidos'}</span></div><input className="input-field mt-3" placeholder="Buscar profissional" value={busca} onChange={e=>setBusca(e.target.value)}/></div>{loading&&linhas.length===0?<Carregando/>:exibidos.length===0?<Vazio titulo="Nenhum profissional nesta situação" texto="Altere a aba ou confira a unidade selecionada."/>:<div className="max-h-[560px] overflow-auto divide-y">{exibidos.map(r=><article key={r.id} className={`p-3 ${proSel?.id===r.id?'bg-blue-50 ring-1 ring-inset ring-blue-300':''}`}><div className="flex items-start justify-between gap-3"><div><b className="text-sm text-slate-900">{r.nome||'Profissional não identificado'}</b><p className="text-xs text-slate-500">{r.documento||'Documento não informado'} · {r.empresaNome}</p></div><span className={`rounded-full px-2 py-1 text-[11px] font-semibold ${concluido(r)?'bg-emerald-100 text-emerald-700':'bg-amber-100 text-amber-800'}`}>{concluido(r)?'Conferido':'Pendente'}</span></div><div className="mt-2 grid gap-2 rounded-lg bg-slate-50 p-2 text-xs sm:grid-cols-2 xl:grid-cols-6"><span><b>Valor da competência:</b> {formatarMoeda(r.valor_comissao||0)}</span><span><b>Valor da nota:</b> {r.nf_valor==null?'Sem nota vinculada':formatarMoeda(r.nf_valor)}</span><span><b>Diferença:</b> {r.nf_valor==null?'—':formatarMoeda(Number(r.nf_valor)-Number(r.valor_comissao||0))}</span><span><b>Competência oficial:</b> {fmtMes(r.mes_ref)}</span><span><b>Nota:</b> {r.nf_numero||'—'}</span><span><b>Emissão:</b> {fmtData(r.nf_data)}</span></div><p className={`mt-2 text-xs ${concluido(r)?'text-emerald-700':'font-medium text-amber-800'}`}><b>{concluido(r)?'Resultado:':'Motivo:'}</b> {motivo(r)}</p>{!concluido(r)&&<div className="mt-2 text-right"><button className="rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-50" onClick={()=>setProSel(r)}>{proSel?.id===r.id?'✓ Profissional selecionado':'Selecionar para vincular'}</button></div>}</article>)}</div>}</section>
+   <section className="overflow-hidden rounded-xl border bg-white shadow-sm"><div className="border-b p-3"><h2 className="font-semibold">Notas sem vínculo</h2><p className="text-xs text-slate-500">{periodoLabel(inicio,fim)} · {notasExibidas.length} nota(s)</p></div>{loading&&linhas.length===0?<Carregando/>:notasExibidas.length===0?<Vazio titulo="Nenhuma nota sem vínculo" texto="Todas as notas do recorte estão tratadas."/>:<div className="max-h-[620px] overflow-auto divide-y">{notasExibidas.map(r=><article key={r.id} className={`p-3 ${notaSel?.id===r.id?'bg-blue-50 ring-1 ring-inset ring-blue-300':''}`}><div className="flex justify-between gap-2"><b className="text-sm">{r.nome||'Emitente não identificado'}</b><b className="text-sm">{formatarMoeda(r.nf_valor||0)}</b></div><p className="mt-1 text-xs text-slate-500">{r.documento||'Documento não informado'} · NF {r.nf_numero||'—'}</p><div className="mt-2 grid grid-cols-2 gap-2 rounded-lg bg-slate-50 p-2 text-xs"><span><b>Valor da competência:</b> {competenciaOficialNota(r)?'Aguardando vínculo':'Não identificado'}</span><span><b>Valor da nota:</b> {formatarMoeda(r.nf_valor||0)}</span></div><p className="mt-2 text-xs text-amber-800"><b>Motivo:</b> nenhum profissional importado foi vinculado a esta nota.</p><p className="mt-1 text-[11px] text-slate-400">Competência oficial {competenciaOficialNota(r)?fmtMes(competenciaOficialNota(r)):'a definir no vínculo'} · competência informada na nota {fmtMes(r.mes_ref)} · emissão {fmtData(r.nf_data)} · {r.empresaNome}</p><div className="mt-2 text-right"><button className="rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-50" onClick={()=>setNotaSel(r)}>{notaSel?.id===r.id?'✓ Nota selecionada':'Selecionar para vincular'}</button></div></article>)}</div>}</section>
+  </div>}
+ </div></LayoutAdmin>
+}
+function Kpi({label,valor,tom='slate'}:{label:string;valor:number|string;tom?:'slate'|'amber'|'green'}){const cor={slate:'text-slate-900',amber:'text-amber-700',green:'text-emerald-700'}[tom];return <div className="rounded-xl border bg-white p-3 shadow-sm"><span className="text-xs text-slate-500">{label}</span><b className={`block text-2xl ${cor}`}>{valor}</b></div>}
+function Vazio({titulo,texto}:{titulo:string;texto:string}){return <div className="rounded-xl border border-dashed bg-white px-4 py-12 text-center"><p className="text-sm font-medium text-slate-600">{titulo}</p><p className="mt-1 text-xs text-slate-400">{texto}</p></div>}
+function Carregando(){return <div className="py-14 text-center text-sm text-slate-400">Carregando período…</div>}
