@@ -227,12 +227,23 @@ export async function consultarADN(params: { agent: https.Agent; cnpj: string; u
     let data: unknown = null
     try { data = JSON.parse(r.corpo || 'null') } catch { throw new Error(`Resposta do ADN não é JSON. Início: ${(r.corpo || '').slice(0, 200)}`) }
     const lote: unknown[] = pick(data, 'LoteDFe', 'loteDFe', 'documentos', 'DFe') ?? []
-    if (!Array.isArray(lote) || lote.length === 0) break
-    for (const item of lote) { const r = itemParaNota(item); if (r.nota) notas.push(r.nota); else if (r.cancelaChave) cancelamentos.push(r.cancelaChave) }
-    const maxNsu = lote.reduce((mx: number, it) => Math.max(mx, Number(pick(it, 'NSU', 'nsu') ?? 0)), nsu)
+    // Cursor autoritativo do gov.br, quando presente (mais confiável que a
+    // heurística de página cheia). ultNSU = último NSU da resposta;
+    // maxNSU = maior NSU disponível na base.
+    const ultNSU = Number(pick(data, 'ultNSU', 'ultimoNSU', 'ultimoNsu') ?? 0)
+    const maxNSU = Number(pick(data, 'maxNSU', 'maxNsu') ?? 0)
+    if (!Array.isArray(lote) || lote.length === 0) {
+      if (ultNSU > nsu) nsu = ultNSU        // avança sobre páginas só de eventos/sem notas
+      if (maxNSU > nsu) houveMais = true    // ainda há documentos além
+      break
+    }
+    for (const item of lote) { const it = itemParaNota(item); if (it.nota) notas.push(it.nota); else if (it.cancelaChave) cancelamentos.push(it.cancelaChave) }
+    const maxNsu = Math.max(ultNSU, lote.reduce((mx: number, it) => Math.max(mx, Number(pick(it, 'NSU', 'nsu') ?? 0)), nsu))
     if (maxNsu <= nsu) break                // não avançou → fim
     nsu = maxNsu
-    if (lote.length < 50) break             // último lote parcial → acabou
+    // Ainda há mais? Prefere o maxNSU do gov.br; sem ele, heurística de página cheia (50).
+    const temMais = maxNSU > 0 ? maxNSU > nsu : lote.length >= 50
+    if (!temMais) break                     // último lote → acabou
     if (i === maxPaginas - 1) houveMais = true   // parou no limite do lote; ainda há mais
   }
   return { notas, ultimoNsu: nsu, status, amostra, paginas, houveMais, rateLimited, cancelamentos: Array.from(new Set(cancelamentos)) }
