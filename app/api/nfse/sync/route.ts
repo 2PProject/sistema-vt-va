@@ -19,6 +19,7 @@ type DiagEmpresa = {
   ignoradas?: number
   canceladas?: number
   ultimoNsu?: number
+  maxNsu?: number
   houveMais?: boolean
   erro?: string
   amostra?: string
@@ -70,7 +71,7 @@ export async function POST(req: Request) {
       const ultimoNsu = reset ? 0 : (syncRow?.ultimo_nsu ?? 0)
 
       const agent = agenteMTLS(cert.cert_pfx_b64, senha)
-      const { notas, ultimoNsu: novoNsu, status, amostra, houveMais, rateLimited, cancelamentos } = await consultarADN({ agent, cnpj: cert.cert_cnpj ?? '', ultimoNsu })
+      const { notas, ultimoNsu: novoNsu, status, amostra, houveMais, rateLimited, cancelamentos, maxNsuDisponivel } = await consultarADN({ agent, cnpj: cert.cert_cnpj ?? '', ultimoNsu })
 
       if (rateLimited && notas.length === 0) {
         empresas.push({ ...base, status: 429, houveMais: true, erro: 'O gov.br limitou as requisições (429). Aguarde ~1 minuto e clique em Sincronizar de novo (a busca continua de onde parou).', amostra }); continue
@@ -147,7 +148,7 @@ export async function POST(req: Request) {
       await admin.from('salon_nfse_sync').upsert({ empresa_id: cert.empresa_id, ultimo_nsu: novoNsu, ultima_sync: new Date().toISOString() })
       notasEncontradas += notas.length
       registrosAtualizados += gravadas
-      empresas.push({ ...base, ok: true, status, encontradas: notas.length, gravadas, ignoradas, canceladas: canceladas + canceladasMarcadas, ultimoNsu: novoNsu, houveMais: houveMais || rateLimited, amostra })
+      empresas.push({ ...base, ok: true, status, encontradas: notas.length, gravadas, ignoradas, canceladas: canceladas + canceladasMarcadas, ultimoNsu: novoNsu, maxNsu: maxNsuDisponivel || undefined, houveMais: houveMais || rateLimited, amostra })
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       const amigavel =

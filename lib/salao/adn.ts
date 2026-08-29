@@ -26,6 +26,7 @@ export type ResultadoADN = {
   houveMais: boolean  // parou no limite do lote (há mais para buscar)
   rateLimited: boolean// gov.br respondeu 429 (excesso de requisições)
   cancelamentos: string[] // chaves de NFS-e CANCELADAS (eventos de cancelamento no lote)
+  maxNsuDisponivel: number // maior NSU disponível na base do gov.br (0 se não informado)
 }
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
@@ -208,7 +209,7 @@ export async function consultarADN(params: { agent: https.Agent; cnpj: string; u
   let nsu = params.ultimoNsu
   const notas: NotaADN[] = []
   const cancelamentos: string[] = []
-  let status = 0, amostra = '', paginas = 0, houveMais = false, rateLimited = false
+  let status = 0, amostra = '', paginas = 0, houveMais = false, rateLimited = false, maxNsuDisponivel = 0
 
   for (let i = 0; i < maxPaginas; i++) {
     if (i > 0) await sleep(500)             // throttle: espaça as chamadas (evita 429)
@@ -232,6 +233,7 @@ export async function consultarADN(params: { agent: https.Agent; cnpj: string; u
     // maxNSU = maior NSU disponível na base.
     const ultNSU = Number(pick(data, 'ultNSU', 'ultimoNSU', 'ultimoNsu') ?? 0)
     const maxNSU = Number(pick(data, 'maxNSU', 'maxNsu') ?? 0)
+    if (maxNSU > maxNsuDisponivel) maxNsuDisponivel = maxNSU
     if (!Array.isArray(lote) || lote.length === 0) {
       if (ultNSU > nsu) nsu = ultNSU        // avança sobre páginas só de eventos/sem notas
       if (maxNSU > nsu) houveMais = true    // ainda há documentos além
@@ -246,5 +248,5 @@ export async function consultarADN(params: { agent: https.Agent; cnpj: string; u
     if (!temMais) break                     // último lote → acabou
     if (i === maxPaginas - 1) houveMais = true   // parou no limite do lote; ainda há mais
   }
-  return { notas, ultimoNsu: nsu, status, amostra, paginas, houveMais, rateLimited, cancelamentos: Array.from(new Set(cancelamentos)) }
+  return { notas, ultimoNsu: nsu, status, amostra, paginas, houveMais, rateLimited, cancelamentos: Array.from(new Set(cancelamentos)), maxNsuDisponivel }
 }
