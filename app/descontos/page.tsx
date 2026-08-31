@@ -153,6 +153,14 @@ export default function DescontosPage() {
 
   useEffect(() => { listarFechamentos(pagMes, pagAno).then(setFechadosMap) }, [pagMes, pagAno])
 
+  // Ao trocar de mês/ano dentro do formulário (navegação ◀▶ ou botão "Lançar no
+  // mês da data"), recarrega o detalhe do funcionário para a competência certa —
+  // é o que permite lançar férias/afastamento futuro no mês em que ocorrem.
+  useEffect(() => {
+    if (view === 'form' && selecionado) { setLoadingForm(true); buscarDados(selecionado).finally(() => setLoadingForm(false)) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mes, ano])
+
   // Bulk feriado view
   const [feriadosBulk, setFeriadosBulk] = useState<Array<{ data: string; descricao: string }>>([])
   const [feriadoAtivo, setFeriadoAtivo] = useState<{ data: string; descricao: string } | null>(null)
@@ -399,6 +407,12 @@ export default function DescontosPage() {
 
     setCfCarregado({ cfId, competenciaId, feriados, valorVA, valorVT, valorVTSabado, diasSabado })
     setDescontos(descontosCarregados)
+    // Se já havia uma data no formulário (ex.: veio do botão "Lançar no mês da
+    // data"), recalcula os dias para a NOVA competência carregada.
+    if (novaDataInicio) {
+      const { diasCorrente, diasProximo } = calcularDiasComCarryOver(novaDataInicio, novaDataFim || novaDataInicio, mes, ano, func.folga_semanal, feriados)
+      setNovoDias(diasCorrente || 1); setNovoDiasProximo(diasProximo)
+    }
   }
 
   // ─── Voltar para lista ───────────────────────────────────────────────────────
@@ -1194,8 +1208,9 @@ export default function DescontosPage() {
                 {novaDataInicio && (() => {
                   const [dAno, dMes] = novaDataInicio.split('-').map(Number)
                   return (dAno !== ano || dMes !== mes) ? (
-                    <div className="bg-amber-50 border border-amber-200 text-amber-800 text-xs px-3 py-2 rounded-lg mb-3">
-                      ⚠ A data informada é de <strong>{MESES[dMes - 1]}/{dAno}</strong>. O desconto de <strong>{novoDias} dia(s)</strong> será deduzido do VT de <strong>{MESES[mes - 1]}/{ano}</strong>.
+                    <div className="bg-amber-50 border border-amber-200 text-amber-800 text-xs px-3 py-2.5 rounded-lg mb-3 space-y-2">
+                      <p>⚠ A data é de <strong>{MESES[dMes - 1]}/{dAno}</strong>, mas a competência aberta é <strong>{MESES[mes - 1]}/{ano}</strong>. Para lançar férias/afastamento futuro, registre na competência do próprio período (assim não fica travado pelo fechamento de meses anteriores):</p>
+                      <button type="button" onClick={() => { setAno(dAno); setMes(dMes) }} className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-amber-500">📅 Lançar em {MESES[dMes - 1]}/{dAno}</button>
                     </div>
                   ) : null
                 })()}
