@@ -1216,9 +1216,8 @@ export default function DescontosPage() {
                 {novaDataInicio && (() => {
                   const [dAno, dMes] = novaDataInicio.split('-').map(Number)
                   return (dAno !== ano || dMes !== mes) ? (
-                    <div className="bg-amber-50 border border-amber-200 text-amber-800 text-xs px-3 py-2.5 rounded-lg mb-3 space-y-2">
-                      <p>⚠ A data é de <strong>{MESES[dMes - 1]}/{dAno}</strong>, mas a competência aberta é <strong>{MESES[mes - 1]}/{ano}</strong>. Para lançar férias/afastamento futuro, registre na competência do próprio período (assim não fica travado pelo fechamento de meses anteriores):</p>
-                      <button type="button" onClick={() => { setAno(dAno); setMes(dMes) }} className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-amber-500">📅 Lançar em {MESES[dMes - 1]}/{dAno}</button>
+                    <div className="bg-amber-50 border border-amber-200 text-amber-800 text-xs px-3 py-2.5 rounded-lg mb-3">
+                      ⚠ A data é de <strong>{MESES[dMes - 1]}/{dAno}</strong>, mas a competência aberta é <strong>{MESES[mes - 1]}/{ano}</strong>. Estas férias pertencem a <strong>{MESES[dMes - 1]}/{dAno}</strong> — use o botão <strong>&quot;Lançar em {MESES[dMes - 1]}/{dAno}&quot;</strong> abaixo para registrar no mês certo (sem trava do fechamento anterior).
                     </div>
                   ) : null
                 })()}
@@ -1271,16 +1270,25 @@ export default function DescontosPage() {
                       </div>
                     )}
 
-                    <button
-                      onClick={adicionarDesconto}
-                      disabled={!novoTipoId || novoDias < 1}
-                      className="btn-secondary w-full flex items-center justify-center gap-2"
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                      </svg>
-                      Adicionar à lista
-                    </button>
+                    {(() => {
+                      const foraDoMes = (() => { if (!novaDataInicio) return false; const [y, m] = novaDataInicio.split('-').map(Number); return y !== ano || m !== mes })()
+                      if (foraDoMes) {
+                        const [y, m] = novaDataInicio.split('-').map(Number)
+                        return (
+                          <button type="button" onClick={() => { setAno(y); setMes(m) }} className="w-full flex items-center justify-center gap-2 rounded-lg bg-amber-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-amber-500">
+                            📅 Lançar em {MESES[m - 1]}/{y}
+                          </button>
+                        )
+                      }
+                      return (
+                        <button onClick={adicionarDesconto} disabled={!novoTipoId || novoDias < 1} className="btn-secondary w-full flex items-center justify-center gap-2">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                          </svg>
+                          Adicionar à lista
+                        </button>
+                      )
+                    })()}
                   </div>
                 )}
               </div>
