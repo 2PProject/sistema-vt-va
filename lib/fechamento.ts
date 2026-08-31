@@ -112,6 +112,7 @@ export async function consolidarFechamento(params: {
   const vaMap = new Map<string, number>()                        // empresa_id -> valor_va do mês
   const descMap = new Map<string, DescontoRecibo[]>()            // cf_id -> descontos
   const acrescMap = new Map<string, DescontoRecibo[]>()          // cf_id -> acréscimos
+  const carryMap = new Map<string, number>()                     // funcionario_id -> dias que transbordaram do mês anterior
 
   await Promise.all(empresasParaBuscar.map(async (empId) => {
     const unidadeId = await getOrCreateDefaultUnidade(empId)
@@ -142,6 +143,26 @@ export async function consolidarFechamento(params: {
         const arr = bucket.get(d.competencia_funcionario_id) ?? []
         arr.push(item)
         bucket.set(d.competencia_funcionario_id, arr)
+      }
+    }
+    // Carry-over para vtvaMes: descontos do MÊS ANTERIOR a vtvaMes com
+    // dias_proximo_mes > 0 abatem o VT/VA de vtvaMes.
+    const cMes = vtvaMes === 1 ? 12 : vtvaMes - 1
+    const cAno = vtvaMes === 1 ? vtvaAno - 1 : vtvaAno
+    const { data: cComp } = await supabase.from('competencias').select('id')
+      .eq('unidade_id', unidadeId).eq('mes', cMes).eq('ano', cAno).limit(1).maybeSingle()
+    if (cComp) {
+      const { data: cCfs } = await supabase.from('competencia_funcionario').select('id, funcionario_id')
+        .eq('competencia_id', (cComp as { id: string }).id)
+      const cByCf = new Map<string, string>(); const cCfIds: string[] = []
+      ;(cCfs ?? []).forEach((c: { id: string; funcionario_id: string }) => { cByCf.set(c.id, c.funcionario_id); cCfIds.push(c.id) })
+      if (cCfIds.length) {
+        const { data: cDesc } = await supabase.from('competencia_funcionario_desconto')
+          .select('competencia_funcionario_id, dias_proximo_mes').in('competencia_funcionario_id', cCfIds).gt('dias_proximo_mes', 0)
+        for (const d of cDesc ?? []) {
+          const fid = cByCf.get(d.competencia_funcionario_id); if (!fid) continue
+          carryMap.set(fid, (carryMap.get(fid) ?? 0) + Number(d.dias_proximo_mes || 0))
+        }
       }
     }
   }))
@@ -194,14 +215,19 @@ export async function consolidarFechamento(params: {
       const ehExcecao = valorVTSabadoBase > 0
       const valorVT = cf?.valor_vt ?? (func.valor_vt || fbVT?.valor_vt || 0)
       const valorVTSabado = ehExcecao ? valorVTSabadoBase : 0
-      const descontos = cf ? (descMap.get(cf.id) ?? []) : []
+      const descontosProprios = cf ? (descMap.get(cf.id) ?? []) : []
       const acrescimos = cf ? (acrescMap.get(cf.id) ?? []) : []
-      const diasSabado = ehExcecao ? calcularSabadosTrabalhados(vtvaMes, vtvaAno, func.data_admissao, func.data_fim_aviso, feriadosDatas, descontos) : 0
+      const carry = carryMap.get(func.id) ?? 0
+      const descontos = carry > 0
+        ? [...descontosProprios, { tipo_nome: 'Férias/afastamento (do mês anterior)', dias: carry, data_inicio: null, data_fim: null }]
+        : descontosProprios
+      const diasSabado = ehExcecao ? calcularSabadosTrabalhados(vtvaMes, vtvaAno, func.data_admissao, func.data_fim_aviso, feriadosDatas, descontosProprios) : 0
       const valorVA = resolverValorVA(func.valor_va, vaMap.get(func.empresa_id) ?? emp?.valor_va ?? 0)
       const diasUteisAuto = calcularDiasUteisAuto(vtvaMes, vtvaAno, func.folga_semanal, feriadosDatas, func.data_admissao, func.data_fim_aviso)
+      const diasProprios = descontosProprios.reduce((s, d) => s + (d.dias || 0), 0) - acrescimos.reduce((s, d) => s + (d.dias || 0), 0)
       const resultado = calcularVTVA({
         diasUteis: diasUteisAuto, diasFeriado: 0, diasSabado,
-        diasDesconto: cf?.dias_desconto ?? 0, valorVT, valorVTSabado, valorVA,
+        diasDesconto: Math.max(0, diasProprios) + carry, valorVT, valorVTSabado, valorVA,
       })
       vtvaTotal = resultado.valorTotal
       reciboVTVA = {
@@ -411,6 +437,9 @@ export async function listarRecibosVTVA(params: {
   const vaMap = new Map<string, number>()
   const descMap = new Map<string, DescontoRecibo[]>()
   const acrescMap = new Map<string, DescontoRecibo[]>()
+  // Carry-over: dias que transbordaram do MÊS ANTERIOR para este mês
+  // (férias/afastamento que caem neste mês). Devem abater o VT/VA daqui.
+  const carryMap = new Map<string, number>()
   await Promise.all(empresasParaBuscar.map(async (empId) => {
     const unidadeId = await getOrCreateDefaultUnidade(empId)
     vaMap.set(empId, (empMap.get(empId)?.valor_va || 0) || (unidadeId ? (fallback.vaUnidade.get(unidadeId) ?? 0) : 0))
@@ -437,6 +466,28 @@ export async function listarRecibosVTVA(params: {
         const arr = bucket.get(d.competencia_funcionario_id) ?? []; arr.push(item); bucket.set(d.competencia_funcionario_id, arr)
       }
     }
+    // Carry-over do MÊS ANTERIOR: descontos com dias_proximo_mes > 0 abatem ESTE mês.
+    const pMes = mes === 1 ? 12 : mes - 1
+    const pAno = mes === 1 ? ano - 1 : ano
+    const { data: pComp } = await supabase.from('competencias').select('id')
+      .eq('unidade_id', unidadeId).eq('mes', pMes).eq('ano', pAno).limit(1).maybeSingle()
+    if (pComp) {
+      const { data: pCfs } = await supabase.from('competencia_funcionario').select('id, funcionario_id')
+        .eq('competencia_id', (pComp as { id: string }).id)
+      const pByCf = new Map<string, string>()
+      const pCfIds: string[] = []
+      ;(pCfs ?? []).forEach((c: { id: string; funcionario_id: string }) => { pByCf.set(c.id, c.funcionario_id); pCfIds.push(c.id) })
+      if (pCfIds.length) {
+        const { data: pDesc } = await supabase.from('competencia_funcionario_desconto')
+          .select('competencia_funcionario_id, dias_proximo_mes, tipos_desconto(nome)')
+          .in('competencia_funcionario_id', pCfIds).gt('dias_proximo_mes', 0)
+        for (const d of pDesc ?? []) {
+          const fid = pByCf.get(d.competencia_funcionario_id); if (!fid) continue
+          const dp = Number(d.dias_proximo_mes || 0)
+          carryMap.set(fid, (carryMap.get(fid) ?? 0) + dp)
+        }
+      }
+    }
   }))
 
   const linhas: LinhaReciboVTVA[] = []
@@ -449,12 +500,21 @@ export async function listarRecibosVTVA(params: {
     const ehExcecao = valorVTSabadoBase > 0
     const valorVT = cf?.valor_vt ?? (func.valor_vt || fbVT?.valor_vt || 0)
     const valorVTSabado = ehExcecao ? valorVTSabadoBase : 0
-    const descontos = cf ? (descMap.get(cf.id) ?? []) : []
+    const descontosProprios = cf ? (descMap.get(cf.id) ?? []) : []
     const acrescimos = cf ? (acrescMap.get(cf.id) ?? []) : []
-    const diasSabado = ehExcecao ? calcularSabadosTrabalhados(mes, ano, func.data_admissao, func.data_fim_aviso, feriadosDatas, descontos) : 0
+    const carry = carryMap.get(func.id) ?? 0
+    // Exibição do recibo: inclui a linha do carry-over (mês anterior).
+    const descontos = carry > 0
+      ? [...descontosProprios, { tipo_nome: 'Férias/afastamento (do mês anterior)', dias: carry, data_inicio: null, data_fim: null }]
+      : descontosProprios
+    const diasSabado = ehExcecao ? calcularSabadosTrabalhados(mes, ano, func.data_admissao, func.data_fim_aviso, feriadosDatas, descontosProprios) : 0
     const valorVA = resolverValorVA(func.valor_va, vaMap.get(func.empresa_id) ?? emp?.valor_va ?? 0)
     const diasUteis = calcularDiasUteisAuto(mes, ano, func.folga_semanal, feriadosDatas, func.data_admissao, func.data_fim_aviso)
-    const resultado = calcularVTVA({ diasUteis, diasFeriado: 0, diasSabado, diasDesconto: cf?.dias_desconto ?? 0, valorVT, valorVTSabado, valorVA })
+    // Dias de desconto calculados a partir das LINHAS (robusto, sem depender do
+    // agregado cf.dias_desconto que pode estar defasado/duplicar o carry):
+    //   próprios do mês (descontos − acréscimos) + carry-over do mês anterior.
+    const diasProprios = descontosProprios.reduce((s, d) => s + (d.dias || 0), 0) - acrescimos.reduce((s, d) => s + (d.dias || 0), 0)
+    const resultado = calcularVTVA({ diasUteis, diasFeriado: 0, diasSabado, diasDesconto: Math.max(0, diasProprios) + carry, valorVT, valorVTSabado, valorVA })
     const dados: DadosRecibo = {
       apelido: emp?.apelido ?? '', razaoSocial: emp?.razao_social ?? '', cnpj: emp?.cnpj ?? '',
       nomeFuncionario: func.nome, funcao: func.funcao, ctps: func.ctps ?? '', serie: func.serie ?? '',
