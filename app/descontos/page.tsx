@@ -183,6 +183,12 @@ export default function DescontosPage() {
   const [novaDataFim, setNovaDataFim] = useState('')
   const [novoDias, setNovoDias] = useState(1)
   const [novoDiasProximo, setNovoDiasProximo] = useState(0)
+  // Dias que caem NO MÊS ATUAL (os que alimentam o pagamento do mês anterior).
+  // Lançamentos futuros (férias que só caem em meses seguintes) têm 0 aqui.
+  const diasNoMesAtual = descontos.filter(d => !d.isCarryOver && !d.isAcrescimo).reduce((s, d) => s + Math.max(0, Number(d.dias) || 0), 0)
+  // Só bloqueia o SALVAR se houver impacto REAL no mês fechado. Lançamento de
+  // período FUTURO (0 dia no mês atual) não altera o pagamento fechado — libera.
+  const bloqueadoPorFechamento = mesFechado && diasNoMesAtual > 0
 
   // Formulário acréscimo (feriado trabalhado)
   const [acrescimoData, setAcrescimoData] = useState('')
@@ -458,7 +464,8 @@ export default function DescontosPage() {
   }
 
   function adicionarDesconto() {
-    if (!novoTipoId || novoDias < 1) return
+    // Aceita lançamento que cai só no próximo mês (novoDiasProximo) — férias futuras.
+    if (!novoTipoId || (novoDias < 1 && novoDiasProximo < 1)) return
     const tipo = tiposDesconto.find(t => t.id === novoTipoId)
     if (!tipo) return
     setDescontos(prev => [...prev, {
@@ -504,7 +511,7 @@ export default function DescontosPage() {
 
   async function salvar() {
     if (!cfCarregado || !selecionado) return
-    if (mesFechado) { setErro('Competência FECHADA. Reabra o mês no Fechamento para editar.'); return }
+    if (bloqueadoPorFechamento) { setErro('Competência FECHADA. Reabra o mês no Fechamento para editar (o lançamento tem dias no próprio mês, que já foi pago).'); return }
     setSalvando(true)
     setErro(null)
     setSucesso(null)
@@ -1271,8 +1278,11 @@ export default function DescontosPage() {
                     )}
 
                     {(() => {
-                      const foraDoMes = (() => { if (!novaDataInicio) return false; const [y, m] = novaDataInicio.split('-').map(Number); return y !== ano || m !== mes })()
-                      if (foraDoMes) {
+                      // Futuro DISTANTE (o carry-over de 1 mês não alcança): oferece pular
+                      // para a competência do período. Do contrário, adiciona normal
+                      // (inclui férias que caem só no próximo mês, via carry-over).
+                      const distante = (() => { if (!novaDataInicio) return false; const [y, m] = novaDataInicio.split('-').map(Number); return (y !== ano || m !== mes) && novoDias < 1 && novoDiasProximo < 1 })()
+                      if (distante) {
                         const [y, m] = novaDataInicio.split('-').map(Number)
                         return (
                           <button type="button" onClick={() => { setAno(y); setMes(m) }} className="w-full flex items-center justify-center gap-2 rounded-lg bg-amber-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-amber-500">
@@ -1281,7 +1291,7 @@ export default function DescontosPage() {
                         )
                       }
                       return (
-                        <button onClick={adicionarDesconto} disabled={!novoTipoId || novoDias < 1} className="btn-secondary w-full flex items-center justify-center gap-2">
+                        <button onClick={adicionarDesconto} disabled={!novoTipoId || (novoDias < 1 && novoDiasProximo < 1)} className="btn-secondary w-full flex items-center justify-center gap-2">
                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                           </svg>
@@ -1343,15 +1353,17 @@ export default function DescontosPage() {
               </div>
 
               {mesFechado && (
-                <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-2 rounded-lg text-sm mb-3">
-                  🔒 Travado — o pagamento de {MESES[pagMes - 1]}/{pagAno} está fechado (este VT/VA é dele). Reabra em Fechamento do Mês.
+                <div className={`border px-4 py-2 rounded-lg text-sm mb-3 ${bloqueadoPorFechamento ? 'bg-red-50 border-red-200 text-red-700' : 'bg-amber-50 border-amber-200 text-amber-800'}`}>
+                  {bloqueadoPorFechamento
+                    ? <>🔒 Travado — há dias de <strong>{MESES[mes - 1]}/{ano}</strong> neste lançamento, e o pagamento de {MESES[pagMes - 1]}/{pagAno} (que este mês alimenta) já está fechado. Reabra em Fechamento do Mês para alterar {MESES[mes - 1]}.</>
+                    : <>ℹ O pagamento de {MESES[pagMes - 1]}/{pagAno} está fechado, mas este lançamento é <strong>futuro</strong> (não tem dias em {MESES[mes - 1]}/{ano}) — pode salvar normalmente.</>}
                 </div>
               )}
               {/* Botões de ação */}
               <div className="flex gap-3">
                 <button
                   onClick={salvar}
-                  disabled={salvando || mesFechado}
+                  disabled={salvando || bloqueadoPorFechamento}
                   className="btn-primary flex-1 flex items-center justify-center gap-2"
                 >
                   {salvando ? (
