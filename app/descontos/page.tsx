@@ -429,12 +429,18 @@ export default function DescontosPage() {
 
   // ─── Desconto helpers ───────────────────────────────────────────────────────
 
+  // No mês da própria competência, garante o mínimo de 1 dia. Se a data for de
+  // OUTRO mês (férias futura lançada na competência errada), NÃO força 1 dia
+  // fantasma — deixa 0 para desabilitar "Adicionar" e direcionar ao botão
+  // "Lançar em MÊS/ANO".
   function handleDataInicioChange(val: string) {
     setNovaDataInicio(val)
     if (val) {
       const fim = novaDataFim || val
       const { diasCorrente, diasProximo } = calcularDiasComCarryOver(val, fim, mes, ano, selecionado?.func.folga_semanal, cfCarregado?.feriados ?? [])
-      setNovoDias(diasCorrente || 1)
+      const [dY, dM] = val.split('-').map(Number)
+      const mesmoMes = dY === ano && dM === mes
+      setNovoDias(mesmoMes ? (diasCorrente || 1) : diasCorrente)
       setNovoDiasProximo(diasProximo)
     }
   }
@@ -444,7 +450,9 @@ export default function DescontosPage() {
     if (novaDataInicio) {
       const fim = val || novaDataInicio
       const { diasCorrente, diasProximo } = calcularDiasComCarryOver(novaDataInicio, fim, mes, ano, selecionado?.func.folga_semanal, cfCarregado?.feriados ?? [])
-      setNovoDias(diasCorrente || 1)
+      const [dY, dM] = novaDataInicio.split('-').map(Number)
+      const mesmoMes = dY === ano && dM === mes
+      setNovoDias(mesmoMes ? (diasCorrente || 1) : diasCorrente)
       setNovoDiasProximo(diasProximo)
     }
   }
