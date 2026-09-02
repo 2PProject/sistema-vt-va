@@ -69,6 +69,13 @@ export default function ValesPage() {
   const [fErro, setFErro] = useState('')
   const [salvando, setSalvando] = useState(false)
 
+  // Quitação manual de vale
+  const [quitarAlvo, setQuitarAlvo] = useState<PagamentoVale | null>(null)
+  const [qComp, setQComp] = useState('')
+  const [qData, setQData] = useState(hoje())
+  const [qObs, setQObs] = useState('')
+  const [quitando, setQuitando] = useState(false)
+
   useEffect(() => {
     supabase.from('empresas').select('*').order('razao_social').then(({ data }) => setEmpresas(data ?? []))
     carregarFuncs()
@@ -220,6 +227,30 @@ export default function ValesPage() {
     carregarVales()
   }
 
+  // ── Quitação manual (pagamento por fora, antecipação, acordo…) ──
+  function abrirQuitar(v: PagamentoVale) {
+    const parcelas = Math.max(1, v.parcelas ?? 1)
+    const comps = competenciasParcelas(v.mes_inicio, parcelas)
+    const st = statusParcelasVale(v, refComp)
+    // Padrão: primeira competência ainda NÃO descontada — para as parcelas futuras.
+    const prox = comps[Math.min(st.descontadas, comps.length - 1)] ?? refComp
+    setQuitarAlvo(v); setQComp(v.quitado_em || prox); setQData(v.quitado_data || hoje()); setQObs(v.quitado_obs || '')
+  }
+  async function confirmarQuitar() {
+    if (!quitarAlvo || !qComp) return
+    setQuitando(true)
+    const r = await atualizarVale(quitarAlvo.id, { quitado_em: qComp, quitado_data: qData || hoje(), quitado_obs: qObs.trim() || null })
+    setQuitando(false)
+    if (!r.ok) { notify(r.erro ?? 'Erro ao quitar (rode supabase_vales_quitacao.sql no Supabase).', 'erro'); return }
+    setQuitarAlvo(null); notify('Vale quitado manualmente. Descontos futuros interrompidos.', 'ok'); carregarVales()
+  }
+  async function reabrirVale(v: PagamentoVale) {
+    if (!confirm(`Reabrir o vale "${v.descricao}"? Os descontos automáticos voltam a valer a partir da competência de quitação.`)) return
+    const r = await atualizarVale(v.id, { quitado_em: null, quitado_data: null, quitado_obs: null })
+    if (!r.ok) { notify(r.erro ?? 'Erro ao reabrir.', 'erro'); return }
+    notify('Vale reaberto.', 'ok'); carregarVales()
+  }
+
   async function gerarRecibo(v: PagamentoVale) {
     setGerando(v.id)
     try {
@@ -368,6 +399,7 @@ export default function ValesPage() {
                                           <td className="py-2 px-3">
                                             <span className="font-medium text-gray-800">{v.descricao}</span>
                                             {ativa && <span className="ml-1 text-amber-600">· parc. {ativa.parcelaAtual}/{ativa.totalParcelas}</span>}
+                                            {v.quitado_em && <span className="ml-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700" title={v.quitado_obs || ''}>✓ Quitado ({fmtMes(v.quitado_em)})</span>}
                                           </td>
                                           <td className="py-2 px-3 text-right">{formatarMoeda(v.valor_total)}</td>
                                           <td className="py-2 px-3 text-center">{parcelas > 1 ? `${parcelas}x` : 'À vista'}</td>
@@ -379,6 +411,9 @@ export default function ValesPage() {
                                                 className="text-amber-700 hover:text-amber-900 font-medium disabled:opacity-50">
                                                 {gerando === v.id ? '...' : 'Recibo'}
                                               </button>
+                                              {v.quitado_em
+                                                ? <button onClick={() => reabrirVale(v)} className="text-slate-600 hover:text-slate-900 font-medium">Reabrir</button>
+                                                : <button onClick={() => abrirQuitar(v)} className="text-emerald-700 hover:text-emerald-900 font-medium">Quitar</button>}
                                               <button onClick={() => editarVale(v)} className="text-blue-600 hover:text-blue-800 font-medium">Editar</button>
                                               <button onClick={() => remover(v)} className="text-red-500 hover:text-red-700 font-medium">Excluir</button>
                                             </div>
@@ -473,6 +508,38 @@ export default function ValesPage() {
                   {salvando ? 'Salvando...' : editId ? 'Salvar alterações' : 'Lançar'}
                 </button>
                 <button className="btn-secondary flex-1" onClick={() => setShowForm(false)}>Cancelar</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {quitarAlvo && (
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={e => { if (e.target === e.currentTarget) setQuitarAlvo(null) }}>
+            <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+              <h2 className="text-lg font-bold text-gray-800 mb-1">Quitar vale manualmente</h2>
+              <p className="text-xs text-gray-500 mb-4"><strong>{quitarAlvo.descricao}</strong> — {quitarAlvo.funcionarios?.nome ?? ''}. A partir da competência escolhida, as parcelas deixam de ser descontadas (o restante foi acertado por fora).</p>
+              {(() => {
+                const st = statusParcelasVale({ ...quitarAlvo, quitado_em: null }, refComp)
+                return <div className="mb-4 rounded-lg bg-slate-50 border border-slate-200 p-3 text-xs text-slate-600">Já descontadas: <strong>{st.descontadas}/{st.parcelas}</strong> ({formatarMoeda(st.valorDescontado)}) · Saldo restante hoje: <strong className="text-slate-800">{formatarMoeda(st.valorRestante)}</strong></div>
+              })()}
+              <div className="space-y-3">
+                <div>
+                  <label className="label-field">Quitar a partir da competência</label>
+                  <input type="month" className="input-field" value={qComp} onChange={e => setQComp(e.target.value)} />
+                  <p className="text-[11px] text-gray-400 mt-1">Não desconta desta competência em diante. Parcelas anteriores permanecem.</p>
+                </div>
+                <div>
+                  <label className="label-field">Data da quitação</label>
+                  <input type="date" className="input-field" value={qData} onChange={e => setQData(e.target.value)} />
+                </div>
+                <div>
+                  <label className="label-field">Observação / forma (opcional)</label>
+                  <input type="text" className="input-field" value={qObs} onChange={e => setQObs(e.target.value)} placeholder="Ex.: pago em dinheiro, pix, acordo…" />
+                </div>
+              </div>
+              <div className="flex gap-3 pt-5">
+                <button className="btn-primary flex-1" onClick={confirmarQuitar} disabled={quitando || !qComp}>{quitando ? 'Quitando...' : 'Confirmar quitação'}</button>
+                <button className="btn-secondary flex-1" onClick={() => setQuitarAlvo(null)}>Cancelar</button>
               </div>
             </div>
           </div>

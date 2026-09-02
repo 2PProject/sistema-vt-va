@@ -22,6 +22,9 @@ export type PagamentoVale = {
   valor_total: number
   parcelas: number
   mes_inicio: string       // 'YYYY-MM' — competência da 1ª parcela
+  quitado_em?: string | null   // 'YYYY-MM' — quitação manual: não desconta a partir desta competência
+  quitado_data?: string | null // data do registro da quitação
+  quitado_obs?: string | null  // forma/observação da quitação
   criado_em?: string
   funcionarios?: Funcionario
   empresas?: Empresa
@@ -84,6 +87,8 @@ function diffMeses(a: string, b: string): number {
  */
 export function descontoDoVale(vale: PagamentoVale, mesRef: string): DescontoAplicado | null {
   const parcelas = Math.max(1, vale.parcelas ?? 1)
+  // Quitação manual: nada é descontado a partir da competência de quitação.
+  if (vale.quitado_em && mesRef >= vale.quitado_em) return null
   const idx = diffMeses(vale.mes_inicio, mesRef) // 0-based
   if (idx < 0 || idx >= parcelas) return null
   const valorParcela = Math.round((vale.valor_total / parcelas) * 100) / 100
@@ -105,6 +110,17 @@ export function statusParcelasVale(vale: PagamentoVale, refCompetencia: string):
   const valorParcela = Math.round((vale.valor_total / parcelas) * 100) / 100
   let descontadas = diffMeses(vale.mes_inicio, refCompetencia) + 1
   descontadas = Math.max(0, Math.min(parcelas, descontadas))
+  // Quitação manual: só contam as parcelas ANTES da competência de quitação;
+  // o restante foi acertado por fora, então o saldo devedor zera.
+  if (vale.quitado_em) {
+    const ateQuitacao = Math.max(0, Math.min(parcelas, diffMeses(vale.mes_inicio, vale.quitado_em)))
+    descontadas = Math.min(descontadas, ateQuitacao)
+    return {
+      parcelas, valorParcela, descontadas, restantes: 0,
+      valorDescontado: Math.round(descontadas * valorParcela * 100) / 100,
+      valorRestante: 0,
+    }
+  }
   const restantes = parcelas - descontadas
   return {
     parcelas,
