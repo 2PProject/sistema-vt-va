@@ -114,35 +114,41 @@ export async function POST(req: Request) {
           xml_original: n.xmlOriginal || null,
           xml_nome: n.numero ? `NFS-e-${n.numero}.xml` : null,
         }))
-        // A CHAVE é a IDENTIDADE da nota. Uma nota já baixada pode ser
-        // REDISTRIBUÍDA num NSU novo — e o upsert por NSU batia no
-        // unique(empresa_id,chave), ERRANDO o LOTE INTEIRO e TRAVANDO o cursor
-        // (as notas novas nunca vinham). Solução: notas COM chave sobem por
-        // onConflict CHAVE (deduplicadas por chave no lote); as SEM chave, por NSU.
-        // Compat: se o cache do Supabase ainda não conhecer as colunas de XML,
-        // reenvia sem elas — a baixa não para por isso.
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const gravarLote = async (rows: any[], conflito: string): Promise<{ error: { message: string } | null; count: number }> => {
-          if (!rows.length) return { error: null, count: 0 }
-          let r = await admin.from('salon_notas').upsert(rows, { onConflict: conflito, count: 'exact' })
-          if (r.error && /xml_(original|nome)|schema cache/i.test(r.error.message)) {
-            const compat = rows.map(({ xml_original: _a, xml_nome: _b, ...rest }) => rest)
-            r = await admin.from('salon_notas').upsert(compat, { onConflict: conflito, count: 'exact' })
-          }
-          return { error: r.error, count: r.count ?? rows.length }
-        }
+        // A CHAVE é a identidade da nota. Uma nota já baixada pode ser
+        // REDISTRIBUÍDA num NSU novo. Para não duplicar E não depender de uma
+        // constraint única em (empresa_id,chave) — que pode não existir neste
+        // banco —, deduplicamos o lote e PULAMOS as chaves que já estão gravadas;
+        // o restante sobe por onConflict 'empresa_id,nsu' (constraint que existe).
         const porChave = new Map<string, typeof payload[number]>()
         const porNsu = new Map<number, typeof payload[number]>()
         for (const p of payload) { if (p.chave) porChave.set(p.chave, p); else porNsu.set(p.nsu, p) }
-        const r1 = await gravarLote([...porChave.values()], 'empresa_id,chave')
-        const r2 = await gravarLote([...porNsu.values()], 'empresa_id,nsu')
-        const error = r1.error || r2.error
-        if (error) {
-          const dica = /salon_notas/.test(error.message) && /exist|relation|does not/.test(error.message)
-            ? ' (rode supabase_salao_v2.sql no Supabase para criar a tabela salon_notas)' : ''
-          empresas.push({ ...base, status, encontradas: notas.length, erro: `Erro ao gravar: ${error.message}${dica}`, amostra }); continue
+        const chaves = [...porChave.keys()]
+        const jaExiste = new Set<string>()
+        for (let i = 0; i < chaves.length; i += 300) {
+          const { data: ex } = await admin.from('salon_notas').select('chave')
+            .eq('empresa_id', cert.empresa_id).in('chave', chaves.slice(i, i + 300))
+          ;(ex ?? []).forEach((r: { chave: string | null }) => { if (r.chave) jaExiste.add(r.chave) })
         }
-        gravadas = r1.count + r2.count
+        const novos = [...porChave.values()].filter((p) => !jaExiste.has(p.chave as string)).concat([...porNsu.values()])
+        // Compat: se o cache do Supabase ainda não conhecer as colunas de XML,
+        // reenvia sem elas — a baixa não para por isso.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const gravarLote = async (rows: any[]): Promise<{ error: { message: string } | null; count: number }> => {
+          if (!rows.length) return { error: null, count: 0 }
+          let r = await admin.from('salon_notas').upsert(rows, { onConflict: 'empresa_id,nsu', count: 'exact' })
+          if (r.error && /xml_(original|nome)|schema cache/i.test(r.error.message)) {
+            const compat = rows.map(({ xml_original: _a, xml_nome: _b, ...rest }) => rest)
+            r = await admin.from('salon_notas').upsert(compat, { onConflict: 'empresa_id,nsu', count: 'exact' })
+          }
+          return { error: r.error, count: r.count ?? rows.length }
+        }
+        const g = await gravarLote(novos)
+        if (g.error) {
+          const dica = /salon_notas/.test(g.error.message) && /exist|relation|does not/.test(g.error.message)
+            ? ' (rode supabase_salao_v2.sql no Supabase para criar a tabela salon_notas)' : ''
+          empresas.push({ ...base, status, encontradas: notas.length, erro: `Erro ao gravar: ${g.error.message}${dica}`, amostra }); continue
+        }
+        gravadas = g.count
       }
 
       await admin.from('salon_nfse_sync').upsert({ empresa_id: cert.empresa_id, ultimo_nsu: novoNsu, ultima_sync: new Date().toISOString() })
