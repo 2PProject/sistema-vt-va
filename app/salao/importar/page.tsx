@@ -61,6 +61,11 @@ export default function SalaoImportarPage() {
       <div className="space-y-6">
         {msg && <div className={`px-4 py-3 rounded-lg text-sm ${msgTipo === 'ok' ? 'bg-green-50 border border-green-200 text-green-700' : 'bg-red-50 border border-red-200 text-red-700'}`}>{msg}</div>}
 
+        <a href="/salao/cnpj-atualizado" className="flex items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 hover:bg-emerald-100">
+          <span><strong>CNPJ atualizado dos profissionais</strong> — leva o documento da nota vinculada mais recente (ou da última importação) para os registros, fazendo o casamento por CNPJ bater. Revise e aplique lá.</span>
+          <span className="shrink-0 font-bold">Abrir →</span>
+        </a>
+
         <div className="card">
           <div className="bg-blue-50 border border-blue-200 text-blue-800 text-xs rounded-lg p-3 mb-4">
             Cada <strong>aba</strong> = uma <strong>empresa</strong> (nome da aba = apelido). Colunas: <strong>CNPJ</strong> · <strong>Nome completo</strong> · <strong>Crédito</strong> (valor).
