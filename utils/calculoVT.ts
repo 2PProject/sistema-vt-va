@@ -168,12 +168,17 @@ export function calcularDiasUteisAuto(
     }
   }
 
+  // Feriados ÚNICOS por data — a tabela `feriados` não tem UNIQUE em `data`, e
+  // uma data duplicada (ex.: 07/09 gravado 2x) fazia o feriado ser descontado
+  // duas vezes, reduzindo os dias úteis indevidamente.
+  const feriados = Array.from(new Set((feriadosDatas ?? []).map((s) => String(s).slice(0, 10))))
+
   // Caminho rápido: mês completo sem cortes
   if (startDate.getDate() === 1 && endDate.getTime() === ultimoDiaMes.getTime()) {
     const counts = contarDiasSemana(mes, ano)
     let total = counts[1] + counts[2] + counts[3] + counts[4] + counts[5] + counts[6]
     if (dow >= 1 && dow <= 6) total -= counts[dow]
-    for (const dateStr of feriadosDatas) {
+    for (const dateStr of feriados) {
       const d = new Date(dateStr + 'T12:00:00')
       const fd = d.getDay()
       if (fd === 0 || fd === dow) continue
@@ -190,7 +195,7 @@ export function calcularDiasUteisAuto(
     if (cd !== 0 && cd !== dow) total++
     cur.setDate(cur.getDate() + 1)
   }
-  for (const dateStr of feriadosDatas) {
+  for (const dateStr of feriados) {
     const d = new Date(dateStr + 'T12:00:00')
     if (d < startDate || d > endDate) continue
     const fd = d.getDay()
