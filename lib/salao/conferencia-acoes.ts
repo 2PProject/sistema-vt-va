@@ -111,6 +111,9 @@ export async function editarNota(admin: SupabaseClient, id: string, campos: Part
   for (const c of CAMPOS_NOTA) if (c in campos && campos[c] !== undefined) novo[c] = campos[c]
   if ('documento' in novo && novo.documento != null) novo.documento = dig(String(novo.documento)) || null
   if ('valor' in novo) novo.valor = Number(novo.valor) || 0
+  // Edição manual da competência prevalece: limpa o override do casamento
+  // automático (competencia_conf) para a correção do usuário valer de fato.
+  if ('competencia' in novo) novo.competencia_conf = null
   if (Object.keys(novo).length === 0) return { ok: true }
 
   const { error } = await admin.from('salon_notas').update(novo).eq('id', id)

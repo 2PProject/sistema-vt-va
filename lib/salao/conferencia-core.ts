@@ -331,7 +331,11 @@ export async function reconciliar(admin: SupabaseClient, competencia: string, em
         nf_numero: nota.numero ?? null, nf_data: nota.data_emissao ?? null, nf_valor: nota.valor, nf_origem: 'adn',
         confirmado_em: new Date().toISOString(), observacao,
       }).eq('id', p.id),
-      admin.from('salon_notas').update({ conferida: true }).eq('id', nota.id),
+      // A nota assume a competência do lançamento a que foi casada (competência
+      // efetiva = onde ela foi de fato aplicada). Sem isto, uma nota com dCompet
+      // errado (ex.: emitida com "junho" mas paga em julho) continuava aparecendo
+      // no mês errado, dando a impressão de duas notas no mesmo mês.
+      admin.from('salon_notas').update({ conferida: true, competencia_conf: competencia }).eq('id', nota.id),
       admin.from('salon_comissao_notas').upsert({ comissao_id: p.id, nota_id: nota.id }, { onConflict: 'comissao_id,nota_id' }),
     ])
     const falha = resultados.find((r) => r.error)?.error
@@ -413,7 +417,7 @@ export async function limpar(admin: SupabaseClient, competencia?: string, empres
 
   if (comissaoIds.length) await admin.from('salon_comissao_notas').delete().in('comissao_id', comissaoIds)
   for (let i = 0; i < notaIds.length; i += 200) {
-    await admin.from('salon_notas').update({ conferida: false, conferida_em: null, conferida_por: null }).in('id', notaIds.slice(i, i + 200))
+    await admin.from('salon_notas').update({ conferida: false, conferida_em: null, conferida_por: null, competencia_conf: null }).in('id', notaIds.slice(i, i + 200))
   }
   return { limpos: rows.length }
 }
@@ -755,14 +759,14 @@ export async function vincular(admin: SupabaseClient, comissaoId: string, notaId
     await admin.from('salon_comissao_notas').delete().eq('comissao_id', comissaoId).eq('nota_id', notaId)
     return { ok: false, erro: error.message }
   }
-  const { error: erroNota } = await admin.from('salon_notas').update({ conferida: true, conferida_em: new Date().toISOString(), conferida_por: usuario ?? null, analise_manual: false, analise_motivo: null }).eq('id', n.id)
+  const { error: erroNota } = await admin.from('salon_notas').update({ conferida: true, conferida_em: new Date().toISOString(), conferida_por: usuario ?? null, analise_manual: false, analise_motivo: null, competencia_conf: comissao.mes_ref }).eq('id', n.id)
   if (erroNota) {
     // Não deixar vínculo pela metade quando a atualização da nota falhar.
     await admin.from('salon_comissoes').update({ nota_id: null, status: 'pendente', nf_numero: null, nf_data: null, nf_valor: null, nf_origem: null, confirmado_em: null }).eq('id', comissaoId)
     return { ok: false, erro: erroNota.message }
   }
   const reabrir = notasAnteriores.filter(x => x !== n.id)
-  if (reabrir.length) await admin.from('salon_notas').update({ conferida: false, conferida_em: null, conferida_por: null }).in('id', reabrir)
+  if (reabrir.length) await admin.from('salon_notas').update({ conferida: false, conferida_em: null, conferida_por: null, competencia_conf: null }).in('id', reabrir)
   return { ok: true }
 }
 
@@ -803,14 +807,14 @@ export async function vincularMultiplas(admin: SupabaseClient, comissaoId: strin
       nf_valor: total, nf_origem: 'manual_multiplo', confirmado_em: agora,
       observacao: `${ids.length} notas vinculadas: ${numeros}. Soma R$ ${total.toFixed(2)}.${docDivergenteMulti ? ' Documento divergente — vínculo manual.' : ''}`,
     }).eq('id', comissaoId),
-    admin.from('salon_notas').update({ conferida: true, conferida_em: agora, conferida_por: usuario ?? null }).in('id', ids),
+    admin.from('salon_notas').update({ conferida: true, conferida_em: agora, conferida_por: usuario ?? null, competencia_conf: comissao.mes_ref }).in('id', ids),
   ])
   if (erroCom || erroNf) {
     await admin.from('salon_comissao_notas').delete().eq('comissao_id', comissaoId).in('nota_id', ids)
     return { ok: false, erro: (erroCom || erroNf)?.message }
   }
   const reabrir = notasAnteriores.filter(id => !ids.includes(id))
-  if (reabrir.length) await admin.from('salon_notas').update({ conferida: false, conferida_em: null, conferida_por: null }).in('id', reabrir)
+  if (reabrir.length) await admin.from('salon_notas').update({ conferida: false, conferida_em: null, conferida_por: null, competencia_conf: null }).in('id', reabrir)
   return { ok: true }
 }
 
@@ -864,7 +868,7 @@ export async function desvincular(admin: SupabaseClient, comissaoId: string, not
       return { ok: false, erro: (erroRelAinda || erroLegadoAinda)?.message }
     }
     if (!(relAinda?.length || legadoAinda?.length)) {
-      const { error: erroReabrirUma } = await admin.from('salon_notas').update({ conferida: false, conferida_em: null, conferida_por: null }).eq('id', notaId)
+      const { error: erroReabrirUma } = await admin.from('salon_notas').update({ conferida: false, conferida_em: null, conferida_por: null, competencia_conf: null }).eq('id', notaId)
       if (erroReabrirUma) {
         await admin.from('salon_comissoes').update({
           nota_id: registro.nota_id, status: registro.status, nf_numero: registro.nf_numero, nf_data: registro.nf_data,
@@ -910,7 +914,7 @@ export async function desvincular(admin: SupabaseClient, comissaoId: string, not
     const livres = notaIds.filter(id => !aindaUsadas.has(id))
     if (livres.length) {
       const { error: erroNotas } = await admin.from('salon_notas').update({
-        conferida: false, conferida_em: null, conferida_por: null,
+        conferida: false, conferida_em: null, conferida_por: null, competencia_conf: null,
       }).in('id', livres)
       if (erroNotas) {
         await admin.from('salon_comissoes').update({
