@@ -36,6 +36,8 @@ export async function salvarPrazo(empresaId: string, prazoDia: number): Promise<
 export type DiagEmpresaSync = {
   empresa_id: string; empresaNome: string; ok: boolean; status: number
   encontradas: number; gravadas: number; ignoradas?: number; canceladas?: number; ultimoNsu?: number; maxNsu?: number; houveMais?: boolean; erro?: string; amostra?: string
+  // Campos só do cliente (progresso ao vivo por unidade) — não vêm do servidor.
+  ativo?: boolean; etapa?: string; rodadas?: number
 }
 export type ResumoSync = {
   ok?: boolean; erro?: string; ambiente?: string
