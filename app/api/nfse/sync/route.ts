@@ -17,11 +17,15 @@ type DiagEmpresa = {
   encontradas: number
   gravadas: number
   ignoradas?: number
+  ignoradasSemValor?: number
+  ignoradasCanceladas?: number
+  ignoradasProprias?: number
   canceladas?: number
   ultimoNsu?: number
   maxNsu?: number
   houveMais?: boolean
   erro?: string
+  dica?: string
   amostra?: string
 }
 
@@ -95,11 +99,14 @@ export async function POST(req: Request) {
       //  - descarta emitidas pela própria empresa (mesma raiz de CNPJ);
       //  - mantém CPFs e outros CNPJs (os profissionais).
       const raiz = (cert.cert_cnpj ?? '').replace(/\D/g, '').slice(0, 8)
+      // Conta o MOTIVO de cada descarte — sem isto, "0 gravadas" virava mistério.
+      let igSemValor = 0, igCancelada = 0, igPropria = 0
       const recebidas = notas.filter((n) => {
-        if (!(Number(n.valor) > 0)) return false
-        if (n.chave && canceladasChaves.has(n.chave.replace(/\s/g, ''))) return false
+        if (!(Number(n.valor) > 0)) { igSemValor++; return false }
+        if (n.chave && canceladasChaves.has(n.chave.replace(/\s/g, ''))) { igCancelada++; return false }
         const emit = (n.prestadorDoc ?? '').replace(/\D/g, '')
-        return !(raiz && emit.length === 14 && emit.slice(0, 8) === raiz)
+        if (raiz && emit.length === 14 && emit.slice(0, 8) === raiz) { igPropria++; return false }
+        return true
       })
       const ignoradas = notas.length - recebidas.length
       const canceladas = canceladasChaves.size   // eventos de cancelamento vistos neste lote
@@ -154,7 +161,18 @@ export async function POST(req: Request) {
       await admin.from('salon_nfse_sync').upsert({ empresa_id: cert.empresa_id, ultimo_nsu: novoNsu, ultima_sync: new Date().toISOString() })
       notasEncontradas += notas.length
       registrosAtualizados += gravadas
-      empresas.push({ ...base, ok: true, status, encontradas: notas.length, gravadas, ignoradas, canceladas: canceladas + canceladasMarcadas, ultimoNsu: novoNsu, maxNsu: maxNsuDisponivel || undefined, houveMais: houveMais || rateLimited, amostra })
+      // Dica de diagnóstico: distingue "ADN não devolveu nada" de "veio, mas foi
+      // tudo filtrado" — assim o usuário sabe se o problema é ambiente/credenciamento
+      // ou o filtro (própria empresa / sem valor / cancelada).
+      const emTeste = baseADN().includes('producaorestrita')
+      const dica = notas.length === 0
+        ? (novoNsu <= 0
+            ? `O ADN não devolveu nenhum documento a partir do NSU 0 (HTTP ${status}).${emTeste ? ' A baixa está no ambiente de TESTE (produção restrita) — defina SALON_ADN_AMBIENTE=producao.' : ' Confirme o credenciamento da empresa no ambiente de produção.'}`
+            : undefined)
+        : (recebidas.length === 0
+            ? `${notas.length} documento(s) vieram do ADN, mas todos foram ignorados — ${igPropria} da própria empresa, ${igSemValor} sem valor, ${igCancelada} cancelada(s).`
+            : undefined)
+      empresas.push({ ...base, ok: true, status, encontradas: notas.length, gravadas, ignoradas, ignoradasSemValor: igSemValor, ignoradasCanceladas: igCancelada, ignoradasProprias: igPropria, canceladas: canceladas + canceladasMarcadas, ultimoNsu: novoNsu, maxNsu: maxNsuDisponivel || undefined, houveMais: houveMais || rateLimited, dica, amostra })
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       const amigavel =

@@ -114,7 +114,16 @@ function parseArquivoXml(arquivo: string): { chave: string; prestadorDoc: string
   const data = (tag(xml, 'dhProc', 'dhEmi') || '').slice(0, 10)
   const dCompet = (tag(xml, 'dCompet', 'competencia') || '').slice(0, 10)
   const competencia = mesValido(dCompet || data)
-  const valor = parseFloat(tag(xml, 'vLiq', 'vServ', 'vServPrest') || '0') || 0
+  // Valor líquido do serviço. Cobre o leiaute nacional (vLiq/vServ) e o ABRASF
+  // (ValorLiquidoNfse/ValorServicos), além de variações com acento/caixa. Aceita
+  // ponto OU vírgula decimal. Sem isto, notas cujo valor está numa tag alternativa
+  // vinham com valor 0 e eram descartadas como "lixo" — some notas não baixavam.
+  const brutoValor = tag(xml, 'vLiq', 'vServ', 'vServPrest', 'vLiqNFSe',
+    'ValorLiquidoNfse', 'ValorServicos', 'valorLiquido', 'valorServicos', 'vNF') || '0'
+  const normValor = brutoValor.trim().replace(/\s/g, '')
+  // "1.234,56" -> "1234.56"; "1234.56" fica igual; "1234,56" -> "1234.56"
+  const valorTxt = /,\d{1,2}$/.test(normValor) ? normValor.replace(/\./g, '').replace(',', '.') : normValor.replace(/,/g, '')
+  const valor = parseFloat(valorTxt) || 0
   return { chave, prestadorDoc: doc, prestadorNome: nome, numero, data, competencia, valor, xml }
 }
 
