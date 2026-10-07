@@ -53,28 +53,36 @@ function dadosXml(xml?: string | null) {
   const servico = bloco(xml, ['Servico', 'serv'])
   const enderecoPrestador = bloco(prestador, ['Endereco', 'enderNac', 'enderEmit'])
   const enderecoTomador = bloco(tomador, ['Endereco', 'enderNac', 'enderToma'])
+  const endLinha = (e: string) => [tag(e, ['Endereco', 'xLgr']), tag(e, ['Numero', 'nro']), tag(e, ['Bairro', 'xBairro']), [tag(e, ['Municipio', 'xMun']), tag(e, ['Uf', 'UF', 'xUF'])].filter(Boolean).join('/'), tag(e, ['Cep', 'CEP'])].filter(Boolean).join(', ')
+  const chaveRaw = (xml.match(/<(?:[\w-]+:)?infNFSe[^>]*\bId="([^"]+)"/i)?.[1] || tag(xml, ['chNFSe', 'ChaveAcesso', 'ChaveAcessoNFSe']) || '').replace(/[^0-9A-Za-z]/g, '')
   return {
+    chave: chaveRaw,
     prestadorNome: tag(prestador, ['RazaoSocial', 'xNome', 'NomeFantasia', 'xFant']),
     prestadorDoc: tag(prestador, ['Cnpj', 'CPF', 'Cpf']),
     prestadorIm: tag(prestador, ['InscricaoMunicipal', 'IM']),
-    prestadorEndereco: [tag(enderecoPrestador, ['Endereco', 'xLgr']), tag(enderecoPrestador, ['Numero', 'nro']), tag(enderecoPrestador, ['Bairro', 'xBairro']), tag(enderecoPrestador, ['Municipio', 'xMun'])].filter(Boolean).join(', '),
+    prestadorEndereco: endLinha(enderecoPrestador),
     tomadorNome: tag(tomador, ['RazaoSocial', 'xNome', 'NomeFantasia']),
     tomadorDoc: tag(tomador, ['Cnpj', 'CPF', 'Cpf']),
     tomadorIm: tag(tomador, ['InscricaoMunicipal', 'IM']),
-    tomadorEndereco: [tag(enderecoTomador, ['Endereco', 'xLgr']), tag(enderecoTomador, ['Numero', 'nro']), tag(enderecoTomador, ['Bairro', 'xBairro']), tag(enderecoTomador, ['Municipio', 'xMun'])].filter(Boolean).join(', '),
+    tomadorEndereco: endLinha(enderecoTomador),
     discriminacao: tag(servico || xml, ['Discriminacao', 'xDescServ', 'Descricao']),
     codigoServico: tag(servico || xml, ['ItemListaServico', 'cTribNac', 'CodigoTributacaoMunicipio']),
     codigoVerificacao: tag(xml, ['CodigoVerificacao', 'cVerif']),
-    valorServicos: tag(servico || xml, ['ValorServicos', 'vServ']),
-    valorLiquido: tag(xml, ['ValorLiquidoNfse', 'vLiq']),
+    valorServicos: tag(servico || xml, ['ValorServicos', 'vServPrest', 'vServ']),
+    valorLiquido: tag(xml, ['ValorLiquidoNfse', 'vLiq', 'vLiqNFSe']),
     iss: tag(servico || xml, ['ValorIss', 'vISSQN', 'ValorISS']),
     aliquota: tag(servico || xml, ['Aliquota', 'pAliqAplic', 'pAliq']),
     baseCalculo: tag(servico || xml, ['BaseCalculo', 'vBC']),
     issRetido: tag(servico || xml, ['IssRetido', 'tpRetISSQN', 'ValorIssRetido']),
     numeroRps: tag(xml, ['IdentificacaoRps', 'nRps', 'Numero']),
-    municipioIncidencia: tag(servico || xml, ['MunicipioIncidencia', 'xLocPrestacao', 'cLocIncid']),
+    numeroDps: tag(xml, ['nDPS']),
+    serieDps: tag(xml, ['serie']),
+    dataEmissaoXml: (tag(xml, ['dhEmi', 'DataEmissao', 'dhProc']) || '').slice(0, 10),
+    municipioIncidencia: tag(servico || xml, ['MunicipioIncidencia', 'xLocPrestacao', 'cLocIncid', 'cLocEmi']),
   }
 }
+// Formata a chave de acesso (50 dígitos) em blocos de 4 para leitura.
+function fmtChave(c?: string | null) { const s = (c || '').replace(/\s/g, ''); return s ? s.replace(/(.{4})/g, '$1 ').trim() : '' }
 function n2(v?: string | null) { const x = Number(String(v ?? '').replace(',', '.')); return Number.isFinite(x) ? x : 0 }
 function Campo({ rotulo, valor, destaque = false }: { rotulo: string; valor: React.ReactNode; destaque?: boolean }) {
   return <div className={`rounded-lg border px-3 py-2 ${destaque ? 'border-blue-200 bg-blue-50' : 'border-slate-200 bg-white'}`}>
@@ -121,6 +129,7 @@ export default function NotaPreviewDialog({ nota, compacto = false }: { nota: No
       }
     }
     campos([['Código de verificação', xml?.codigoVerificacao || '—'], ['Competência', nota.competencia || '—']])
+    if (xml?.chave) { quebra(10); d.setFont('helvetica', 'normal'); d.setTextColor(...SUAVE); d.setFontSize(6.8); d.text('CHAVE DE ACESSO DA NFS-E', M, y); d.setFont('helvetica', 'bold'); d.setTextColor(...TXT); d.setFontSize(8); d.text(d.splitTextToSize(fmtChave(xml.chave), areaW) as string[], M, y + 4); y += 10 }
     secTitulo('Prestador do serviço')
     campos([['Nome / Razão social', xml?.prestadorNome || nota.emitente || '—'], ['CNPJ / CPF', doc(xml?.prestadorDoc || nota.documento)], ['Inscrição municipal', xml?.prestadorIm || '—'], ['Endereço', xml?.prestadorEndereco || '—']])
     secTitulo('Tomador do serviço')
@@ -151,7 +160,8 @@ export default function NotaPreviewDialog({ nota, compacto = false }: { nota: No
     if (!w) return
     const linhas = [
       ['Número da NFS-e', nota.numero], ['Código de verificação', xml?.codigoVerificacao],
-      ['Emissão', data(nota.emissao)], ['Competência', nota.competencia],
+      ['Chave de acesso', fmtChave(xml?.chave)], ['Nº DPS / Série', xml?.numeroDps ? `${xml.numeroDps}${xml.serieDps ? ` / ${xml.serieDps}` : ''}` : ''],
+      ['Emissão', data(xml?.dataEmissaoXml || nota.emissao)], ['Competência', nota.competencia],
       ['Prestador', xml?.prestadorNome || nota.emitente], ['CNPJ/CPF do prestador', doc(xml?.prestadorDoc || nota.documento)],
       ['Inscrição municipal', xml?.prestadorIm], ['Tomador', xml?.tomadorNome || nota.unidade],
       ['CNPJ/CPF do tomador', doc(xml?.tomadorDoc)], ['Valor dos serviços', formatarMoeda(Number(xml?.valorServicos || nota.valor || 0))],
@@ -166,10 +176,11 @@ export default function NotaPreviewDialog({ nota, compacto = false }: { nota: No
       <header className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b bg-slate-950 px-5 py-3 text-white"><div className="flex items-center gap-3"><FileText className="h-5 w-5" /><div><Dialog.Title className="font-bold">{nota.xmlOriginal ? 'DANFSe' : 'Dados da NFS-e'} {nota.numero || 'sem número'}</Dialog.Title><Dialog.Description className="text-xs text-slate-300">{nota.xmlOriginal ? 'Documento auxiliar gerado pelo XML original' : 'XML original não disponível para esta nota'}</Dialog.Description></div></div><div className="flex items-center gap-1">{nota.xmlOriginal && <><button onClick={baixarPdf} title="Baixar DANFSe em PDF" className="inline-flex items-center gap-1.5 rounded-lg bg-white/10 px-2.5 py-1.5 text-xs font-semibold hover:bg-white/20"><FileDown className="h-4 w-4" /><span className="hidden sm:inline">Baixar PDF</span></button><button onClick={baixarXml} title="Baixar XML" className="rounded-lg p-2 hover:bg-white/10"><Download className="h-4 w-4" /></button><button onClick={imprimir} title="Imprimir DANFSe" className="rounded-lg p-2 hover:bg-white/10"><Printer className="h-4 w-4" /></button></>}<Dialog.Close className="rounded-lg p-2 hover:bg-white/10"><X className="h-5 w-5" /></Dialog.Close></div></header>
       <div className="p-4 sm:p-6"><article className="overflow-hidden rounded-xl border border-slate-300 bg-white shadow-sm">
         <div className="border-b-2 border-slate-800 p-5 text-center"><h2 className="text-2xl font-black tracking-tight">DANFSe</h2><p className="text-xs text-slate-500">Documento Auxiliar da Nota Fiscal de Serviço eletrônica</p></div>
-        <dl className="grid gap-2 border-b p-4 sm:grid-cols-3"><Campo rotulo="Número da NFS-e" valor={nota.numero} destaque /><Campo rotulo="Data de emissão" valor={data(nota.emissao)} /><Campo rotulo="Código de verificação" valor={xml?.codigoVerificacao || '—'} /></dl>
+        <dl className="grid gap-2 border-b p-4 sm:grid-cols-3"><Campo rotulo="Número da NFS-e" valor={nota.numero} destaque /><Campo rotulo="Data de emissão" valor={data(xml?.dataEmissaoXml || nota.emissao)} /><Campo rotulo="Código de verificação" valor={xml?.codigoVerificacao || '—'} /></dl>
+        {xml?.chave && <div className="border-b px-4 py-3"><Campo rotulo="Chave de acesso da NFS-e" valor={<span className="font-mono text-xs tracking-wide text-slate-800">{fmtChave(xml.chave)}</span>} /></div>}
         <section className="border-b p-4"><h3 className="mb-2 text-xs font-black uppercase tracking-wider text-slate-700">Prestador do serviço</h3><dl className="grid gap-2 sm:grid-cols-3"><Campo rotulo="Nome / Razão social" valor={xml?.prestadorNome || nota.emitente} /><Campo rotulo="CNPJ / CPF" valor={doc(xml?.prestadorDoc || nota.documento)} /><Campo rotulo="Inscrição municipal" valor={xml?.prestadorIm || '—'} />{xml?.prestadorEndereco && <div className="sm:col-span-3"><Campo rotulo="Endereço" valor={xml.prestadorEndereco} /></div>}</dl></section>
         <section className="border-b p-4"><h3 className="mb-2 text-xs font-black uppercase tracking-wider text-slate-700">Tomador do serviço</h3><dl className="grid gap-2 sm:grid-cols-3"><Campo rotulo="Nome / Razão social" valor={xml?.tomadorNome || nota.unidade} /><Campo rotulo="CNPJ / CPF" valor={doc(xml?.tomadorDoc)} /><Campo rotulo="Inscrição municipal" valor={xml?.tomadorIm || '—'} />{xml?.tomadorEndereco && <div className="sm:col-span-3"><Campo rotulo="Endereço" valor={xml.tomadorEndereco} /></div>}</dl></section>
-        <section className="border-b p-4"><h3 className="mb-2 text-xs font-black uppercase tracking-wider text-slate-700">Serviço</h3><p className="min-h-20 whitespace-pre-wrap rounded-lg border bg-slate-50 p-3 text-sm leading-relaxed text-slate-800">{xml?.discriminacao || 'Descrição não localizada no XML.'}</p><dl className="mt-2 grid gap-2 sm:grid-cols-3"><Campo rotulo="Código do serviço" valor={xml?.codigoServico || '—'} /><Campo rotulo="Município de incidência" valor={xml?.municipioIncidencia || '—'} /><Campo rotulo={nota.competenciaOficial ? 'Competência oficial da planilha' : 'Competência informada na nota'} valor={nota.competencia} destaque={!!nota.competenciaOficial} /></dl></section>
+        <section className="border-b p-4"><h3 className="mb-2 text-xs font-black uppercase tracking-wider text-slate-700">Serviço</h3><p className="min-h-20 whitespace-pre-wrap rounded-lg border bg-slate-50 p-3 text-sm leading-relaxed text-slate-800">{xml?.discriminacao || 'Descrição não localizada no XML.'}</p><dl className="mt-2 grid gap-2 sm:grid-cols-3"><Campo rotulo="Código do serviço" valor={xml?.codigoServico || '—'} /><Campo rotulo="Município de incidência" valor={xml?.municipioIncidencia || '—'} /><Campo rotulo="Nº DPS / Série" valor={xml?.numeroDps ? `${xml.numeroDps}${xml.serieDps ? ` / ${xml.serieDps}` : ''}` : '—'} /><Campo rotulo={nota.competenciaOficial ? 'Competência oficial da planilha' : 'Competência informada na nota'} valor={nota.competencia} destaque={!!nota.competenciaOficial} /></dl></section>
         <section className="p-4"><h3 className="mb-2 text-xs font-black uppercase tracking-wider text-slate-700">Valores</h3><dl className="grid gap-2 sm:grid-cols-3"><Campo rotulo="Valor dos serviços" valor={formatarMoeda(n2(xml?.valorServicos) || Number(nota.valor || 0))} destaque /><Campo rotulo="Base de cálculo" valor={xml?.baseCalculo ? formatarMoeda(n2(xml.baseCalculo)) : '—'} /><Campo rotulo="Alíquota" valor={xml?.aliquota ? `${xml.aliquota}%` : '—'} /><Campo rotulo="ISS" valor={xml?.iss ? formatarMoeda(n2(xml.iss)) : '—'} /><Campo rotulo="Valor líquido" valor={xml?.valorLiquido ? formatarMoeda(n2(xml.valorLiquido)) : '—'} destaque /><Campo rotulo="Situação no módulo" valor={nota.situacao} /></dl></section>
       </article>{!nota.xmlOriginal && <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">Esta nota foi gravada sem o XML original. Reimporte o XML para habilitar a DANFSe completa.</p>}</div>
     </Dialog.Content></Dialog.Portal>
