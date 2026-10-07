@@ -33,10 +33,15 @@ export async function salvarPrazo(empresaId: string, prazoDia: number): Promise<
   return { ok: true }
 }
 
+export type NotaResumoSync = {
+  nsu: number; chave: string | null; documento: string | null; emitente_nome: string | null
+  numero: string | null; valor: number; competencia: string | null; origem: 'nova' | 'xml'
+}
 export type DiagEmpresaSync = {
   empresa_id: string; empresaNome: string; ok: boolean; status: number
   encontradas: number; gravadas: number; ignoradas?: number; canceladas?: number; ultimoNsu?: number; maxNsu?: number; houveMais?: boolean; erro?: string; amostra?: string
   ignoradasSemValor?: number; ignoradasCanceladas?: number; ignoradasProprias?: number; dica?: string
+  jaExistentes?: number; xmlRecuperados?: number; gravadasDetalhe?: NotaResumoSync[]
   // Campos só do cliente (progresso ao vivo por unidade) — não vêm do servidor.
   ativo?: boolean; etapa?: string; rodadas?: number
 }

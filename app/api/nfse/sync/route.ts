@@ -9,6 +9,17 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
+type NotaResumo = {
+  nsu: number
+  chave: string | null
+  documento: string | null
+  emitente_nome: string | null
+  numero: string | null
+  valor: number
+  competencia: string | null
+  origem: 'nova' | 'xml'   // 'nova' = gravada agora; 'xml' = XML recuperado numa nota já existente
+}
+
 type DiagEmpresa = {
   empresa_id: string
   empresaNome: string
@@ -16,6 +27,8 @@ type DiagEmpresa = {
   status: number
   encontradas: number
   gravadas: number
+  jaExistentes?: number
+  xmlRecuperados?: number
   ignoradas?: number
   ignoradasSemValor?: number
   ignoradasCanceladas?: number
@@ -27,6 +40,7 @@ type DiagEmpresa = {
   erro?: string
   dica?: string
   amostra?: string
+  gravadasDetalhe?: NotaResumo[]
 }
 
 export async function POST(req: Request) {
@@ -111,7 +125,10 @@ export async function POST(req: Request) {
       const ignoradas = notas.length - recebidas.length
       const canceladas = canceladasChaves.size   // eventos de cancelamento vistos neste lote
 
-      let gravadas = 0
+      let gravadas = 0, xmlRecuperados = 0, jaExistentes = 0
+      const gravadasDetalhe: NotaResumo[] = []
+      const resumoDe = (p: { nsu: number; chave: string | null; documento: string | null; emitente_nome: string | null; numero: string | null; valor: number; competencia: string | null }, origem: 'nova' | 'xml'): NotaResumo =>
+        ({ nsu: p.nsu, chave: p.chave, documento: p.documento, emitente_nome: p.emitente_nome, numero: p.numero, valor: p.valor, competencia: p.competencia, origem })
       if (recebidas.length > 0) {
         const payload = recebidas.map((n) => ({
           empresa_id: cert.empresa_id, nsu: n.nsu, chave: n.chave || null,
@@ -130,13 +147,25 @@ export async function POST(req: Request) {
         const porNsu = new Map<number, typeof payload[number]>()
         for (const p of payload) { if (p.chave) porChave.set(p.chave, p); else porNsu.set(p.nsu, p) }
         const chaves = [...porChave.keys()]
-        const jaExiste = new Set<string>()
+        // Lê id + xml_original das já existentes — para PULAR a regravação e, quando
+        // a nota antiga ficou SEM XML (baixada antes das colunas de XML ou em modo
+        // compat), fazer o BACKFILL do XML agora. Resolve "XML não baixado mesmo
+        // rebaixando do zero" (a nota existia, então era só pulada).
+        const existentes = new Map<string, { id: string; xml_original: string | null }>()
         for (let i = 0; i < chaves.length; i += 300) {
-          const { data: ex } = await admin.from('salon_notas').select('chave')
+          const { data: ex } = await admin.from('salon_notas').select('id, chave, xml_original')
             .eq('empresa_id', cert.empresa_id).in('chave', chaves.slice(i, i + 300))
-          ;(ex ?? []).forEach((r: { chave: string | null }) => { if (r.chave) jaExiste.add(r.chave) })
+          ;(ex ?? []).forEach((r: { id: string; chave: string | null; xml_original: string | null }) => { if (r.chave) existentes.set(r.chave, { id: r.id, xml_original: r.xml_original }) })
         }
-        const novos = [...porChave.values()].filter((p) => !jaExiste.has(p.chave as string)).concat([...porNsu.values()])
+        jaExistentes = existentes.size
+        // Backfill do XML nas já existentes que estão sem ele.
+        const semXml = [...porChave.values()].filter((p) => { const e = existentes.get(p.chave as string); return e && !e.xml_original && p.xml_original })
+        for (const p of semXml) {
+          const e = existentes.get(p.chave as string)!
+          const { error } = await admin.from('salon_notas').update({ xml_original: p.xml_original, xml_nome: p.xml_nome }).eq('id', e.id)
+          if (!error) { xmlRecuperados++; gravadasDetalhe.push(resumoDe(p, 'xml')) }
+        }
+        const novos = [...porChave.values()].filter((p) => !existentes.has(p.chave as string)).concat([...porNsu.values()])
         // Compat: se o cache do Supabase ainda não conhecer as colunas de XML,
         // reenvia sem elas — a baixa não para por isso.
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -156,6 +185,7 @@ export async function POST(req: Request) {
           empresas.push({ ...base, status, encontradas: notas.length, erro: `Erro ao gravar: ${g.error.message}${dica}`, amostra }); continue
         }
         gravadas = g.count
+        for (const p of novos) gravadasDetalhe.push(resumoDe(p, 'nova'))
       }
 
       await admin.from('salon_nfse_sync').upsert({ empresa_id: cert.empresa_id, ultimo_nsu: novoNsu, ultima_sync: new Date().toISOString() })
@@ -172,7 +202,7 @@ export async function POST(req: Request) {
         : (recebidas.length === 0
             ? `${notas.length} documento(s) vieram do ADN, mas todos foram ignorados — ${igPropria} da própria empresa, ${igSemValor} sem valor, ${igCancelada} cancelada(s).`
             : undefined)
-      empresas.push({ ...base, ok: true, status, encontradas: notas.length, gravadas, ignoradas, ignoradasSemValor: igSemValor, ignoradasCanceladas: igCancelada, ignoradasProprias: igPropria, canceladas: canceladas + canceladasMarcadas, ultimoNsu: novoNsu, maxNsu: maxNsuDisponivel || undefined, houveMais: houveMais || rateLimited, dica, amostra })
+      empresas.push({ ...base, ok: true, status, encontradas: notas.length, gravadas, jaExistentes, xmlRecuperados, ignoradas, ignoradasSemValor: igSemValor, ignoradasCanceladas: igCancelada, ignoradasProprias: igPropria, canceladas: canceladas + canceladasMarcadas, ultimoNsu: novoNsu, maxNsu: maxNsuDisponivel || undefined, houveMais: houveMais || rateLimited, dica, amostra, gravadasDetalhe })
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       const amigavel =
