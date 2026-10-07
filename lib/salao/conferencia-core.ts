@@ -550,7 +550,6 @@ export async function consultar(admin: SupabaseClient, f: Filtros, ord: Ordenaca
   const pendDocs = Array.from(new Set(coms.filter((c) => !c.nota_id && c.documento).map((c) => dig(c.documento))))
   const notasPend = await notasDosDocumentos(admin, pendDocs, f.empresaId)
   const usadasGlobal = await notasUsadas(admin)
-  const usadasNoMes = await notasUsadas(admin, competencia)
 
   const porDocPend = new Map<string, NotaRow[]>()
   for (const n of notasPend) { const k = dig(n.documento); if (!k) continue; (porDocPend.get(k) ?? porDocPend.set(k, []).get(k)!).push(n) }
