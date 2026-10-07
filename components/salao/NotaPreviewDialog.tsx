@@ -84,11 +84,15 @@ function dadosXml(xml?: string | null) {
 // Formata a chave de acesso (50 dígitos) em blocos de 4 para leitura.
 function fmtChave(c?: string | null) { const s = (c || '').replace(/\s/g, ''); return s ? s.replace(/(.{4})/g, '$1 ').trim() : '' }
 function n2(v?: string | null) { const x = Number(String(v ?? '').replace(',', '.')); return Number.isFinite(x) ? x : 0 }
-function Campo({ rotulo, valor, destaque = false }: { rotulo: string; valor: React.ReactNode; destaque?: boolean }) {
-  return <div className={`rounded-lg border px-3 py-2 ${destaque ? 'border-blue-200 bg-blue-50' : 'border-slate-200 bg-white'}`}>
-    <dt className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{rotulo}</dt>
-    <dd className={`mt-1 text-sm ${destaque ? 'font-bold text-blue-950' : 'font-medium text-slate-900'}`}>{valor || '—'}</dd>
+// Célula no padrão da DANFSe oficial: rótulo pequeno em caixa-alta + valor.
+function CelulaOf({ rotulo, valor, forte = false, semBorda = false }: { rotulo: string; valor: React.ReactNode; forte?: boolean; semBorda?: boolean }) {
+  return <div className={`min-w-0 px-3 py-1.5 ${semBorda ? '' : 'border-b border-r border-slate-300'}`}>
+    <dt className="truncate text-[8px] font-bold uppercase tracking-wider text-slate-500">{rotulo}</dt>
+    <dd className={`mt-0.5 break-words text-xs ${forte ? 'font-bold text-slate-900' : 'font-medium text-slate-800'}`}>{valor || '—'}</dd>
   </div>
+}
+function SecaoOf({ titulo }: { titulo: string }) {
+  return <div className="border-b border-slate-500 bg-slate-100 px-3 py-1"><h3 className="text-[10px] font-bold uppercase tracking-wider text-slate-700">{titulo}</h3></div>
 }
 const esc = (v: unknown) => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c] || c))
 
@@ -130,22 +134,22 @@ export default function NotaPreviewDialog({ nota, compacto = false }: { nota: No
     }
     campos([['Código de verificação', xml?.codigoVerificacao || '—'], ['Competência', nota.competencia || '—']])
     if (xml?.chave) { quebra(10); d.setFont('helvetica', 'normal'); d.setTextColor(...SUAVE); d.setFontSize(6.8); d.text('CHAVE DE ACESSO DA NFS-E', M, y); d.setFont('helvetica', 'bold'); d.setTextColor(...TXT); d.setFontSize(8); d.text(d.splitTextToSize(fmtChave(xml.chave), areaW) as string[], M, y + 4); y += 10 }
-    secTitulo('Prestador do serviço')
+    secTitulo('Emitente da NFS-e (prestador do serviço)')
     campos([['Nome / Razão social', xml?.prestadorNome || nota.emitente || '—'], ['CNPJ / CPF', doc(xml?.prestadorDoc || nota.documento)], ['Inscrição municipal', xml?.prestadorIm || '—'], ['Endereço', xml?.prestadorEndereco || '—']])
     secTitulo('Tomador do serviço')
     campos([['Nome / Razão social', xml?.tomadorNome || nota.unidade || '—'], ['CNPJ / CPF', doc(xml?.tomadorDoc)], ['Inscrição municipal', xml?.tomadorIm || '—'], ['Endereço', xml?.tomadorEndereco || '—']])
-    secTitulo('Discriminação dos serviços')
+    secTitulo('Serviço prestado')
     d.setFont('helvetica', 'normal'); d.setFontSize(8.5); d.setTextColor(...TXT)
     const desc = d.splitTextToSize(xml?.discriminacao || 'Não informada no XML.', areaW - 4) as string[]
     const hd = desc.length * 4 + 4; quebra(hd + 2); d.setDrawColor(210, 216, 224); d.setLineWidth(0.2); d.rect(M, y, areaW, hd); d.text(desc, M + 2, y + 4); y += hd + 3
-    campos([['Código do serviço', xml?.codigoServico || '—'], ['Município de incidência', xml?.municipioIncidencia || '—']])
-    secTitulo('Valores')
+    campos([['Código de tributação nacional', xml?.codigoServico || '—'], ['Local de incidência do ISSQN', xml?.municipioIncidencia || '—']])
+    secTitulo('Tributação municipal e valores')
     campos([
-      ['Valor dos serviços', formatarMoeda(n2(xml?.valorServicos) || Number(nota.valor || 0))],
+      ['Valor do serviço', formatarMoeda(n2(xml?.valorServicos) || Number(nota.valor || 0))],
       ['Base de cálculo', xml?.baseCalculo ? formatarMoeda(n2(xml.baseCalculo)) : '—'],
       ['Alíquota', xml?.aliquota ? `${xml.aliquota}%` : '—'],
-      ['ISS', xml?.iss ? formatarMoeda(n2(xml.iss)) : '—'],
-      ['Valor líquido', xml?.valorLiquido ? formatarMoeda(n2(xml.valorLiquido)) : '—'],
+      ['ISSQN', xml?.iss ? formatarMoeda(n2(xml.iss)) : '—'],
+      ['Valor líquido da NFS-e', formatarMoeda(xml?.valorLiquido ? n2(xml.valorLiquido) : (n2(xml?.valorServicos) || Number(nota.valor || 0)))],
       ['Situação no módulo', String(nota.situacao || '—')],
     ])
     d.setDrawColor(226, 232, 240); d.setLineWidth(0.2); d.line(M, 288, W - M, 288)
@@ -174,15 +178,31 @@ export default function NotaPreviewDialog({ nota, compacto = false }: { nota: No
     <Dialog.Trigger asChild><button type="button" aria-label={`Visualizar DANFSe ${nota.numero || ''}`} title={nota.xmlOriginal ? 'Visualizar DANFSe' : 'Visualizar dados da nota'} className={compacto ? 'inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700' : 'inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700'}><Eye className="h-4 w-4" />{!compacto && <span>Visualizar</span>}</button></Dialog.Trigger>
     <Dialog.Portal><Dialog.Overlay className="fixed inset-0 z-[80] bg-slate-950/60 backdrop-blur-[2px]" /><Dialog.Content className="fixed left-1/2 top-1/2 z-[90] max-h-[94vh] w-[calc(100vw-1rem)] max-w-4xl -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl bg-slate-100 shadow-2xl outline-none">
       <header className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b bg-slate-950 px-5 py-3 text-white"><div className="flex items-center gap-3"><FileText className="h-5 w-5" /><div><Dialog.Title className="font-bold">{nota.xmlOriginal ? 'DANFSe' : 'Dados da NFS-e'} {nota.numero || 'sem número'}</Dialog.Title><Dialog.Description className="text-xs text-slate-300">{nota.xmlOriginal ? 'Documento auxiliar gerado pelo XML original' : 'XML original não disponível para esta nota'}</Dialog.Description></div></div><div className="flex items-center gap-1">{nota.xmlOriginal && <><button onClick={baixarPdf} title="Baixar DANFSe em PDF" className="inline-flex items-center gap-1.5 rounded-lg bg-white/10 px-2.5 py-1.5 text-xs font-semibold hover:bg-white/20"><FileDown className="h-4 w-4" /><span className="hidden sm:inline">Baixar PDF</span></button><button onClick={baixarXml} title="Baixar XML" className="rounded-lg p-2 hover:bg-white/10"><Download className="h-4 w-4" /></button><button onClick={imprimir} title="Imprimir DANFSe" className="rounded-lg p-2 hover:bg-white/10"><Printer className="h-4 w-4" /></button></>}<Dialog.Close className="rounded-lg p-2 hover:bg-white/10"><X className="h-5 w-5" /></Dialog.Close></div></header>
-      <div className="p-4 sm:p-6"><article className="overflow-hidden rounded-xl border border-slate-300 bg-white shadow-sm">
-        <div className="border-b-2 border-slate-800 p-5 text-center"><h2 className="text-2xl font-black tracking-tight">DANFSe</h2><p className="text-xs text-slate-500">Documento Auxiliar da Nota Fiscal de Serviço eletrônica</p></div>
-        <dl className="grid gap-2 border-b p-4 sm:grid-cols-3"><Campo rotulo="Número da NFS-e" valor={nota.numero} destaque /><Campo rotulo="Data de emissão" valor={data(xml?.dataEmissaoXml || nota.emissao)} /><Campo rotulo="Código de verificação" valor={xml?.codigoVerificacao || '—'} /></dl>
-        {xml?.chave && <div className="border-b px-4 py-3"><Campo rotulo="Chave de acesso da NFS-e" valor={<span className="font-mono text-xs tracking-wide text-slate-800">{fmtChave(xml.chave)}</span>} /></div>}
-        <section className="border-b p-4"><h3 className="mb-2 text-xs font-black uppercase tracking-wider text-slate-700">Prestador do serviço</h3><dl className="grid gap-2 sm:grid-cols-3"><Campo rotulo="Nome / Razão social" valor={xml?.prestadorNome || nota.emitente} /><Campo rotulo="CNPJ / CPF" valor={doc(xml?.prestadorDoc || nota.documento)} /><Campo rotulo="Inscrição municipal" valor={xml?.prestadorIm || '—'} />{xml?.prestadorEndereco && <div className="sm:col-span-3"><Campo rotulo="Endereço" valor={xml.prestadorEndereco} /></div>}</dl></section>
-        <section className="border-b p-4"><h3 className="mb-2 text-xs font-black uppercase tracking-wider text-slate-700">Tomador do serviço</h3><dl className="grid gap-2 sm:grid-cols-3"><Campo rotulo="Nome / Razão social" valor={xml?.tomadorNome || nota.unidade} /><Campo rotulo="CNPJ / CPF" valor={doc(xml?.tomadorDoc)} /><Campo rotulo="Inscrição municipal" valor={xml?.tomadorIm || '—'} />{xml?.tomadorEndereco && <div className="sm:col-span-3"><Campo rotulo="Endereço" valor={xml.tomadorEndereco} /></div>}</dl></section>
-        <section className="border-b p-4"><h3 className="mb-2 text-xs font-black uppercase tracking-wider text-slate-700">Serviço</h3><p className="min-h-20 whitespace-pre-wrap rounded-lg border bg-slate-50 p-3 text-sm leading-relaxed text-slate-800">{xml?.discriminacao || 'Descrição não localizada no XML.'}</p><dl className="mt-2 grid gap-2 sm:grid-cols-3"><Campo rotulo="Código do serviço" valor={xml?.codigoServico || '—'} /><Campo rotulo="Município de incidência" valor={xml?.municipioIncidencia || '—'} /><Campo rotulo="Nº DPS / Série" valor={xml?.numeroDps ? `${xml.numeroDps}${xml.serieDps ? ` / ${xml.serieDps}` : ''}` : '—'} /><Campo rotulo={nota.competenciaOficial ? 'Competência oficial da planilha' : 'Competência informada na nota'} valor={nota.competencia} destaque={!!nota.competenciaOficial} /></dl></section>
-        <section className="p-4"><h3 className="mb-2 text-xs font-black uppercase tracking-wider text-slate-700">Valores</h3><dl className="grid gap-2 sm:grid-cols-3"><Campo rotulo="Valor dos serviços" valor={formatarMoeda(n2(xml?.valorServicos) || Number(nota.valor || 0))} destaque /><Campo rotulo="Base de cálculo" valor={xml?.baseCalculo ? formatarMoeda(n2(xml.baseCalculo)) : '—'} /><Campo rotulo="Alíquota" valor={xml?.aliquota ? `${xml.aliquota}%` : '—'} /><Campo rotulo="ISS" valor={xml?.iss ? formatarMoeda(n2(xml.iss)) : '—'} /><Campo rotulo="Valor líquido" valor={xml?.valorLiquido ? formatarMoeda(n2(xml.valorLiquido)) : '—'} destaque /><Campo rotulo="Situação no módulo" valor={nota.situacao} /></dl></section>
-      </article>{!nota.xmlOriginal && <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">Esta nota foi gravada sem o XML original. Reimporte o XML para habilitar a DANFSe completa.</p>}</div>
+      <div className="p-3 sm:p-5"><article className="overflow-hidden rounded-md border border-slate-500 bg-white text-slate-900 shadow-sm">
+        {/* Cabeçalho oficial: identificação da NFS-e */}
+        <div className="flex items-stretch border-b border-slate-500">
+          <div className="flex w-20 shrink-0 flex-col items-center justify-center border-r border-slate-500 p-2 text-center sm:w-28"><span className="text-lg font-black leading-none tracking-tight sm:text-xl">NFS-e</span><span className="mt-1 text-[7px] leading-tight text-slate-500 sm:text-[8px]">Nota Fiscal de<br/>Serviço eletrônica</span></div>
+          <div className="flex flex-1 flex-col justify-center px-3 py-2"><h2 className="text-sm font-black uppercase leading-tight sm:text-base">DANFSe</h2><p className="text-[9px] leading-tight text-slate-500 sm:text-[10px]">Documento Auxiliar da Nota Fiscal de Serviço eletrônica</p></div>
+          <div className="grid w-40 shrink-0 grid-cols-1 border-l border-slate-500 sm:w-64 sm:grid-cols-2"><CelulaOf rotulo="Número da NFS-e" valor={nota.numero} forte /><CelulaOf rotulo="Competência" valor={nota.competencia} /><CelulaOf rotulo="Data de emissão" valor={data(xml?.dataEmissaoXml || nota.emissao)} /><CelulaOf rotulo="Nº / Série DPS" valor={xml?.numeroDps ? `${xml.numeroDps}/${xml.serieDps || '–'}` : '—'} semBorda /></div>
+        </div>
+        {/* Chave de acesso */}
+        <div className="border-b border-slate-500 px-3 py-2"><p className="text-[8px] font-bold uppercase tracking-wider text-slate-500">Chave de acesso da NFS-e</p><p className="break-all font-mono text-[11px] font-semibold tracking-wider text-slate-800 sm:text-xs">{fmtChave(xml?.chave) || '—'}</p><p className="mt-0.5 text-[9px] text-slate-400">Código de verificação: {xml?.codigoVerificacao || '—'} · Consulte a autenticidade em www.gov.br/nfse</p></div>
+        {/* Emitente / Prestador */}
+        <SecaoOf titulo="Emitente da NFS-e (prestador do serviço)" />
+        <dl className="grid grid-cols-2 border-b border-slate-500 sm:grid-cols-4"><CelulaOf rotulo="CNPJ / CPF" valor={doc(xml?.prestadorDoc || nota.documento)} /><CelulaOf rotulo="Inscrição municipal" valor={xml?.prestadorIm || '—'} /><div className="col-span-2"><CelulaOf rotulo="Nome / Razão social" valor={xml?.prestadorNome || nota.emitente} semBorda /></div><div className="col-span-2 sm:col-span-4"><CelulaOf rotulo="Endereço" valor={xml?.prestadorEndereco || '—'} semBorda /></div></dl>
+        {/* Tomador */}
+        <SecaoOf titulo="Tomador do serviço" />
+        <dl className="grid grid-cols-2 border-b border-slate-500 sm:grid-cols-4"><CelulaOf rotulo="CNPJ / CPF" valor={doc(xml?.tomadorDoc)} /><CelulaOf rotulo="Inscrição municipal" valor={xml?.tomadorIm || '—'} /><div className="col-span-2"><CelulaOf rotulo="Nome / Razão social" valor={xml?.tomadorNome || nota.unidade} semBorda /></div><div className="col-span-2 sm:col-span-4"><CelulaOf rotulo="Endereço" valor={xml?.tomadorEndereco || '—'} semBorda /></div></dl>
+        {/* Serviço prestado */}
+        <SecaoOf titulo="Serviço prestado" />
+        <dl className="grid grid-cols-2 border-b border-slate-500 sm:grid-cols-3"><CelulaOf rotulo="Código de tributação nacional" valor={xml?.codigoServico || '—'} /><CelulaOf rotulo="Local de incidência do ISSQN" valor={xml?.municipioIncidencia || '—'} /><CelulaOf rotulo={nota.competenciaOficial ? 'Competência (planilha)' : 'Competência'} valor={nota.competencia} semBorda /></dl>
+        <div className="border-b border-slate-500 px-3 py-2"><p className="text-[8px] font-bold uppercase tracking-wider text-slate-500">Descrição do serviço</p><p className="mt-1 min-h-10 whitespace-pre-wrap text-xs leading-relaxed text-slate-800">{xml?.discriminacao || 'Não informada no XML.'}</p></div>
+        {/* Tributação municipal e valores */}
+        <SecaoOf titulo="Tributação municipal e valores" />
+        <dl className="grid grid-cols-2 sm:grid-cols-4"><CelulaOf rotulo="Valor do serviço" valor={formatarMoeda(n2(xml?.valorServicos) || Number(nota.valor || 0))} forte /><CelulaOf rotulo="Base de cálculo" valor={xml?.baseCalculo ? formatarMoeda(n2(xml.baseCalculo)) : '—'} /><CelulaOf rotulo="Alíquota" valor={xml?.aliquota ? `${xml.aliquota}%` : '—'} /><CelulaOf rotulo="ISSQN" valor={xml?.iss ? formatarMoeda(n2(xml.iss)) : '—'} /><div className="col-span-2 sm:col-span-4"><CelulaOf rotulo="Valor líquido da NFS-e" valor={formatarMoeda(xml?.valorLiquido ? n2(xml.valorLiquido) : (n2(xml?.valorServicos) || Number(nota.valor || 0)))} forte semBorda /></div></dl>
+      </article>
+      <p className="mt-2 px-1 text-center text-[10px] text-slate-400">Representação visual gerada a partir do XML original da NFS-e.{nota.situacao ? ` · Situação no módulo: ${nota.situacao}` : ''}</p>
+      {!nota.xmlOriginal && <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">Esta nota foi gravada sem o XML original. Use <b>Completar XML faltantes</b> na tela de notas para recuperá-lo e habilitar a DANFSe completa.</p>}</div>
     </Dialog.Content></Dialog.Portal>
   </Dialog.Root>
 }
