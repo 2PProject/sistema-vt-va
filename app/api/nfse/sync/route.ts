@@ -204,13 +204,21 @@ export async function POST(req: Request) {
             : undefined)
       empresas.push({ ...base, ok: true, status, encontradas: notas.length, gravadas, jaExistentes, xmlRecuperados, ignoradas, ignoradasSemValor: igSemValor, ignoradasCanceladas: igCancelada, ignoradasProprias: igPropria, canceladas: canceladas + canceladasMarcadas, ultimoNsu: novoNsu, maxNsu: maxNsuDisponivel || undefined, houveMais: houveMais || rateLimited, dica, amostra, gravadasDetalhe })
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const err = e as any
+      const msg = err instanceof Error ? err.message : String(err)
+      const code = String(err?.code ?? err?.library ?? err?.reason ?? '')
+      const detalhe = `${msg}${code ? ` [${code}]` : ''}`
+      const emProd = !baseADN().includes('producaorestrita')
       const amigavel =
-        /mac verify|wrong (final block|tag)|bad decrypt|PKCS12|passphrase|unable to load/i.test(msg) ? 'Certificado ou senha inválidos — reenvie o .pfx com a senha correta.'
-        : /ENOTFOUND|EAI_AGAIN|ECONNREFUSED|timeout|ETIMEDOUT/i.test(msg) ? `Não foi possível alcançar o ADN (${baseADN()}). Verifique a rede/ambiente.`
-        : /alert|handshake|SSL|TLS number|certificate/i.test(msg) ? 'Falha no handshake TLS — o gov.br não aceitou este certificado (validade/tipo e-CNPJ/ambiente).'
-        : msg
-      empresas.push({ ...base, erro: amigavel })
+        /unsupported|digital envelope routines|legacy|OSSL_PROVIDER|provider|decoder/i.test(detalhe)
+          ? 'O .pfx usa um algoritmo LEGADO de PKCS#12 (comum em certificados Soluti/Serpro). Habilite o provider legado do OpenSSL no ambiente: NODE_OPTIONS=--openssl-legacy-provider.'
+        : /mac verify|wrong (final block|tag)|bad decrypt|incorrect password|PKCS12|passphrase|unable to load/i.test(detalhe) ? 'Certificado ou senha inválidos — reenvie o .pfx com a senha correta.'
+        : /ENOTFOUND|EAI_AGAIN|ECONNREFUSED|timeout|ETIMEDOUT/i.test(detalhe) ? `Não foi possível alcançar o ADN (${baseADN()}). Verifique a rede/ambiente.`
+        : /alert|handshake|sslv3|tlsv1|unknown ca|self.signed|certificate|SSL|TLS number/i.test(detalhe)
+          ? `Conexão TLS recusada pelo gov.br em ${baseADN()} — o certificado não foi aceito neste ambiente.${emProd ? ' Em PRODUÇÃO, confirme que este e-CNPJ está CREDENCIADO/habilitado no Sistema Nacional NFS-e; se o certificado é de homologação, use SALON_ADN_AMBIENTE=restrita.' : ''} Verifique também validade e tipo (e-CNPJ A1).`
+        : `Falha ao conectar: ${msg}`
+      empresas.push({ ...base, erro: amigavel, amostra: detalhe })
     }
   }
 
