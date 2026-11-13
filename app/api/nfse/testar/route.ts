@@ -37,7 +37,7 @@ export async function POST(req: Request) {
 
   try {
     const agent = agenteMTLS(c.cert_pfx_b64, senha)
-    const { status, corpo } = await chamarDFe(agent, c.cert_cnpj ?? '', nsu)
+    const { status, corpo } = await chamarDFe(agent, c.cert_cnpj ?? '', nsu, true)
     const amostra = (corpo || '').slice(0, 300)
     if (status === 200) {
       let qtd = 0

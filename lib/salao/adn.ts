@@ -208,9 +208,12 @@ export function semDocumentos(status: number, corpo: string): boolean {
  * titular do certificado figura como ator (prestador/tomador/intermediário).
  * O `cnpj` só é enviado quando se deseja consultar OUTRO CNPJ da mesma raiz.
  */
-export async function chamarDFe(agent: https.Agent, cnpj: string, nsu: number, cnpjDiferente = false, base?: string): Promise<{ status: number; corpo: string; url: string }> {
+export async function chamarDFe(agent: https.Agent, cnpj: string, nsu: number, enviarCnpj = false, base?: string): Promise<{ status: number; corpo: string; url: string }> {
   const url = new URL(`${base || baseADN()}/contribuintes/DFe/${Math.max(0, nsu)}`)
-  if (cnpjDiferente && cnpj) url.searchParams.set('cnpj', cnpj)
+  // Desde a atualização do ADN (nov/2026), a consulta por NSU exige o CNPJ no
+  // parâmetro — sem ele a resposta é "TipoConsulta: InscricaoCertificado /
+  // REJEICAO". Enviamos o CNPJ do próprio certificado (mesma raiz = aceito).
+  if (enviarCnpj && cnpj) url.searchParams.set('cnpj', (cnpj || '').replace(/\D/g, ''))
   const { status, corpo } = await httpsGet(url, agent)
   return { status, corpo, url: url.toString() }
 }
@@ -219,7 +222,8 @@ export async function chamarDFe(agent: https.Agent, cnpj: string, nsu: number, c
  * Consulta incremental por NSU: parte do último NSU salvo e pagina (50 por vez)
  * até esgotar. Retorna as notas novas e o maior NSU visto.
  */
-export async function consultarADN(params: { agent: https.Agent; cnpj: string; ultimoNsu: number; maxPaginas?: number; base?: string }): Promise<ResultadoADN> {
+export async function consultarADN(params: { agent: https.Agent; cnpj: string; ultimoNsu: number; maxPaginas?: number; base?: string; enviarCnpj?: boolean }): Promise<ResultadoADN> {
+  const enviarCnpj = params.enviarCnpj !== false   // padrão: envia o CNPJ (modo novo do ADN)
   const maxPaginas = params.maxPaginas ?? 6   // lotes pequenos: respeita limite de tempo/rate do gov.br
   let nsu = params.ultimoNsu
   const notas: NotaADN[] = []
@@ -230,8 +234,8 @@ export async function consultarADN(params: { agent: https.Agent; cnpj: string; u
     if (i > 0) await sleep(500)             // throttle: espaça as chamadas (evita 429)
 
     // Chamada com retentativa em caso de 429 (excesso de requisições)
-    let r = await chamarDFe(params.agent, params.cnpj, nsu, false, params.base)
-    for (let t = 0; r.status === 429 && t < 2; t++) { await sleep(2000 * (t + 1)); r = await chamarDFe(params.agent, params.cnpj, nsu, false, params.base) }
+    let r = await chamarDFe(params.agent, params.cnpj, nsu, enviarCnpj, params.base)
+    for (let t = 0; r.status === 429 && t < 2; t++) { await sleep(2000 * (t + 1)); r = await chamarDFe(params.agent, params.cnpj, nsu, enviarCnpj, params.base) }
 
     if (i === 0) { status = r.status; amostra = (r.corpo || '').slice(0, 600) }
     paginas++
