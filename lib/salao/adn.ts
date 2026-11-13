@@ -31,11 +31,17 @@ export type ResultadoADN = {
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 
-/** Base URL do ADN conforme o ambiente (padrão: produção restrita/homologação). */
-export function baseADN(): string {
+/**
+ * Base URL do ADN conforme o ambiente. Um ambiente explícito (vindo da UI)
+ * tem prioridade; sem ele, usa a variável de ambiente (padrão: restrita).
+ */
+export function baseADN(ambiente?: string): string {
+  const amb = (ambiente || '').toLowerCase()
+  if (amb === 'producao' || amb === 'produção') return 'https://adn.nfse.gov.br'
+  if (amb === 'restrita' || amb === 'homologacao' || amb === 'producaorestrita') return 'https://adn.producaorestrita.nfse.gov.br'
   if (process.env.SALON_ADN_BASE_URL) return process.env.SALON_ADN_BASE_URL.replace(/\/$/, '')
-  const amb = (process.env.SALON_ADN_AMBIENTE || 'restrita').toLowerCase()
-  return amb === 'producao'
+  const envAmb = (process.env.SALON_ADN_AMBIENTE || 'restrita').toLowerCase()
+  return envAmb === 'producao'
     ? 'https://adn.nfse.gov.br'
     : 'https://adn.producaorestrita.nfse.gov.br'
 }
@@ -202,8 +208,8 @@ export function semDocumentos(status: number, corpo: string): boolean {
  * titular do certificado figura como ator (prestador/tomador/intermediário).
  * O `cnpj` só é enviado quando se deseja consultar OUTRO CNPJ da mesma raiz.
  */
-export async function chamarDFe(agent: https.Agent, cnpj: string, nsu: number, cnpjDiferente = false): Promise<{ status: number; corpo: string; url: string }> {
-  const url = new URL(`${baseADN()}/contribuintes/DFe/${Math.max(0, nsu)}`)
+export async function chamarDFe(agent: https.Agent, cnpj: string, nsu: number, cnpjDiferente = false, base?: string): Promise<{ status: number; corpo: string; url: string }> {
+  const url = new URL(`${base || baseADN()}/contribuintes/DFe/${Math.max(0, nsu)}`)
   if (cnpjDiferente && cnpj) url.searchParams.set('cnpj', cnpj)
   const { status, corpo } = await httpsGet(url, agent)
   return { status, corpo, url: url.toString() }
@@ -213,7 +219,7 @@ export async function chamarDFe(agent: https.Agent, cnpj: string, nsu: number, c
  * Consulta incremental por NSU: parte do último NSU salvo e pagina (50 por vez)
  * até esgotar. Retorna as notas novas e o maior NSU visto.
  */
-export async function consultarADN(params: { agent: https.Agent; cnpj: string; ultimoNsu: number; maxPaginas?: number }): Promise<ResultadoADN> {
+export async function consultarADN(params: { agent: https.Agent; cnpj: string; ultimoNsu: number; maxPaginas?: number; base?: string }): Promise<ResultadoADN> {
   const maxPaginas = params.maxPaginas ?? 6   // lotes pequenos: respeita limite de tempo/rate do gov.br
   let nsu = params.ultimoNsu
   const notas: NotaADN[] = []
@@ -224,8 +230,8 @@ export async function consultarADN(params: { agent: https.Agent; cnpj: string; u
     if (i > 0) await sleep(500)             // throttle: espaça as chamadas (evita 429)
 
     // Chamada com retentativa em caso de 429 (excesso de requisições)
-    let r = await chamarDFe(params.agent, params.cnpj, nsu)
-    for (let t = 0; r.status === 429 && t < 2; t++) { await sleep(2000 * (t + 1)); r = await chamarDFe(params.agent, params.cnpj, nsu) }
+    let r = await chamarDFe(params.agent, params.cnpj, nsu, false, params.base)
+    for (let t = 0; r.status === 429 && t < 2; t++) { await sleep(2000 * (t + 1)); r = await chamarDFe(params.agent, params.cnpj, nsu, false, params.base) }
 
     if (i === 0) { status = r.status; amostra = (r.corpo || '').slice(0, 600) }
     paginas++

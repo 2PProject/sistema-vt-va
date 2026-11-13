@@ -20,6 +20,8 @@ export async function POST(req: Request) {
   const de: string | undefined = body?.de        // 'YYYY-MM' competência inicial
   const ate: string | undefined = body?.ate       // 'YYYY-MM' competência final
   const nsuInicial: number | undefined = body?.nsuInicial
+  const ambiente: string | undefined = body?.ambiente || undefined
+  const BASE = baseADN(ambiente)
   if (!empresaId) return Response.json({ ok: false, erro: 'Empresa não informada.' }, { status: 400 })
 
   let admin
@@ -62,7 +64,7 @@ export async function POST(req: Request) {
   const alvo = incompletas.filter((n) => noPeriodo(n) && Number(n.nsu) > 0)
   const faltavam = alvo.length
   if (faltavam === 0) {
-    return Response.json({ ok: true, ambiente: baseADN(), empresaId, faltavam: 0, completadas: 0, aindaFaltam: 0, houveMais: false, proximoNsu: nsuInicial ?? 0 })
+    return Response.json({ ok: true, ambiente: BASE, empresaId, faltavam: 0, completadas: 0, aindaFaltam: 0, houveMais: false, proximoNsu: nsuInicial ?? 0 })
   }
 
   // 2) Busca APENAS as faixas de NSU necessárias. Começa no menor NSU faltante
@@ -80,10 +82,10 @@ export async function POST(req: Request) {
   try {
     const agent = agenteMTLS(c.cert_pfx_b64, senha)
     const { notas, ultimoNsu, houveMais, rateLimited, maxNsuDisponivel, status, amostra } =
-      await consultarADN({ agent, cnpj: c.cert_cnpj ?? '', ultimoNsu: start, maxPaginas: 6 })
+      await consultarADN({ agent, cnpj: c.cert_cnpj ?? '', ultimoNsu: start, maxPaginas: 6, base: BASE })
 
     if (rateLimited && notas.length === 0) {
-      return Response.json({ ok: true, ambiente: baseADN(), empresaId, faltavam, completadas: 0, aindaFaltam: faltavam, rateLimited: true, houveMais: true, proximoNsu: start, maxNsu: maxNsuDisponivel || undefined })
+      return Response.json({ ok: true, ambiente: BASE, empresaId, faltavam, completadas: 0, aindaFaltam: faltavam, rateLimited: true, houveMais: true, proximoNsu: start, maxNsu: maxNsuDisponivel || undefined })
     }
 
     // 3) Backfill do XML nas notas correspondentes (por chave; senão por NSU).
@@ -105,12 +107,12 @@ export async function POST(req: Request) {
     // do ponto atual (há notas incompletas com NSU > proximoNsu).
     const restamAdiante = alvo.some((n) => Number(n.nsu) >= proximoNsu && (porNsu.has(Number(n.nsu))))
     const seguir = (houveMais || (maxNsuDisponivel > proximoNsu)) && restamAdiante && aindaFaltam > 0
-    return Response.json({ ok: true, ambiente: baseADN(), empresaId, faltavam, completadas, aindaFaltam, houveMais: seguir, proximoNsu, maxNsu: maxNsuDisponivel || undefined, status, amostra: completadas === 0 ? amostra : undefined })
+    return Response.json({ ok: true, ambiente: BASE, empresaId, faltavam, completadas, aindaFaltam, houveMais: seguir, proximoNsu, maxNsu: maxNsuDisponivel || undefined, status, amostra: completadas === 0 ? amostra : undefined })
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     const amigavel =
       /mac verify|wrong (final block|tag)|bad decrypt|PKCS12|passphrase|unable to load/i.test(msg) ? 'Certificado ou senha inválidos — reenvie o .pfx.'
-      : /ENOTFOUND|EAI_AGAIN|ECONNREFUSED|timeout|ETIMEDOUT/i.test(msg) ? `Não foi possível alcançar o ADN (${baseADN()}).`
+      : /ENOTFOUND|EAI_AGAIN|ECONNREFUSED|timeout|ETIMEDOUT/i.test(msg) ? `Não foi possível alcançar o ADN (${BASE}).`
       : msg
     return Response.json({ ok: false, erro: amigavel }, { status: 500 })
   }

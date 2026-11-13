@@ -46,11 +46,15 @@ type DiagEmpresa = {
 export async function POST(req: Request) {
   let empresaFiltro: string | null = null
   let reset = false
+  let ambiente: string | undefined
   try {
     const body = await req.json().catch(() => null)
     empresaFiltro = body?.empresa_id ?? null
     reset = body?.reset === true
+    ambiente = body?.ambiente || undefined
   } catch { /* sem corpo — todas */ }
+  // Ambiente escolhido na UI (produção / restrita) tem prioridade sobre o env.
+  const BASE = baseADN(ambiente)
 
   let admin
   try { admin = getAdminClient() } catch (e) {
@@ -89,7 +93,7 @@ export async function POST(req: Request) {
       const ultimoNsu = reset ? 0 : (syncRow?.ultimo_nsu ?? 0)
 
       const agent = agenteMTLS(cert.cert_pfx_b64, senha)
-      const { notas, ultimoNsu: novoNsu, status, amostra, houveMais, rateLimited, cancelamentos, maxNsuDisponivel } = await consultarADN({ agent, cnpj: cert.cert_cnpj ?? '', ultimoNsu })
+      const { notas, ultimoNsu: novoNsu, status, amostra, houveMais, rateLimited, cancelamentos, maxNsuDisponivel } = await consultarADN({ agent, cnpj: cert.cert_cnpj ?? '', ultimoNsu, base: BASE })
 
       if (rateLimited && notas.length === 0) {
         empresas.push({ ...base, status: 429, houveMais: true, erro: 'O gov.br limitou as requisições (429). Aguarde ~1 minuto e clique em Sincronizar de novo (a busca continua de onde parou).', amostra }); continue
@@ -194,7 +198,7 @@ export async function POST(req: Request) {
       // Dica de diagnóstico: distingue "ADN não devolveu nada" de "veio, mas foi
       // tudo filtrado" — assim o usuário sabe se o problema é ambiente/credenciamento
       // ou o filtro (própria empresa / sem valor / cancelada).
-      const emTeste = baseADN().includes('producaorestrita')
+      const emTeste = BASE.includes('producaorestrita')
       const dica = notas.length === 0
         ? (novoNsu <= 0
             ? `O ADN não devolveu nenhum documento a partir do NSU 0 (HTTP ${status}).${emTeste ? ' A baixa está no ambiente de TESTE (produção restrita) — defina SALON_ADN_AMBIENTE=producao.' : ' Confirme o credenciamento da empresa no ambiente de produção.'}`
@@ -209,19 +213,19 @@ export async function POST(req: Request) {
       const msg = err instanceof Error ? err.message : String(err)
       const code = String(err?.code ?? err?.library ?? err?.reason ?? '')
       const detalhe = `${msg}${code ? ` [${code}]` : ''}`
-      const emProd = !baseADN().includes('producaorestrita')
+      const emProd = !BASE.includes('producaorestrita')
       const amigavel =
         /unsupported|digital envelope routines|legacy|OSSL_PROVIDER|provider|decoder/i.test(detalhe)
           ? 'O .pfx usa um algoritmo LEGADO de PKCS#12 (comum em certificados Soluti/Serpro). Habilite o provider legado do OpenSSL no ambiente: NODE_OPTIONS=--openssl-legacy-provider.'
         : /mac verify|wrong (final block|tag)|bad decrypt|incorrect password|PKCS12|passphrase|unable to load/i.test(detalhe) ? 'Certificado ou senha inválidos — reenvie o .pfx com a senha correta.'
-        : /ENOTFOUND|EAI_AGAIN|ECONNREFUSED|timeout|ETIMEDOUT/i.test(detalhe) ? `Não foi possível alcançar o ADN (${baseADN()}). Verifique a rede/ambiente.`
+        : /ENOTFOUND|EAI_AGAIN|ECONNREFUSED|timeout|ETIMEDOUT/i.test(detalhe) ? `Não foi possível alcançar o ADN (${BASE}). Verifique a rede/ambiente.`
         : /alert|handshake|sslv3|tlsv1|unknown ca|self.signed|certificate|SSL|TLS number/i.test(detalhe)
-          ? `Conexão TLS recusada pelo gov.br em ${baseADN()} — o certificado não foi aceito neste ambiente.${emProd ? ' Em PRODUÇÃO, confirme que este e-CNPJ está CREDENCIADO/habilitado no Sistema Nacional NFS-e; se o certificado é de homologação, use SALON_ADN_AMBIENTE=restrita.' : ''} Verifique também validade e tipo (e-CNPJ A1).`
+          ? `Conexão TLS recusada pelo gov.br em ${BASE} — o certificado não foi aceito neste ambiente.${emProd ? ' Em PRODUÇÃO, confirme que este e-CNPJ está CREDENCIADO/habilitado no Sistema Nacional NFS-e; se o certificado é de homologação, use SALON_ADN_AMBIENTE=restrita.' : ''} Verifique também validade e tipo (e-CNPJ A1).`
         : `Falha ao conectar: ${msg}`
       empresas.push({ ...base, erro: amigavel, amostra: detalhe })
     }
   }
 
   const houveFalha = empresas.some(e => !e.ok)
-  return Response.json({ ok: !houveFalha, ambiente: baseADN(), notasEncontradas, registrosAtualizados, empresas })
+  return Response.json({ ok: !houveFalha, ambiente: BASE, notasEncontradas, registrosAtualizados, empresas })
 }
