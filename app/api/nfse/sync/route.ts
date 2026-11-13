@@ -214,13 +214,19 @@ export async function POST(req: Request) {
       const code = String(err?.code ?? err?.library ?? err?.reason ?? '')
       const detalhe = `${msg}${code ? ` [${code}]` : ''}`
       const emProd = !BASE.includes('producaorestrita')
+      const ambNome = emProd ? 'PRODUÇÃO' : 'produção restrita (homologação)'
       const amigavel =
         /unsupported|digital envelope routines|legacy|OSSL_PROVIDER|provider|decoder/i.test(detalhe)
           ? 'O .pfx usa um algoritmo LEGADO de PKCS#12 (comum em certificados Soluti/Serpro). Habilite o provider legado do OpenSSL no ambiente: NODE_OPTIONS=--openssl-legacy-provider.'
         : /mac verify|wrong (final block|tag)|bad decrypt|incorrect password|PKCS12|passphrase|unable to load/i.test(detalhe) ? 'Certificado ou senha inválidos — reenvie o .pfx com a senha correta.'
         : /ENOTFOUND|EAI_AGAIN|ECONNREFUSED|timeout|ETIMEDOUT/i.test(detalhe) ? `Não foi possível alcançar o ADN (${BASE}). Verifique a rede/ambiente.`
-        : /alert|handshake|sslv3|tlsv1|unknown ca|self.signed|certificate|SSL|TLS number/i.test(detalhe)
-          ? `Conexão TLS recusada pelo gov.br em ${BASE} — o certificado não foi aceito neste ambiente.${emProd ? ' Em PRODUÇÃO, confirme que este e-CNPJ está CREDENCIADO/habilitado no Sistema Nacional NFS-e; se o certificado é de homologação, use SALON_ADN_AMBIENTE=restrita.' : ''} Verifique também validade e tipo (e-CNPJ A1).`
+        // Rejeição de NEGÓCIO da API (não é TLS): o gov.br respondeu HTTP 4xx com
+        // REJEICAO/InscricaoCertificado — o CNPJ do certificado não está habilitado
+        // para distribuição de DF-e NESTE ambiente.
+        : /REJEICAO|Inscricao|respondeu HTTP 4\d\d|não autorizad|nao autorizad|não habilitad|nao habilitad|credenciad/i.test(detalhe)
+          ? `O gov.br RECUSOU a consulta neste ambiente (${ambNome}) — não é erro de TLS: a conexão funcionou, mas o CNPJ deste certificado NÃO está habilitado para baixar notas aqui.${emProd ? ' Faça o credenciamento do e-CNPJ no Sistema Nacional NFS-e (produção); se o certificado for de homologação, use "Produção restrita".' : ' Verifique se este CNPJ/certificado está cadastrado no ambiente de homologação.'}`
+        : /alert|handshake|sslv3|tlsv1|unknown ca|self.signed|bad certificate|SSL routines|TLS number/i.test(detalhe)
+          ? `Conexão TLS recusada pelo gov.br em ${BASE} — o certificado não foi aceito no handshake.${emProd ? ' Em PRODUÇÃO, confirme o credenciamento do e-CNPJ; se for de homologação, use "Produção restrita".' : ''} Verifique também validade e tipo (e-CNPJ A1).`
         : `Falha ao conectar: ${msg}`
       empresas.push({ ...base, erro: amigavel, amostra: detalhe })
     }
