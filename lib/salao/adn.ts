@@ -210,10 +210,11 @@ export function semDocumentos(status: number, corpo: string): boolean {
  */
 export async function chamarDFe(agent: https.Agent, cnpj: string, nsu: number, enviarCnpj = false, base?: string): Promise<{ status: number; corpo: string; url: string }> {
   const url = new URL(`${base || baseADN()}/contribuintes/DFe/${Math.max(0, nsu)}`)
-  // Desde a atualização do ADN (nov/2026), a consulta por NSU exige o CNPJ no
-  // parâmetro — sem ele a resposta é "TipoConsulta: InscricaoCertificado /
-  // REJEICAO". Enviamos o CNPJ do próprio certificado (mesma raiz = aceito).
-  if (enviarCnpj && cnpj) url.searchParams.set('cnpj', (cnpj || '').replace(/\D/g, ''))
+  // Desde a atualização do ADN (nov/2026), a consulta por NSU exige o parâmetro
+  // `cnpjConsulta` — sem ele a resposta é "TipoConsulta: InscricaoCertificado /
+  // REJEICAO". Enviando o CNPJ do próprio certificado, o ADN trata como
+  // "TipoConsulta: CnpjBase" e responde normalmente (mesma raiz = aceito).
+  if (enviarCnpj && cnpj) url.searchParams.set('cnpjConsulta', (cnpj || '').replace(/\D/g, ''))
   const { status, corpo } = await httpsGet(url, agent)
   return { status, corpo, url: url.toString() }
 }
