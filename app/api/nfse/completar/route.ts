@@ -72,7 +72,7 @@ export async function POST(req: Request) {
   const porChave = new Map<string, string>()
   const porNsu = new Map<number, string>()
   for (const n of alvo) { if (n.chave) porChave.set(String(n.chave).replace(/\s/g, ''), n.id); porNsu.set(Number(n.nsu), n.id) }
-  const menorNsu = Math.min(...alvo.map((n) => Number(n.nsu)))
+  const menorNsu = alvo.reduce((m, n) => Math.min(m, Number(n.nsu)), Infinity)
   const start = Math.max(0, nsuInicial != null ? nsuInicial : menorNsu - 1)
 
   let senha: string

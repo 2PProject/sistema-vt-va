@@ -36,7 +36,10 @@ export default function NotasPage(){
  // Carrega UMA vez os documentos de TODAS as unidades (o vínculo pode ser
  // cross-unidade). Só marca "sem correspondência" depois de pronto, para não
  // dar falso positivo durante o carregamento.
- useEffect(()=>{if(!SALAO_ENABLED)return;let vivo=true;(async()=>{const set=new Set<string>();let erro=false;for(let off=0;off<100000;off+=1000){const{data,error}=await supabase.from('salon_comissoes').select('documento').order('id',{ascending:true}).range(off,off+999);if(error){erro=true;break}if(!data||data.length===0)break;for(const r of data as {documento:string|null}[]){const d=dig(r.documento);if(d)set.add(d)}if(data.length<1000)break}if(vivo&&!erro){setDocsImportados(set);setDocsProntos(true)}})();return()=>{vivo=false}},[])
+ // Depende de empresas: só roda depois que a 1ª consulta autenticada (empresas)
+ // deu certo — evita a corrida em que a sessão ainda não foi restaurada e a
+ // leitura falharia, deixando "sem correspondência" desativado para sempre.
+ useEffect(()=>{if(!SALAO_ENABLED)return;let vivo=true;(async()=>{const set=new Set<string>();let erro=false;for(let off=0;off<1000000;off+=1000){const{data,error}=await supabase.from('salon_comissoes').select('documento').order('id',{ascending:true}).range(off,off+999);if(error){erro=true;break}if(!data||data.length===0)break;for(const r of data as {documento:string|null}[]){const d=dig(r.documento);if(d)set.add(d)}if(data.length<1000)break}if(vivo&&!erro){setDocsImportados(set);setDocsProntos(true)}})();return()=>{vivo=false}},[empresas.length])
  const canceladas=useMemo(()=>{const s=new Set<string>();for(const n of linhas)if(notaCanceladaXml(n.xml_original))s.add(n.id);return s},[linhas])
  // Nota pendente cujo documento não consta em nenhum lançamento importado.
  const semCorresp=useCallback((n:NotaRecebida)=>docsProntos&&!n.conferida&&!n.analise_manual&&!canceladas.has(n.id)&&!docsImportados.has(dig(n.documento)),[canceladas,docsImportados,docsProntos])
