@@ -13,7 +13,6 @@ export default function Decimo13VAPage() {
   const [empresas, setEmpresas] = useState<Empresa[]>([])
   const [preview, setPreview] = useState<LinhaImportSalario[]>([])
   const [erros, setErros] = useState<string[]>([])
-  const [modo, setModo] = useState<'parcela' | 'total'>('parcela')
   const [registros, setRegistros] = useState<Registro13[]>([])
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<{ t: string; ok: boolean } | null>(null)
@@ -35,7 +34,7 @@ export default function Decimo13VAPage() {
     if (!preview.length) return
     setBusy(true)
     try {
-      const { gravados, erro } = await processar13(preview, ano, modo)
+      const { gravados, erro } = await processar13(preview, ano, 'parcela')
       if (erro) { notify(erro.includes('pagamento_13_va') ? 'Rode a migração supabase_pagamento_13_va.sql no Supabase.' : erro, false); return }
       notify(`${gravados} funcionário(s) importado(s) no 13º VA de ${ano}.`)
       setPreview([]); setErros([]); await carregar()
@@ -49,8 +48,7 @@ export default function Decimo13VAPage() {
 
   const totalParcela = useMemo(() => registros.reduce((s, r) => s + r.valor_parcela, 0), [registros])
   const totalGeral = totalParcela * 2
-  const valorModelo = (v: number) => modo === 'total' ? v / 2 : v
-  const totalPreview = useMemo(() => preview.reduce((s, l) => s + valorModelo(l.valorLiquido), 0), [preview, modo])
+  const totalPreview = useMemo(() => preview.reduce((s, l) => s + l.valorLiquido, 0), [preview])
 
   return (
     <LayoutAdmin title="13º · Vale Alimentação" actions={
@@ -75,11 +73,7 @@ export default function Decimo13VAPage() {
             <button className="btn-secondary text-sm" disabled={busy} onClick={() => baixarModelo13(empresaId || undefined)}>Baixar modelo</button>
             <label className={`cursor-pointer rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700 ${busy ? 'opacity-50' : ''}`}>{busy ? 'Lendo…' : 'Importar planilha'}<input type="file" accept=".xlsx,.xls" className="hidden" disabled={busy} onChange={handleArquivo} /></label>
           </div>
-          <div className="mt-3 flex flex-wrap items-center gap-4 border-t border-slate-100 pt-3 text-sm">
-            <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">O valor da planilha é</span>
-            <label className="flex items-center gap-1.5"><input type="radio" checked={modo === 'parcela'} onChange={() => setModo('parcela')} /> o VA de <b>cada parcela</b> (nov e dez recebem este valor)</label>
-            <label className="flex items-center gap-1.5"><input type="radio" checked={modo === 'total'} onChange={() => setModo('total')} /> o <b>total</b> do 13º (divide 50/50 entre nov e dez)</label>
-          </div>
+          <p className="mt-3 border-t border-slate-100 pt-3 text-xs text-slate-500">O valor da planilha é o <b>VA de cada parcela</b>: Novembro e Dezembro recebem esse mesmo valor.</p>
         </section>
 
         {/* Alertas da importação */}
@@ -91,7 +85,7 @@ export default function Decimo13VAPage() {
             <div className="text-sm font-semibold text-slate-800">Prévia · {preview.length} funcionário(s) · total por parcela {formatarMoeda(totalPreview)}</div>
             <div className="flex gap-2"><button className="btn-secondary text-sm" onClick={() => { setPreview([]); setErros([]) }}>Cancelar</button><button className="btn-primary text-sm" disabled={busy} onClick={confirmar}>Confirmar 13º de {ano}</button></div>
           </div>
-          <div className="max-h-72 overflow-auto"><table className="w-full text-sm"><thead className="sticky top-0 bg-slate-50 text-left text-[11px] uppercase text-slate-500"><tr><th className="px-3 py-2">Funcionário</th><th className="px-3 py-2">Empresa</th><th className="px-3 py-2 text-right">VA nov</th><th className="px-3 py-2 text-right">VA dez</th><th className="px-3 py-2 text-right">Total</th></tr></thead><tbody className="divide-y divide-slate-100">{preview.map((l, i) => { const p = valorModelo(l.valorLiquido); return <tr key={i} className="hover:bg-slate-50"><td className="px-3 py-1.5 font-medium">{l.funcionarioNome}</td><td className="px-3 py-1.5 text-slate-500">{l.empresaNome}</td><td className="px-3 py-1.5 text-right tabular-nums">{formatarMoeda(p)}</td><td className="px-3 py-1.5 text-right tabular-nums">{formatarMoeda(p)}</td><td className="px-3 py-1.5 text-right font-semibold tabular-nums">{formatarMoeda(p * 2)}</td></tr> })}</tbody></table></div>
+          <div className="max-h-72 overflow-auto"><table className="w-full text-sm"><thead className="sticky top-0 bg-slate-50 text-left text-[11px] uppercase text-slate-500"><tr><th className="px-3 py-2">Funcionário</th><th className="px-3 py-2">Empresa</th><th className="px-3 py-2 text-right">VA nov</th><th className="px-3 py-2 text-right">VA dez</th><th className="px-3 py-2 text-right">Total</th></tr></thead><tbody className="divide-y divide-slate-100">{preview.map((l, i) => { const p = l.valorLiquido; return <tr key={i} className="hover:bg-slate-50"><td className="px-3 py-1.5 font-medium">{l.funcionarioNome}</td><td className="px-3 py-1.5 text-slate-500">{l.empresaNome}</td><td className="px-3 py-1.5 text-right tabular-nums">{formatarMoeda(p)}</td><td className="px-3 py-1.5 text-right tabular-nums">{formatarMoeda(p)}</td><td className="px-3 py-1.5 text-right font-semibold tabular-nums">{formatarMoeda(p * 2)}</td></tr> })}</tbody></table></div>
         </section>}
 
         {/* Placar */}
