@@ -74,7 +74,6 @@ const sections: { title: string; items: Item[] }[] = [
       { href: '/valores-beneficios', label: 'Valores VT/VA', icon: ICON.valores },
       { href: '/descontos', label: 'Férias / Descontos', icon: ICON.ajuste },
       { href: '/recibos', label: 'Recibos VT/VA', icon: ICON.recibo },
-      { href: '/pagamentos/decimo-va', label: '13º (VA)', icon: ICON.recibo },
     ],
   },
   {
@@ -82,6 +81,7 @@ const sections: { title: string; items: Item[] }[] = [
     items: [
       { href: '/pagamentos/fechamento', label: 'Fechamento do Mês', icon: ICON.fechamento },
       { href: '/pagamentos', label: 'Salários (importar)', icon: ICON.pagamento },
+      { href: '/pagamentos/decimo-va', label: '13º (VA)', icon: ICON.recibo },
       { href: '/pagamentos/vales', label: 'Vales / Descontos', icon: ICON.vale },
       { href: '/pagamentos/recibos-vales', label: 'Recibos de Vales', icon: ICON.recibo },
     ],
