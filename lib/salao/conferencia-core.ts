@@ -231,6 +231,20 @@ function empresaNomeDe(row: NotaRow): string {
   return e?.apelido || e?.razao_social || ''
 }
 
+/**
+ * Lê os vínculos (salon_comissao_notas) de um conjunto de comissões em blocos
+ * de 200 — sem isto, um `.in()` com >1000 ids truncava silenciosamente (teto do
+ * PostgREST) ou estourava o tamanho da URL, perdendo vínculos no período.
+ */
+async function relacoesDeComissoes(admin: SupabaseClient, comissaoIds: string[]): Promise<{ comissao_id: string; nota_id: string }[]> {
+  const out: { comissao_id: string; nota_id: string }[] = []
+  for (let i = 0; i < comissaoIds.length; i += 200) {
+    const { data } = await admin.from('salon_comissao_notas').select('comissao_id, nota_id').in('comissao_id', comissaoIds.slice(i, i + 200))
+    if (data) out.push(...(data as { comissao_id: string; nota_id: string }[]))
+  }
+  return out
+}
+
 /** Notas de UMA competência (todas as unidades). Filtra no banco. */
 async function notasDaCompetencia(admin: SupabaseClient, competencia: string, soComValor = false, empresaId?: string): Promise<NotaRow[]> {
   return paginado((de, ate) => {
@@ -350,8 +364,30 @@ export async function reconciliar(admin: SupabaseClient, competencia: string, em
   // Escolhe, entre candidatas, a de valor mais próximo do crédito (desempate).
   const escolher = (cs: Cand[], alvo: number) => [...cs].sort((a, b) => Math.abs(a.valor - alvo) - Math.abs(b.valor - alvo))[0]
 
-  // Passe 1 — mesma unidade + mesma competência (valor é comparação, não filtro).
+  // Passe 0 — valor EXATO, mesma unidade + mesma competência. Casado ANTES do
+  // "mais próximo" para o par exato não ser roubado por outro lançamento do
+  // mesmo CNPJ no mês (ex.: p1=100,p2=150 com notas 150 e 160 → p2 leva a 150).
   for (const p of pend) {
+    const doc = dig(p.documento); if (!doc) continue
+    const arr = porDoc.get(doc); if (!arr?.length) continue
+    const alvo = Number(p.valor_comissao) || 0
+    const c = arr.filter((n) => n.empresa_id === p.empresa_id && n.comp === competencia && Math.abs(n.valor - alvo) < 0.01)
+    if (!c.length) continue
+    await casar(p, arr, c[0])
+  }
+  // Passe 0.5 — valor EXATO, qualquer unidade + mesma competência.
+  for (const p of pend) {
+    if (feitos.has(p.id)) continue
+    const doc = dig(p.documento); if (!doc) continue
+    const arr = porDoc.get(doc); if (!arr?.length) continue
+    const alvo = Number(p.valor_comissao) || 0
+    const c = arr.filter((n) => n.comp === competencia && Math.abs(n.valor - alvo) < 0.01)
+    if (!c.length) continue
+    await casar(p, arr, c[0])
+  }
+  // Passe 1 — mesma unidade + mesma competência (valor mais próximo, desempate).
+  for (const p of pend) {
+    if (feitos.has(p.id)) continue
     const doc = dig(p.documento); if (!doc) continue
     const arr = porDoc.get(doc); if (!arr?.length) continue
     const c = arr.filter((n) => n.empresa_id === p.empresa_id && n.comp === competencia)
@@ -400,12 +436,10 @@ export async function limpar(admin: SupabaseClient, competencia?: string, empres
     return sel as unknown as QB
   })
   const comissaoIds = rows.map((r) => r.id)
-  const { data: relacoes } = comissaoIds.length
-    ? await admin.from('salon_comissao_notas').select('comissao_id, nota_id').in('comissao_id', comissaoIds)
-    : { data: [] as { comissao_id: string; nota_id: string }[] }
+  const relacoes = comissaoIds.length ? await relacoesDeComissoes(admin, comissaoIds) : []
   const notaIds = Array.from(new Set([
     ...rows.map((r) => r.nota_id),
-    ...(relacoes ?? []).map((r) => r.nota_id),
+    ...relacoes.map((r) => r.nota_id),
   ].filter(Boolean))) as string[]
 
   let upd = admin.from('salon_comissoes').update({
@@ -415,7 +449,9 @@ export async function limpar(admin: SupabaseClient, competencia?: string, empres
   if (empresaId) upd = upd.eq('empresa_id', empresaId)
   await upd
 
-  if (comissaoIds.length) await admin.from('salon_comissao_notas').delete().in('comissao_id', comissaoIds)
+  for (let i = 0; i < comissaoIds.length; i += 200) {
+    await admin.from('salon_comissao_notas').delete().in('comissao_id', comissaoIds.slice(i, i + 200))
+  }
   for (let i = 0; i < notaIds.length; i += 200) {
     await admin.from('salon_notas').update({ conferida: false, conferida_em: null, conferida_por: null, competencia_conf: null }).in('id', notaIds.slice(i, i + 200))
   }
@@ -531,14 +567,12 @@ export async function consultar(admin: SupabaseClient, f: Filtros, ord: Ordenaca
 
   // Notas vinculadas (detalhe de todas as notas do conjunto, não só a principal).
   const comissaoIds = coms.filter(c => c.nota_id).map(c => c.id)
-  const { data: relacoesVinculo } = comissaoIds.length
-    ? await admin.from('salon_comissao_notas').select('comissao_id, nota_id').in('comissao_id', comissaoIds)
-    : { data: [] as { comissao_id: string; nota_id: string }[] }
+  const relacoesVinculo = comissaoIds.length ? await relacoesDeComissoes(admin, comissaoIds) : []
   const relPorComissao = new Map<string, string[]>()
-  for (const r of relacoesVinculo ?? []) { const a = relPorComissao.get(r.comissao_id) ?? []; a.push(r.nota_id); relPorComissao.set(r.comissao_id, a) }
+  for (const r of relacoesVinculo) { const a = relPorComissao.get(r.comissao_id) ?? []; a.push(r.nota_id); relPorComissao.set(r.comissao_id, a) }
   const linkIds = Array.from(new Set([
     ...coms.filter((c) => c.nota_id).map((c) => c.nota_id),
-    ...(relacoesVinculo ?? []).map(r => r.nota_id),
+    ...relacoesVinculo.map(r => r.nota_id),
   ].filter(Boolean))) as string[]
   const notaById = new Map<string, NotaRow>()
   for (let i = 0; i < linkIds.length; i += 200) {
