@@ -23,13 +23,12 @@ export async function POST(req: Request) {
   let lastId = ''
   let verificadas = 0, marcadas = 0, desvinculadas = 0
   let houveMais = false
-  const agora = new Date().toISOString()
 
-  // Cursor por id (estável): as marcadas saem do filtro excluida=false, mas o
-  // id não muda, então o cursor avança sem repetir/pular.
+  // Cursor por id (estável): a marcação não muda o id, então o cursor avança
+  // sem repetir/pular, mesmo com notas saindo/entrando de outros filtros.
   for (let page = 0; page < 400; page++) {
     let q = admin.from('salon_notas').select('id, xml_original')
-      .eq('excluida', false).not('xml_original', 'is', null)
+      .eq('excluida', false).eq('cancelada', false).not('xml_original', 'is', null)
       .order('id', { ascending: true }).limit(PAG)
     if (empresaId) q = q.eq('empresa_id', empresaId)
     if (lastId) q = q.gt('id', lastId)
@@ -41,14 +40,15 @@ export async function POST(req: Request) {
 
     for (const n of data as Row[]) {
       if (!cancelamentoDoXml(n.xml_original)) continue
-      // Desvincula (o trigger reabre a comissão e a nota) e marca a nota cancelada.
+      // Desvincula (o trigger reabre a comissão e a nota) e MARCA como cancelada,
+      // mas SEM excluir: a nota continua visível com o rótulo "Cancelada".
       await admin.from('salon_comissao_notas').delete().eq('nota_id', n.id)
       const { count } = await admin.from('salon_comissoes')
         .update({ nota_id: null, status: 'pendente', nf_numero: null, nf_data: null, nf_valor: null, nf_origem: null, confirmado_em: null }, { count: 'exact' })
         .eq('nota_id', n.id)
       desvinculadas += count ?? 0
       const { error: e2 } = await admin.from('salon_notas')
-        .update({ excluida: true, conferida: false, conferida_em: null, conferida_por: null, competencia_conf: null, excluida_motivo: 'Cancelada (detectada pelo XML da nota)', excluida_em: agora })
+        .update({ cancelada: true, conferida: false, conferida_em: null, conferida_por: null, competencia_conf: null })
         .eq('id', n.id)
       if (!e2) marcadas++
     }

@@ -26,6 +26,7 @@ export type NotaRecebida = {
   analise_manual?: boolean
   analise_motivo?: string | null
   excluida?: boolean
+  cancelada?: boolean
   // derivados
   empresaNome?: string
   competenciaEfetiva?: string | null   // competencia_conf ?? competencia
