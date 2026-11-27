@@ -4,7 +4,9 @@ import LayoutAdmin from '../../../components/LayoutAdmin'
 import { supabase, type Empresa } from '../../../lib/supabase'
 import { formatarMoeda } from '../../../utils/calculoVT'
 import { type LinhaImportSalario } from '../../../lib/pagamentos'
-import { importarPlanilha13, baixarModelo13, processar13, listar13, limpar13, gerarRecibos13, baixarPlanilha13, type Registro13 } from '../../../lib/decimoVA'
+import { importarPlanilha13, baixarModelo13, processar13, listar13, limpar13, gerarRecibos13, baixarPlanilha13, baixarCSV13, salvarDesconto13, parcela2_13, total13, type Registro13 } from '../../../lib/decimoVA'
+
+const cent = (v: number) => Math.round((Number(v) || 0) * 100) / 100
 
 export default function Decimo13VAPage() {
   const anoAtual = new Date().getFullYear()
@@ -47,12 +49,28 @@ export default function Decimo13VAPage() {
   }
 
   const totalParcela = useMemo(() => registros.reduce((s, r) => s + r.valor_parcela, 0), [registros])
-  const totalGeral = totalParcela * 2
+  const totalParcela2 = useMemo(() => registros.reduce((s, r) => s + parcela2_13(r), 0), [registros])
+  const totalGeral = useMemo(() => registros.reduce((s, r) => s + total13(r), 0), [registros])
   const totalPreview = useMemo(() => preview.reduce((s, l) => s + l.valorLiquido, 0), [preview])
+
+  function gerarCSV(parcela: 1 | 2) {
+    if (!registros.length) return
+    const { linhas, semPix } = baixarCSV13(registros, ano, parcela)
+    notify(`CSV ${parcela}ª parcela (${parcela === 1 ? 'Novembro' : 'Dezembro'}) · ${linhas} pagamento(s)${semPix ? ` · ${semPix} sem chave Pix` : ''}.`, semPix === 0)
+  }
+  async function salvarDesc(reg: Registro13, valor: string) {
+    const d = Math.max(0, Number(String(valor).replace(/\./g, '').replace(',', '.')) || 0)
+    if (cent(d) === cent(reg.desconto2a)) return
+    const r = await salvarDesconto13(reg.id, d)
+    if (!r.ok) { notify(r.erro || 'Falha ao salvar o desconto.', false); return }
+    setRegistros(rs => rs.map(x => x.id === reg.id ? { ...x, desconto2a: cent(d) } : x))
+  }
 
   return (
     <LayoutAdmin title="13º · Vale Alimentação" actions={
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <button className="btn-secondary text-sm" disabled={!registros.length || busy} onClick={() => gerarCSV(1)} title="Arquivo CSV do banco — 1ª parcela (Novembro)">CSV banco · Nov</button>
+        <button className="btn-secondary text-sm" disabled={!registros.length || busy} onClick={() => gerarCSV(2)} title="Arquivo CSV do banco — 2ª parcela (Dezembro, já com desconto)">CSV banco · Dez</button>
         <button className="btn-secondary text-sm" disabled={!registros.length || busy} onClick={() => baixarPlanilha13(registros, ano)}>Planilha</button>
         <button className="btn-primary text-sm" disabled={!registros.length || busy} onClick={() => gerarRecibos13(registros, ano)}>Gerar recibos (PDF)</button>
       </div>
@@ -61,8 +79,9 @@ export default function Decimo13VAPage() {
         {msg && <div className={`rounded-lg border px-4 py-3 text-sm ${msg.ok ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-red-200 bg-red-50 text-red-700'}`}>{msg.t}</div>}
 
         <section className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-xs text-blue-800">
-          13º Salário — <b>Vale Alimentação</b> em <b>2 parcelas (Novembro e Dezembro)</b>. Importa só o VA: <b>sem vale transporte e sem descontos</b>.
-          Baixe o modelo (colunas <b>Apelido · Nome · Valor</b>), preencha o valor do VA e importe.
+          13º Salário — <b>Vale Alimentação</b> em <b>2 parcelas (Novembro e Dezembro)</b>, <b>sem vale transporte</b>.
+          Importe o VA (colunas <b>Apelido · Nome · Valor</b>): a 1ª parcela (Nov) recebe o valor cheio. O <b>desconto do 13º é lançado na 2ª parcela (Dez)</b> direto na tabela abaixo — por isso dezembro fica menor.
+          Depois gere o <b>CSV do banco</b> de cada parcela (pela chave Pix do cadastro).
         </section>
 
         {/* Importação */}
@@ -91,9 +110,9 @@ export default function Decimo13VAPage() {
         {/* Placar */}
         <section className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           <Kpi label={`Funcionários (${ano})`} valor={registros.length} />
-          <Kpi label="Por parcela" valor={formatarMoeda(totalParcela)} />
+          <Kpi label="1ª parcela · Nov" valor={formatarMoeda(totalParcela)} />
+          <Kpi label="2ª parcela · Dez" valor={formatarMoeda(totalParcela2)} />
           <Kpi label="Total 13º VA" valor={formatarMoeda(totalGeral)} tom="emerald" />
-          <Kpi label="Empresas" valor={new Set(registros.map(r => r.empresa_id)).size} />
         </section>
 
         {/* 13º já gravado */}
@@ -103,7 +122,7 @@ export default function Decimo13VAPage() {
             {registros.length > 0 && <button className="text-xs font-medium text-red-600 hover:underline" disabled={busy} onClick={limpar}>Remover 13º de {ano}{empresaId ? ' (esta empresa)' : ''}</button>}
           </div>
           {registros.length === 0 ? <div className="px-4 py-12 text-center text-sm text-slate-400">Nenhum 13º VA gravado para {ano}. Importe uma planilha acima.</div>
-            : <div className="max-h-[520px] overflow-auto"><table className="w-full text-sm"><thead className="sticky top-0 bg-slate-50 text-left text-[11px] uppercase text-slate-500"><tr><th className="px-3 py-2">Funcionário</th><th className="px-3 py-2">Função</th><th className="px-3 py-2">Empresa</th><th className="px-3 py-2 text-right">Nov</th><th className="px-3 py-2 text-right">Dez</th><th className="px-3 py-2 text-right">Total</th></tr></thead><tbody className="divide-y divide-slate-100">{registros.map(r => <tr key={r.id} className="hover:bg-slate-50"><td className="px-3 py-1.5 font-medium text-slate-900">{r.funcionarioNome}</td><td className="px-3 py-1.5 text-slate-500">{r.funcao || '—'}</td><td className="px-3 py-1.5 text-slate-500">{r.apelido || r.empresaNome}</td><td className="px-3 py-1.5 text-right tabular-nums text-slate-700">{formatarMoeda(r.valor_parcela)}</td><td className="px-3 py-1.5 text-right tabular-nums text-slate-700">{formatarMoeda(r.valor_parcela)}</td><td className="px-3 py-1.5 text-right font-semibold tabular-nums">{formatarMoeda(r.valor_parcela * 2)}</td></tr>)}</tbody></table></div>}
+            : <div className="max-h-[520px] overflow-auto"><table className="w-full text-sm"><thead className="sticky top-0 bg-slate-50 text-left text-[11px] uppercase text-slate-500"><tr><th className="px-3 py-2">Funcionário</th><th className="px-3 py-2">Função</th><th className="px-3 py-2">Empresa</th><th className="px-3 py-2 text-right">Nov</th><th className="px-3 py-2 text-right">Desconto (Dez)</th><th className="px-3 py-2 text-right">Dez</th><th className="px-3 py-2 text-right">Total</th></tr></thead><tbody className="divide-y divide-slate-100">{registros.map(r => <tr key={r.id} className="hover:bg-slate-50"><td className="px-3 py-1.5 font-medium text-slate-900">{r.funcionarioNome}{!r.pix && <span className="ml-1 rounded bg-amber-100 px-1 text-[10px] font-semibold text-amber-700" title="Sem chave Pix no cadastro — não entra no CSV do banco">sem Pix</span>}</td><td className="px-3 py-1.5 text-slate-500">{r.funcao || '—'}</td><td className="px-3 py-1.5 text-slate-500">{r.apelido || r.empresaNome}</td><td className="px-3 py-1.5 text-right tabular-nums text-slate-700">{formatarMoeda(r.valor_parcela)}</td><td className="px-3 py-1.5 text-right"><input key={`${r.id}:${r.desconto2a}`} type="text" inputMode="decimal" defaultValue={r.desconto2a ? r.desconto2a.toFixed(2).replace('.', ',') : ''} onBlur={e => salvarDesc(r, e.target.value)} placeholder="0,00" disabled={busy} className="w-24 rounded-md border border-slate-200 px-2 py-1 text-right text-sm tabular-nums focus:border-blue-400 focus:outline-none" title="Desconto lançado na 2ª parcela (Dezembro)" /></td><td className={`px-3 py-1.5 text-right tabular-nums ${cent(r.desconto2a) > 0 ? 'font-semibold text-amber-700' : 'text-slate-700'}`}>{formatarMoeda(parcela2_13(r))}</td><td className="px-3 py-1.5 text-right font-semibold tabular-nums">{formatarMoeda(total13(r))}</td></tr>)}</tbody></table></div>}
         </section>
       </div>
     </LayoutAdmin>
