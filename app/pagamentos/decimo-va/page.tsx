@@ -19,6 +19,7 @@ export default function Decimo13VAPage() {
   const [registros, setRegistros] = useState<Registro13[]>([])
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState<{ t: string; ok: boolean } | null>(null)
+  const [csvEmpresaId, setCsvEmpresaId] = useState('')
 
   useEffect(() => { supabase.from('empresas').select('*').order('razao_social').then(({ data }) => setEmpresas(data || [])) }, [])
   const carregar = useCallback(async () => { setRegistros(await listar13(ano, empresaId || undefined)) }, [ano, empresaId])
@@ -53,10 +54,18 @@ export default function Decimo13VAPage() {
   const totalParcela2 = useMemo(() => registros.reduce((s, r) => s + parcela2_13(r), 0), [registros])
   const totalGeral = useMemo(() => registros.reduce((s, r) => s + total13(r), 0), [registros])
   const totalPreview = useMemo(() => preview.reduce((s, l) => s + l.valorLiquido, 0), [preview])
+  // Empresas que têm 13º gravado — opções do seletor do arquivo do banco.
+  const empresasComRegistro = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const r of registros) if (!m.has(r.empresa_id)) m.set(r.empresa_id, r.apelido || r.empresaNome || 'Empresa')
+    return [...m.entries()].map(([id, nome]) => ({ id, nome })).sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'))
+  }, [registros])
+  useEffect(() => { if (csvEmpresaId && !empresasComRegistro.some(e => e.id === csvEmpresaId)) setCsvEmpresaId('') }, [empresasComRegistro, csvEmpresaId])
 
   function gerarCSV(parcela: 1 | 2) {
-    if (!registros.length) return
-    const { arquivos, linhas, semPix, empresasSemPix } = baixarCSV13(registros, ano, parcela)
+    const regs = csvEmpresaId ? registros.filter(r => r.empresa_id === csvEmpresaId) : registros
+    if (!regs.length) { notify('Nenhum funcionário para a empresa selecionada.', false); return }
+    const { arquivos, linhas, semPix, empresasSemPix } = baixarCSV13(regs, ano, parcela)
     if (arquivos === 0) { notify('Nenhum pagamento com valor maior que zero nesta parcela.', false); return }
     const oque = arquivos > 1 ? `${arquivos} arquivos (1 por empresa, em .zip)` : '1 arquivo'
     const alertaPix = semPix ? ` · ${semPix} sem chave Pix${empresasSemPix.length ? ` (${empresasSemPix.slice(0, 3).join(', ')}${empresasSemPix.length > 3 ? '…' : ''})` : ''}` : ''
@@ -74,8 +83,6 @@ export default function Decimo13VAPage() {
   return (
     <LayoutAdmin title="13º · Vale Alimentação" actions={
       <div className="flex flex-wrap items-center gap-2">
-        <button className="btn-secondary text-sm" disabled={!registros.length || busy} onClick={() => gerarCSV(1)} title="CSV do banco — 1ª parcela (Novembro) · um arquivo por empresa">CSV banco · Nov</button>
-        <button className="btn-secondary text-sm" disabled={!registros.length || busy} onClick={() => gerarCSV(2)} title="CSV do banco — 2ª parcela (Dezembro, valor líquido) · um arquivo por empresa">CSV banco · Dez</button>
         <button className="btn-secondary text-sm" disabled={!registros.length || busy} onClick={() => baixarPlanilha13(registros, ano)}>Planilha</button>
         <button className="btn-primary text-sm" disabled={!registros.length || busy} onClick={() => gerarRecibos13(registros, ano)}>Gerar recibos (PDF)</button>
       </div>
@@ -119,6 +126,23 @@ export default function Decimo13VAPage() {
           <Kpi label="2ª parcela · Dez" valor={formatarMoeda(totalParcela2)} />
           <Kpi label="Total 13º VA" valor={formatarMoeda(totalGeral)} tom="emerald" />
         </section>
+
+        {/* Arquivo do banco (CSV) — seleciona a empresa a gerar */}
+        {registros.length > 0 && <section className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-4 shadow-sm">
+          <h2 className="text-sm font-semibold text-slate-800">Arquivo do banco (CSV)</h2>
+          <div className="mt-2 flex flex-wrap items-end gap-3">
+            <div className="min-w-[240px] flex-1">
+              <label className="label-field">Empresa do arquivo</label>
+              <select className="input-field" value={csvEmpresaId} onChange={e => setCsvEmpresaId(e.target.value)}>
+                <option value="">Todas as empresas (.zip · um CSV por empresa)</option>
+                {empresasComRegistro.map(e => <option key={e.id} value={e.id}>{e.nome}</option>)}
+              </select>
+            </div>
+            <button className="btn-primary text-sm" disabled={busy} onClick={() => gerarCSV(1)} title="Arquivo de pagamento do banco — 1ª parcela (Novembro)">Gerar CSV · Novembro</button>
+            <button className="btn-primary text-sm" disabled={busy} onClick={() => gerarCSV(2)} title="Arquivo de pagamento do banco — 2ª parcela (Dezembro, valor líquido)">Gerar CSV · Dezembro</button>
+          </div>
+          <p className="mt-2 text-xs text-slate-600">Layout do banco (nome · chave Pix · valor). Escolha <b>uma empresa</b> para um CSV só dela, ou <b>Todas</b> para um <b>.zip</b> com um arquivo por empresa. Quem está sem chave Pix no cadastro não entra no arquivo.</p>
+        </section>}
 
         {/* 13º já gravado */}
         <section className="rounded-xl border border-slate-200 bg-white shadow-sm">
