@@ -243,7 +243,7 @@ function crc32(buf: Uint8Array) { let c = ~0; for (let i = 0; i < buf.length; i+
 function u16(n: number) { return new Uint8Array([n & 255, (n >>> 8) & 255]) }
 function u32(n: number) { return new Uint8Array([n & 255, (n >>> 8) & 255, (n >>> 16) & 255, (n >>> 24) & 255]) }
 function junta(parts: Uint8Array[]) { let n = 0; for (const p of parts) n += p.length; const out = new Uint8Array(n); let o = 0; for (const p of parts) { out.set(p, o); o += p.length } return out }
-function zipStore(arquivos: { name: string; data: Uint8Array }[]): Blob {
+export function zipStore(arquivos: { name: string; data: Uint8Array }[]): Blob {
   const enc = new TextEncoder(); const locais: Uint8Array[] = []; const central: Uint8Array[] = []; let offset = 0
   for (const f of arquivos) {
     const nome = enc.encode(f.name), crc = crc32(f.data), sz = f.data.length
